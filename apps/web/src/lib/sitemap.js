@@ -30,6 +30,11 @@ export const STATIC_PAGES = [
   // same blogs a second time under a different URL.
   { path: '/blogs', changefreq: 'hourly', priority: '0.9' },
   { path: '/podcasts', changefreq: 'hourly', priority: '0.9' },
+  { path: '/music', changefreq: 'hourly', priority: '0.9' },
+  { path: '/videos', changefreq: 'hourly', priority: '0.9' },
+  { path: '/comics', changefreq: 'daily', priority: '0.8' },
+  { path: '/lives', changefreq: 'daily', priority: '0.7' },
+  { path: '/reels', changefreq: 'daily', priority: '0.7' },
   { path: '/topics', changefreq: 'daily', priority: '0.8' },
   { path: '/search', changefreq: 'daily', priority: '0.8' },
   { path: '/submit', changefreq: 'weekly', priority: '0.7' },

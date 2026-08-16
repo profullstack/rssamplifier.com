@@ -5,6 +5,7 @@ import { AD_TEXT, adPlan } from '../lib/ads.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
 import Toolbar from './Toolbar.jsx';
+import { CATEGORIES } from './CategoryIndex.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,14 +78,12 @@ export default async function Home() {
           into it that are worth having their own page — the counts are the
           point, because they say what the directory is mostly made of. */}
       <nav className="categories" aria-label="Categories">
-        <a href="/blogs">
-          <strong>Blogs</strong>
-          <span>{byKind.blog === 1 ? '1 feed' : `${byKind.blog} feeds`}</span>
-        </a>
-        <a href="/podcasts">
-          <strong>Podcasts</strong>
-          <span>{byKind.podcast === 1 ? '1 feed' : `${byKind.podcast} feeds`}</span>
-        </a>
+        {Object.entries(CATEGORIES).map(([kind, category]) => (
+          <a key={kind} href={category.path}>
+            <strong>{category.heading}</strong>
+            <span>{byKind[kind] === 1 ? '1 feed' : `${byKind[kind] ?? 0} feeds`}</span>
+          </a>
+        ))}
       </nav>
 
       <h2>

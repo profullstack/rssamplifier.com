@@ -12,11 +12,22 @@ import { newId, nowIso } from './client.js';
 
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
-  author, categories, kind, status, last_fetched_at, last_success_at, last_error, error_count,
+  author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
   fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at`;
 
 /** The categories the directory is browsable by. */
-export const KINDS = ['blog', 'podcast'];
+export const KINDS = ['blog', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
+
+/**
+ * The categories a crawler can work out for itself.
+ *
+ * `comic`, `live` and `reel` are absent on purpose. A webcomic's feed is a
+ * blog with pictures in it as far as any parser is concerned; RSS has no way
+ * to say "this entry was a livestream" or "this one is a short", and YouTube's
+ * feed marks neither — that needs the platform's own API. Those three only
+ * ever arrive from a curated list. See `category_source` in 0013.
+ */
+export const DERIVED_KINDS = ['blog', 'podcast', 'music', 'video'];
 
 /**
  * Read a caller-supplied kind, rejecting anything that is not one.
@@ -79,7 +90,7 @@ export async function listFeeds(db, opts = {}) {
 
   if (!includeDead) where.push("status <> 'dead'");
   if (kind) {
-    where.push('kind = ?');
+    where.push('category = ?');
     args.push(kind);
   }
 
@@ -104,7 +115,7 @@ export async function countFeeds(db, includeDead = false, kind = null) {
 
   if (!includeDead) where.push("status <> 'dead'");
   if (kind) {
-    where.push('kind = ?');
+    where.push('category = ?');
     args.push(kind);
   }
 
@@ -113,6 +124,33 @@ export async function countFeeds(db, includeDead = false, kind = null) {
     args,
   });
   return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * File feeds under a category by hand, and make it stick.
+ *
+ * The categories a parser cannot see — comics, lives, reels — come from
+ * curated lists, and marking them `curated` is what stops the next crawl from
+ * re-deriving them back to 'blog'. Addressed by feed_url because that is what
+ * a curated list actually contains; a list is a list of feeds, not of our ids.
+ *
+ * @param {Client} db
+ * @param {string[]} feedUrls
+ * @param {string} category
+ * @returns {Promise<number>} rows recategorised
+ */
+export async function curateCategory(db, feedUrls, category) {
+  const kind = normalizeKind(category);
+  if (!kind || feedUrls.length === 0) return 0;
+
+  const statements = feedUrls.map((url) => ({
+    sql: `update feeds set category = ?, category_source = 'curated', updated_at = ?
+          where feed_url = ?`,
+    args: [kind, nowIso(), url],
+  }));
+
+  const results = await db.batch(statements, 'write');
+  return results.reduce((n, r) => n + Number(r.rowsAffected ?? 0), 0);
 }
 
 /**
@@ -130,11 +168,11 @@ export async function countFeeds(db, includeDead = false, kind = null) {
  */
 export async function countFeedsByKind(db) {
   const { rows } = await db.execute(
-    `select kind, count(*) as n from feeds where status <> 'dead' group by kind`,
+    `select category, count(*) as n from feeds where status <> 'dead' group by category`,
   );
 
   const counts = Object.fromEntries(KINDS.map((k) => [k, 0]));
-  for (const row of rows) counts[String(row.kind)] = Number(row.n ?? 0);
+  for (const row of rows) counts[String(row.category)] = Number(row.n ?? 0);
   return counts;
 }
 
@@ -167,7 +205,7 @@ export async function insertFeed(db, feed) {
   await db.execute({
     sql: `insert into feeds
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
-       categories, kind, status, last_fetched_at, last_success_at, error_count,
+       categories, category, status, last_fetched_at, last_success_at, error_count,
        fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at)
       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?)`,
     args: [
@@ -214,9 +252,17 @@ export async function upsertItems(db, feedId, items) {
   const statements = rows.map((i) => ({
     sql: `insert into feed_items
       (id, feed_id, guid, url, title, summary, content_html, author, image_url, published_at,
-       categories, created_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      on conflict (feed_id, guid) do nothing`,
+       categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      on conflict (feed_id, guid) do update set
+        -- An episode already stored keeps its row, but a re-crawl fills in the
+        -- audio it was stored without. Items imported before the media columns
+        -- existed would otherwise never gain a player, because the guid is
+        -- already there and a do-nothing conflict skips the whole row.
+        audio_url = coalesce(feed_items.audio_url, excluded.audio_url),
+        audio_type = coalesce(feed_items.audio_type, excluded.audio_type),
+        audio_bytes = coalesce(feed_items.audio_bytes, excluded.audio_bytes),
+        audio_seconds = coalesce(feed_items.audio_seconds, excluded.audio_seconds)`,
     args: [
       newId(),
       feedId,
@@ -229,6 +275,10 @@ export async function upsertItems(db, feedId, items) {
       i.imageUrl || null,
       i.publishedAt ?? null,
       JSON.stringify(Array.isArray(i.categories) ? i.categories : []),
+      i.audio?.url ?? null,
+      i.audio?.type ?? null,
+      i.audio?.bytes ?? null,
+      i.audio?.seconds ?? null,
       now,
     ],
   }));
@@ -245,7 +295,8 @@ export async function upsertItems(db, feedId, items) {
  */
 export async function itemsForFeed(db, feedId, limit = 50) {
   const { rows } = await db.execute({
-    sql: `select id, guid, url, title, summary, author, image_url, published_at
+    sql: `select id, guid, url, title, summary, author, image_url, published_at,
+                 audio_url, audio_type, audio_seconds
           from feed_items where feed_id = ?
           order by published_at desc nulls last, created_at desc
           limit ?`,
@@ -268,7 +319,8 @@ export async function itemsForFeed(db, feedId, limit = 50) {
  */
 export async function itemByGuid(db, feedId, guid) {
   const { rows } = await db.execute({
-    sql: `select id, guid, url, title, summary, author, image_url, published_at
+    sql: `select id, guid, url, title, summary, author, image_url, published_at,
+                 audio_url, audio_type, audio_seconds
           from feed_items where feed_id = ? and guid = ? limit 1`,
     args: [feedId, guid],
   });
@@ -432,7 +484,7 @@ export async function feedsForTopic(db, slug, opts = {}) {
   const { limit = 60, offset = 0 } = opts;
 
   const { rows } = await db.execute({
-    sql: `select f.slug, f.title, f.description, f.site_url, f.kind, f.item_count,
+    sql: `select f.slug, f.title, f.description, f.site_url, f.category, f.item_count,
                  k.keyword, k.count, k.source
           from feed_keywords k
           join feeds f on f.id = k.feed_id
@@ -691,7 +743,12 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
   await db.execute({
     sql: `update feeds set
             status = 'active', title = ?, description = ?, site_url = ?, image_url = ?,
-            kind = ?, last_fetched_at = ?, last_success_at = ?, last_error = null,
+            -- Only over a category this crawler derived. A curated one — the
+            -- comics, lives and reels lists, none of which are visible to a
+            -- parser — would otherwise be re-derived back to 'blog' on the
+            -- feed's next crawl, which is to say within the hour.
+            category = case when category_source = 'curated' then category else ? end,
+            last_fetched_at = ?, last_success_at = ?, last_error = null,
             error_count = 0,
             fetch_interval_minutes = ?, next_fetch_at = ?, item_count = ?, updated_at = ?
           where id = ?`,
@@ -701,9 +758,9 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
       feed.siteUrl || null,
       feed.imageUrl || null,
       // Re-derived on every crawl rather than set once at submission: a blog
-      // that starts publishing audio becomes a podcast, and the tens of
-      // thousands of rows imported before this column existed get their real
-      // kind the first time the poller reaches them.
+      // that starts publishing audio becomes music, and the tens of thousands
+      // of rows imported before this column existed get their real category
+      // the first time the poller reaches them.
       normalizeKind(feed.kind) ?? 'blog',
       now,
       now,
@@ -1086,7 +1143,7 @@ export async function submissionCount(db, ipHash, windowMs = 3_600_000) {
  */
 export async function allFeedsForExport(db, limit = 5000) {
   const { rows } = await db.execute({
-    sql: `select slug, title, feed_url, site_url, description, kind, item_count, updated_at
+    sql: `select slug, title, feed_url, site_url, description, category, item_count, updated_at
           from feeds where status <> 'dead' order by title asc, id asc limit ?`,
     args: [limit],
   });
@@ -1116,10 +1173,10 @@ export async function feedsForExportPage(
   const resuming = afterTitle !== null && afterId !== null;
 
   const { rows } = await db.execute({
-    sql: `select id, slug, title, feed_url, site_url, description, kind, item_count, updated_at
+    sql: `select id, slug, title, feed_url, site_url, description, category, item_count, updated_at
           from feeds
           where status <> 'dead'
-            ${kind ? 'and kind = ?' : ''}
+            ${kind ? 'and category = ?' : ''}
             ${resuming ? 'and (title > ? or (title = ? and id > ?))' : ''}
           order by title asc, id asc
           limit ?`,

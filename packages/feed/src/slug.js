@@ -21,6 +21,11 @@ const RESERVED = new Set([
   // unreachable, which is worse for the blog than a -2 suffix.
   'blogs',
   'podcasts',
+  'music',
+  'videos',
+  'comics',
+  'lives',
+  'reels',
   'topics',
   'admin',
   'static',

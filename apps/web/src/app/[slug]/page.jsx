@@ -56,7 +56,7 @@ export default async function FeedPage({ params }) {
   // handful of entries.
   const ads = adPlan(posts.length, { first: 3, every: 12, max: 3 });
 
-  const podcast = feed.kind === 'podcast';
+  const podcast = feed.category === 'podcast';
 
   // A podcast described as a Blog is wrong in the one place a machine reads
   // this page, so the type and the property that carries the entries both

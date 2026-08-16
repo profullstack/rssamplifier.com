@@ -52,7 +52,7 @@ export async function GET(req, { params }) {
           title: f.title,
           description: f.description,
           siteUrl: f.site_url,
-          kind: f.kind,
+          kind: f.category,
           itemCount: f.item_count,
           // How this feed came to be on this topic: the publisher's own tag, or
           // a phrase counted across its writing.

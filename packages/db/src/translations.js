@@ -16,11 +16,11 @@ import { nowIso } from './client.js';
  * @param {Client} db
  * @param {string} itemId
  * @param {string} lang bare ISO-639-1 code
- * @returns {Promise<{ title: string, summary: string|null, model: string, source_lang: string|null }|null>}
+ * @returns {Promise<{ title: string, summary: string|null, content_html: string|null, truncated: number, model: string, source_lang: string|null }|null>}
  */
 export async function translationFor(db, itemId, lang) {
   const { rows } = await db.execute({
-    sql: `select title, summary, model, source_lang
+    sql: `select title, summary, content_html, truncated, model, source_lang
           from item_translations where item_id = ? and lang = ? limit 1`,
     args: [itemId, lang],
   });
@@ -39,6 +39,8 @@ export async function translationFor(db, itemId, lang) {
  *   lang: string,
  *   title: string,
  *   summary?: string|null,
+ *   contentHtml?: string|null,
+ *   truncated?: boolean,
  *   model: string,
  *   sourceLang?: string|null,
  * }} row
@@ -46,11 +48,16 @@ export async function translationFor(db, itemId, lang) {
 export async function saveTranslation(db, row) {
   await db.execute({
     sql: `insert into item_translations
-            (item_id, lang, title, summary, model, source_lang, created_at)
-          values (?, ?, ?, ?, ?, ?, ?)
+            (item_id, lang, title, summary, content_html, truncated, model, source_lang, created_at)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?)
           on conflict (item_id, lang) do update set
             title = excluded.title,
             summary = excluded.summary,
+            -- A row that has a body keeps it when a later pass produces none:
+            -- title-only translation is the cheaper path and must not be able
+            -- to delete an article somebody already paid to translate.
+            content_html = coalesce(excluded.content_html, item_translations.content_html),
+            truncated = excluded.truncated,
             model = excluded.model,
             source_lang = excluded.source_lang,
             created_at = excluded.created_at`,
@@ -59,6 +66,8 @@ export async function saveTranslation(db, row) {
       row.lang,
       row.title,
       row.summary ?? null,
+      row.contentHtml ?? null,
+      row.truncated ? 1 : 0,
       row.model,
       row.sourceLang ?? null,
       nowIso(),
@@ -74,11 +83,11 @@ export async function saveTranslation(db, row) {
  *
  * @param {Client} db
  * @param {string} itemId
- * @returns {Promise<{ id: string, title: string, summary: string|null }|null>}
+ * @returns {Promise<{ id: string, title: string, summary: string|null, content_html: string|null }|null>}
  */
 export async function itemText(db, itemId) {
   const { rows } = await db.execute({
-    sql: 'select id, title, summary from feed_items where id = ? limit 1',
+    sql: 'select id, title, summary, content_html from feed_items where id = ? limit 1',
     args: [itemId],
   });
   return /** @type {any} */ (rows[0]) ?? null;

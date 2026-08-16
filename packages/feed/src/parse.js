@@ -39,12 +39,25 @@ function arr(v) {
   return Array.isArray(v) ? v : [v];
 }
 
-/** The two things this directory lists. */
+/**
+ * What a feed is, judged by what it carries.
+ *
+ * Four categories rather than two, because "has audio attached" and "is a
+ * podcast" are not the same claim: a netlabel publishing tracks and a show
+ * publishing episodes both attach mp3s, and filing the first under podcasts
+ * makes the category mean nothing. Video is its own thing again, and on this
+ * web it is mostly YouTube channel feeds.
+ */
 export const KIND_BLOG = 'blog';
 export const KIND_PODCAST = 'podcast';
+export const KIND_MUSIC = 'music';
+export const KIND_VIDEO = 'video';
 
 /** An enclosure or attachment that carries audio, whatever else it says. */
 const AUDIO_TYPE = /^audio\//i;
+
+/** …and one that carries video. */
+const VIDEO_TYPE = /^video\//i;
 
 /**
  * Channel-level tags that only a podcast publishes.
@@ -79,7 +92,46 @@ function hasAudioEnclosure(item) {
 }
 
 /**
- * Classify an RSS/RDF channel as a blog or a podcast.
+ * Does this element carry video?
+ *
+ * @param {any} item
+ * @returns {boolean}
+ */
+function hasVideoEnclosure(item) {
+  if (arr(item?.enclosure).some((e) => VIDEO_TYPE.test(String(e?.['@type'] ?? '')))) return true;
+  return arr(item?.link).some(
+    (l) => l?.['@rel'] === 'enclosure' && VIDEO_TYPE.test(String(l?.['@type'] ?? '')),
+  );
+}
+
+/**
+ * Is this a YouTube channel or playlist feed?
+ *
+ * YouTube's Atom feeds are identifiable without looking at the URL they were
+ * fetched from: every entry carries a `yt:videoId` and the channel carries a
+ * `yt:channelId`. Worth detecting by content rather than by hostname because
+ * the same document is served from several YouTube hosts and through mirrors.
+ *
+ * @param {any} node channel or entry
+ * @returns {boolean}
+ */
+function isYouTube(node) {
+  return (
+    node?.['yt:channelId'] !== undefined ||
+    node?.['yt:playlistId'] !== undefined ||
+    node?.['yt:videoId'] !== undefined
+  );
+}
+
+/**
+ * Classify a feed by what it publishes.
+ *
+ * Order matters, and it is the order of how specific the evidence is. Video
+ * first, because a video feed frequently also carries audio metadata. Then
+ * podcast, which is audio *plus* a publisher who filled in the podcast
+ * namespaces — the strongest signal any of these have. Then music, which is
+ * what audio without those tags is: a track, not an episode. Everything else
+ * is a blog, which is what the overwhelming majority of the directory is.
  *
  * Only the first few items are inspected: a feed's entries are homogeneous, and
  * scanning all of a 500-episode archive to learn what the first three already
@@ -87,11 +139,20 @@ function hasAudioEnclosure(item) {
  *
  * @param {any} channel
  * @param {any[]} items raw parsed items
- * @returns {string} KIND_BLOG or KIND_PODCAST
+ * @returns {string} one of the KIND_* values
  */
 function kindOfChannel(channel, items) {
-  if (PODCAST_CHANNEL_TAGS.some((tag) => channel?.[tag] !== undefined)) return KIND_PODCAST;
-  if (items.slice(0, 5).some(hasAudioEnclosure)) return KIND_PODCAST;
+  const sample = items.slice(0, 5);
+
+  if (isYouTube(channel) || sample.some(isYouTube)) return KIND_VIDEO;
+  if (sample.some(hasVideoEnclosure)) return KIND_VIDEO;
+
+  const audio = sample.some(hasAudioEnclosure);
+  const podcastTags = PODCAST_CHANNEL_TAGS.some((tag) => channel?.[tag] !== undefined);
+
+  if (podcastTags) return KIND_PODCAST;
+  if (audio) return KIND_MUSIC;
+
   return KIND_BLOG;
 }
 
@@ -123,6 +184,119 @@ function categories(node) {
     out.push(value);
   }
   return out;
+}
+
+/**
+ * The audio attached to an item, if any.
+ *
+ * This is the episode itself — the thing a podcast feed exists to deliver —
+ * and it was being detected and then thrown away: `kind` was derived from the
+ * presence of an audio enclosure and the URL was never stored, so a podcast's
+ * page could say it was a podcast and not play.
+ *
+ * `itunes:duration` is read where it exists because a player that knows the
+ * length can show it before the file has loaded. It arrives as seconds, or as
+ * MM:SS, or as HH:MM:SS, depending on who generated the feed.
+ *
+ * @param {any} item
+ * @returns {{ url: string, type: string, bytes: number|null, seconds: number|null }|null}
+ */
+function audioEnclosure(item) {
+  // A YouTube entry has no enclosure at all: the video lives behind a watch
+  // page that refuses to be framed. Its embed URL does not, so that is what is
+  // stored — the one form of this media that can actually play on our page.
+  const videoId = text(item?.['yt:videoId']);
+  if (videoId && /^[\w-]{6,20}$/.test(videoId)) {
+    return {
+      url: `https://www.youtube-nocookie.com/embed/${videoId}`,
+      type: 'video/youtube',
+      bytes: null,
+      seconds: null,
+    };
+  }
+
+  const media = (type) => {
+    const enclosure = arr(item?.enclosure).find((e) => type.test(String(e?.['@type'] ?? '')));
+    // Atom has no <enclosure>; the same file arrives as a link relation.
+    const link = arr(item?.link).find(
+      (l) => l?.['@rel'] === 'enclosure' && type.test(String(l?.['@type'] ?? '')),
+    );
+    return { enclosure, link };
+  };
+
+  // Video first: a feed carrying both is a video feed with an audio track
+  // alongside, and the video is the thing the publisher meant.
+  const found = (() => {
+    const asVideo = media(VIDEO_TYPE);
+    if (asVideo.enclosure || asVideo.link) return asVideo;
+    return media(AUDIO_TYPE);
+  })();
+
+  const { enclosure, link } = found;
+  const url = text(enclosure?.['@url'] ?? link?.['@href'] ?? '');
+  if (!url) return null;
+
+  const bytes = Number(enclosure?.['@length'] ?? link?.['@length'] ?? 0);
+
+  return {
+    url,
+    type: text(enclosure?.['@type'] ?? link?.['@type'] ?? '') || 'audio/mpeg',
+    bytes: Number.isFinite(bytes) && bytes > 0 ? Math.floor(bytes) : null,
+    seconds: duration(item?.['itunes:duration']),
+  };
+}
+
+/**
+ * The audio attachment on a JSON Feed item.
+ *
+ * JSON Feed states the duration in its own field rather than borrowing
+ * itunes:duration, and it is always a number of seconds.
+ *
+ * @param {any} item
+ * @returns {{ url: string, type: string, bytes: number|null, seconds: number|null }|null}
+ */
+function jsonAudio(item) {
+  const attachments = Array.isArray(item?.attachments) ? item.attachments : [];
+  const audio =
+    attachments.find((a) => VIDEO_TYPE.test(String(a?.mime_type ?? ''))) ??
+    attachments.find((a) => AUDIO_TYPE.test(String(a?.mime_type ?? '')));
+  if (!audio?.url) return null;
+
+  const bytes = Number(audio.size_in_bytes ?? 0);
+  const seconds = Number(audio.duration_in_seconds ?? 0);
+
+  return {
+    url: String(audio.url),
+    type: String(audio.mime_type ?? 'audio/mpeg'),
+    bytes: Number.isFinite(bytes) && bytes > 0 ? Math.floor(bytes) : null,
+    seconds: Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : null,
+  };
+}
+
+/**
+ * Read a duration in any of the three spellings podcast feeds use.
+ *
+ * @param {unknown} value
+ * @returns {number|null}
+ */
+function duration(value) {
+  const raw = text(value);
+  if (!raw) return null;
+
+  const parts = raw.split(':').map((p) => Number(p.trim()));
+  if (parts.some((p) => !Number.isFinite(p) || p < 0)) return null;
+
+  // Seconds, MM:SS, or HH:MM:SS — anything else is not a duration.
+  const seconds =
+    parts.length === 1
+      ? parts[0]
+      : parts.length === 2
+        ? parts[0] * 60 + parts[1]
+        : parts.length === 3
+          ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+          : null;
+
+  return seconds !== null && seconds > 0 ? Math.floor(seconds) : null;
 }
 
 /**
@@ -280,6 +454,7 @@ function parseRss(ch) {
       publishedAt: date(it.pubDate) || date(it['dc:date']),
       imageUrl: text(it['media:thumbnail']?.['@url']) || enclosureImage(it),
       categories: categories(it),
+      audio: audioEnclosure(it),
     };
   });
 
@@ -314,6 +489,7 @@ function parseAtom(feed) {
       publishedAt: date(e.published) || date(e.updated),
       imageUrl: '',
       categories: categories(e),
+      audio: audioEnclosure(e),
     };
   });
 
@@ -327,6 +503,9 @@ function parseAtom(feed) {
       ),
     );
 
+  // YouTube publishes Atom, so this is the format its channel feeds arrive in.
+  const kind = kindOfChannel(feed, entries);
+
   return {
     title: text(feed.title) || '(untitled)',
     description: summarize(text(feed.subtitle), 500),
@@ -334,7 +513,9 @@ function parseAtom(feed) {
     language: text(feed['@xml:lang']),
     imageUrl: text(feed.logo) || text(feed.icon),
     categories: categories(feed),
-    kind: audio || kindOfChannel(feed, []) === KIND_PODCAST ? KIND_PODCAST : KIND_BLOG,
+    // kindOfChannel already handles YouTube and the podcast namespaces; this
+    // only adds what it cannot see, which is Atom's link-shaped enclosures.
+    kind: kind === KIND_BLOG && audio ? KIND_MUSIC : kind,
     items,
   };
 }
@@ -355,6 +536,7 @@ function parseRdf(rdf) {
     publishedAt: date(it['dc:date']),
     imageUrl: '',
     categories: categories(it),
+    audio: audioEnclosure(it),
   }));
 
   return {
@@ -397,18 +579,19 @@ function parseJsonFeed(raw) {
       // JSON Feed calls them tags; they are the same thing RSS calls
       // categories, so they are read into the same field.
       categories: Array.isArray(it.tags) ? it.tags.map((t) => String(t)) : [],
+      audio: jsonAudio(it),
     };
   });
 
-  // JSON Feed carries audio as an attachment, and podcast publishers that emit
+  // JSON Feed carries media as attachments, and podcast publishers that emit
   // it also tend to carry the RSS one through the `_itunes` extension.
-  const audio = j.items
+  const attachmentTypes = j.items
     .slice(0, 5)
-    .some((it) =>
-      (Array.isArray(it?.attachments) ? it.attachments : []).some((a) =>
-        AUDIO_TYPE.test(String(a?.mime_type ?? '')),
-      ),
-    );
+    .flatMap((it) => (Array.isArray(it?.attachments) ? it.attachments : []))
+    .map((a) => String(a?.mime_type ?? ''));
+
+  const audio = attachmentTypes.some((type) => AUDIO_TYPE.test(type));
+  const video = attachmentTypes.some((type) => VIDEO_TYPE.test(type));
 
   return {
     title: j.title ?? '(untitled)',
@@ -417,7 +600,9 @@ function parseJsonFeed(raw) {
     language: j.language ?? '',
     imageUrl: j.icon ?? '',
     categories: [],
-    kind: audio || j._itunes ? KIND_PODCAST : KIND_BLOG,
+    // JSON Feed states the podcast claim in an extension rather than a
+    // namespace, so an attachment on its own is a track, not an episode.
+    kind: j._itunes ? KIND_PODCAST : video ? KIND_VIDEO : audio ? KIND_MUSIC : KIND_BLOG,
     items,
   };
 }

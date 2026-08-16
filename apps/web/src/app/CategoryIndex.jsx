@@ -24,6 +24,7 @@ export const CATEGORIES = {
     title: 'Blogs',
     lede: 'Independent writing, newest first. Every blog here has its own page, and the whole category is exportable as OPML.',
     schemaType: 'Blog',
+    item: 'posts',
   },
   podcast: {
     path: '/podcasts',
@@ -31,8 +32,62 @@ export const CATEGORIES = {
     noun: 'podcasts',
     one: 'podcast',
     title: 'Podcasts',
-    lede: 'Shows with audio in their feed, newest first. We sort a feed here when it carries an audio enclosure or the podcast namespaces — never because a submitter said so.',
+    lede: 'Shows with audio in their feed and a publisher who filled in the podcast namespaces, newest first. Episodes play in the reader while you read the show notes.',
     schemaType: 'PodcastSeries',
+    item: 'episodes',
+  },
+  music: {
+    path: '/music',
+    heading: 'Music',
+    noun: 'music feeds',
+    one: 'music feed',
+    title: 'Music',
+    lede: 'Feeds that publish audio without being podcasts — netlabels, artists posting tracks, mixes and radio shows. Audio attached, no episode numbers.',
+    schemaType: 'MusicGroup',
+    item: 'tracks',
+  },
+  video: {
+    path: '/videos',
+    heading: 'Videos',
+    noun: 'video feeds',
+    one: 'video feed',
+    title: 'Videos',
+    lede: 'Channels that publish video, YouTube included. Every YouTube channel has an RSS feed whether or not it advertises one — the box on /submit will build the URL from a channel link.',
+    schemaType: 'VideoObject',
+    item: 'videos',
+  },
+  comic: {
+    path: '/comics',
+    heading: 'Comics',
+    noun: 'comics',
+    one: 'comic',
+    title: 'Comics',
+    lede: 'Webcomics that publish a feed. This category is curated rather than detected — a webcomic’s feed is a blog with pictures in it as far as any parser is concerned.',
+    schemaType: 'ComicSeries',
+    item: 'strips',
+    curated: true,
+  },
+  live: {
+    path: '/lives',
+    heading: 'Live',
+    noun: 'live channels',
+    one: 'live channel',
+    title: 'Live',
+    lede: 'Channels that stream live. RSS has no way to say “this was a livestream”, so these are curated — PeerTube and Owncast publish the feeds that make the category possible at all.',
+    schemaType: 'BroadcastService',
+    item: 'streams',
+    curated: true,
+  },
+  reel: {
+    path: '/reels',
+    heading: 'Reels',
+    noun: 'short-video feeds',
+    one: 'short-video feed',
+    title: 'Reels',
+    lede: 'Short-form video. Nothing on this side of the web publishes RSS for it — TikTok and Instagram publish none at all, and YouTube’s feed does not mark a Short — so this category is curated by hand.',
+    schemaType: 'VideoObject',
+    item: 'clips',
+    curated: true,
   },
 };
 
@@ -103,10 +158,21 @@ export default async function CategoryIndex({ kind, page = 1 }) {
       {rows.length === 0 ? (
         <p className="empty">
           {page === 1 ? (
-            <>
-              Nothing in this category yet. <a href="/submit">Add a feed</a> and the crawler will
-              file it here if it belongs.
-            </>
+            category.curated ? (
+              // Says why it is empty rather than implying nobody has got round
+              // to it: this category cannot fill itself, and a reader who
+              // submits a feed expecting it to land here should know that.
+              <>
+                Nothing here yet. This category is curated — no feed says in its own markup that it
+                belongs — so it fills up from a list rather than from the crawler.{' '}
+                <a href="/submit">Send one in</a> and it can be added.
+              </>
+            ) : (
+              <>
+                Nothing in this category yet. <a href="/submit">Add a feed</a> and the crawler will
+                file it here if it belongs.
+              </>
+            )
           ) : (
             <>
               This page is past the end of the list. <a href={category.path}>Back to the start.</a>
@@ -123,7 +189,7 @@ export default async function CategoryIndex({ kind, page = 1 }) {
                 <div className="feed-meta">
                   {f.site_url && <span>{hostOf(String(f.site_url))}</span>}
                   <span>
-                    {f.item_count} {kind === 'podcast' ? 'episodes' : 'posts'}
+                    {f.item_count} {category.item}
                   </span>
                 </div>
               </a>

@@ -114,6 +114,9 @@ importers:
       '@rssamplifier/db':
         specifier: workspace:*
         version: link:../db
+      '@rssamplifier/feed':
+        specifier: workspace:*
+        version: link:../feed
 
 packages:
 

@@ -76,10 +76,10 @@ export async function GET() {
 
   for (const f of feeds) {
     const desc = f.description ? `: ${String(f.description).slice(0, 160)}` : '';
-    // Only podcasts are marked. Blogs are the overwhelming majority, so
-    // labelling those too would add a word to nearly every line of the file to
-    // convey the default.
-    const kind = f.kind === 'podcast' ? ' (podcast)' : '';
+    // Only the non-blog categories are marked. Blogs are the overwhelming
+    // majority, so labelling those too would add a word to nearly every line of
+    // the file to convey the default.
+    const kind = f.category && f.category !== 'blog' ? ` (${f.category})` : '';
     lines.push(`- [${f.title}](${base}/${f.slug})${kind}${desc}`);
   }
 

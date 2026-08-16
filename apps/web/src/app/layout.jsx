@@ -61,6 +61,8 @@ export default function RootLayout({ children }) {
                   you already know the site. */}
               <a href="/blogs">Blogs</a>
               <a href="/podcasts">Podcasts</a>
+              <a href="/music">Music</a>
+              <a href="/videos">Videos</a>
               <a href="/topics">Topics</a>
               <a href="/submit">Submit</a>
               <a href="/search">Search</a>
@@ -98,7 +100,9 @@ export default function RootLayout({ children }) {
             </p>
             <p>
               Browse: <a href="/blogs">Blogs</a> · <a href="/podcasts">Podcasts</a> ·{' '}
-              <a href="/topics">Topics</a>
+              <a href="/music">Music</a> · <a href="/videos">Videos</a> ·{' '}
+              <a href="/comics">Comics</a> · <a href="/lives">Live</a> ·{' '}
+              <a href="/reels">Reels</a> · <a href="/topics">Topics</a>
             </p>
             <p>
               Machine-readable: <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}

@@ -202,8 +202,40 @@ test('a feed carrying the podcast namespaces is a podcast', () => {
   assert.equal(feed.imageUrl, 'https://linuxmatters.sh/cover.png');
 });
 
-test('an audio enclosure alone makes a podcast, with no namespace declared', () => {
-  assert.equal(parseFeed(AUDIO_ONLY_RSS).kind, 'podcast');
+test('audio without the podcast namespaces is music, not a podcast', () => {
+  // The distinction the four categories exist for: a netlabel posting tracks
+  // and a show posting episodes both attach mp3s, and only one of them filled
+  // in itunes:category.
+  assert.equal(parseFeed(AUDIO_ONLY_RSS).kind, 'music');
+});
+
+test('a YouTube channel feed is a video feed, and its entries carry an embed', () => {
+  const yt = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/"
+      xmlns="http://www.w3.org/2005/Atom">
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>Fireship</title>
+  <link rel="alternate" href="https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA"/>
+  <entry>
+    <id>yt:video:m0dXfytm-hY</id>
+    <yt:videoId>m0dXfytm-hY</yt:videoId>
+    <title>Something in 100 seconds</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=m0dXfytm-hY"/>
+  </entry>
+</feed>`;
+
+  const feed = parseFeed(yt);
+  assert.equal(feed.kind, 'video');
+  // The watch page refuses to be framed; the embed is the only playable form.
+  assert.equal(feed.items[0].audio.url, 'https://www.youtube-nocookie.com/embed/m0dXfytm-hY');
+  assert.equal(feed.items[0].audio.type, 'video/youtube');
+});
+
+test('an audio enclosure is kept as media, with its length and duration', () => {
+  const feed = parseFeed(PODCAST_RSS);
+  assert.equal(feed.items[0].audio.url, 'https://audio.linuxmatters.net/LMP87.mp3');
+  assert.equal(feed.items[0].audio.type, 'audio/mpeg');
+  assert.equal(feed.items[0].audio.bytes, 25464080);
 });
 
 test('an ordinary blog stays a blog in every format', () => {
@@ -212,7 +244,7 @@ test('an ordinary blog stays a blog in every format', () => {
   assert.equal(parseFeed(JSON_FEED).kind, 'blog');
 });
 
-test('an atom feed with an audio enclosure link is a podcast', () => {
+test('an atom feed with an audio enclosure link is music', () => {
   const atom = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Atom show</title>
@@ -224,10 +256,10 @@ test('an atom feed with an audio enclosure link is a podcast', () => {
     <link rel="enclosure" type="audio/mpeg" href="https://a.example/1.mp3"/>
   </entry>
 </feed>`;
-  assert.equal(parseFeed(atom).kind, 'podcast');
+  assert.equal(parseFeed(atom).kind, 'music');
 });
 
-test('a JSON feed with an audio attachment is a podcast', () => {
+test('a JSON feed with an audio attachment is music', () => {
   const json = JSON.stringify({
     version: 'https://jsonfeed.org/version/1.1',
     title: 'JSON show',
@@ -240,7 +272,7 @@ test('a JSON feed with an audio attachment is a podcast', () => {
       },
     ],
   });
-  assert.equal(parseFeed(json).kind, 'podcast');
+  assert.equal(parseFeed(json).kind, 'music');
 });
 
 test('category tags are read from every format that has them', () => {
