@@ -822,3 +822,97 @@ export async function* eachFeedForExport(db, pageSize = 2000) {
     if (rows.length < pageSize) return;
   }
 }
+
+/**
+ * The month a timestamp falls in, and the month after it.
+ *
+ * Sitemap chunks are selected with a half-open range on created_at rather than
+ * substr(created_at, 1, 7) = ?, because a function of the column cannot use the
+ * index — the range can. ISO-8601 sorts lexically, so string bounds are correct
+ * bounds.
+ *
+ * @param {string} month `YYYY-MM`
+ * @returns {{ from: string, to: string }}
+ */
+export function monthBounds(month) {
+  const [y, m] = month.split('-').map(Number);
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  return {
+    from: `${month}-`,
+    to: `${String(nextY).padStart(4, '0')}-${String(nextM).padStart(2, '0')}-`,
+  };
+}
+
+/**
+ * The chunks a sitemap index has to list.
+ *
+ * Feeds are grouped by the month they were added, so a month that has passed
+ * never changes shape again: a blog submitted today lands in this month's file
+ * and leaves every earlier file byte-identical, which is what lets a crawler
+ * skip the ones it already has. Ordering inside a chunk is (created_at, id) for
+ * the same reason the OPML export uses a compound key — timestamps collide in
+ * bulk imports, and the primary key breaks the tie.
+ *
+ * A month is split into parts when it exceeds `chunkSize`, because the sitemap
+ * spec caps a single file at 50,000 URLs and one bulk import can put a year's
+ * worth of blogs in one month. Part 1 keeps the bare `YYYY-MM` name so the
+ * common case — a month that fits — reads the same as everywhere else.
+ *
+ * @param {Client} db
+ * @param {number} [chunkSize]
+ * @returns {Promise<Array<{ month: string, part: number, count: number, lastmod: string|null }>>}
+ */
+export async function sitemapChunks(db, chunkSize = 20_000) {
+  const { rows } = await db.execute(`
+    select substr(created_at, 1, 7) as month,
+           count(*)                 as n,
+           max(updated_at)          as lastmod
+    from feeds
+    where status <> 'dead'
+    group by month
+    order by month asc
+  `);
+
+  const chunks = [];
+  for (const row of rows) {
+    const month = String(row.month);
+    const count = Number(row.n);
+    const parts = Math.max(1, Math.ceil(count / chunkSize));
+
+    for (let part = 1; part <= parts; part += 1) {
+      chunks.push({
+        month,
+        part,
+        count: part === parts ? count - chunkSize * (parts - 1) : chunkSize,
+        lastmod: row.lastmod ? String(row.lastmod) : null,
+      });
+    }
+  }
+  return chunks;
+}
+
+/**
+ * One sitemap chunk's worth of feeds.
+ *
+ * OFFSET is fine here where it was not in the OPML export: each chunk is its
+ * own request with its own bounded scan, so the cost is paid once per file
+ * rather than compounding across a single streamed response.
+ *
+ * @param {Client} db
+ * @param {{ month: string, part?: number, chunkSize?: number }} chunk
+ * @returns {Promise<object[]>}
+ */
+export async function feedsForSitemapChunk(db, { month, part = 1, chunkSize = 20_000 }) {
+  const { from, to } = monthBounds(month);
+
+  const { rows } = await db.execute({
+    sql: `select slug, updated_at
+          from feeds
+          where status <> 'dead' and created_at >= ? and created_at < ?
+          order by created_at asc, id asc
+          limit ? offset ?`,
+    args: [from, to, chunkSize, (part - 1) * chunkSize],
+  });
+  return rows;
+}
