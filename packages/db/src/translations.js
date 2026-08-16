@@ -109,6 +109,79 @@ export async function languageCounts(db, limit = 100) {
   return rows.map((r) => ({ language: String(r.language), feeds: Number(r.feeds) }));
 }
 
+/* ------------------------------------------------------------------ spend */
+
+/**
+ * The UTC calendar day a translation is billed against.
+ *
+ * UTC rather than the reader's zone so the global cap is one number over one
+ * window, instead of a quota that resets 24 times as the day moves west.
+ *
+ * @param {Date} [at]
+ * @returns {string} YYYY-MM-DD
+ */
+export function usageDay(at) {
+  return (at ?? new Date()).toISOString().slice(0, 10);
+}
+
+/**
+ * How many paid translations one reader has run up today.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} day
+ * @returns {Promise<number>}
+ */
+export async function usageForUser(db, userId, day) {
+  const { rows } = await db.execute({
+    sql: 'select count from translation_usage where user_id = ? and day = ? limit 1',
+    args: [userId, day],
+  });
+  return Number(rows[0]?.count ?? 0);
+}
+
+/**
+ * How many paid translations everybody has run up today.
+ *
+ * @param {Client} db
+ * @param {string} day
+ * @returns {Promise<number>}
+ */
+export async function usageForDay(db, day) {
+  const { rows } = await db.execute({
+    sql: 'select coalesce(sum(count), 0) as total from translation_usage where day = ?',
+    args: [day],
+  });
+  return Number(rows[0]?.total ?? 0);
+}
+
+/**
+ * Charge one translation to a reader's day, and report the new total.
+ *
+ * Incremented in the statement rather than read-then-written, so two requests
+ * landing together cannot both read 9 and both write 10. The check that gates
+ * the call is still a separate read, so a burst can overshoot a limit by the
+ * number of requests in flight — a handful of calls, not an open tap, and far
+ * cheaper than serialising every translation behind a lock.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} day
+ * @returns {Promise<number>} the reader's new total for the day
+ */
+export async function recordUsage(db, userId, day) {
+  await db.execute({
+    sql: `insert into translation_usage (user_id, day, count)
+          values (?, ?, 1)
+          on conflict (user_id, day) do update set count = count + 1`,
+    args: [userId, day],
+  });
+
+  return usageForUser(db, userId, day);
+}
+
+/* ------------------------------------------------------------ preferences */
+
 /**
  * The reader's chosen reading language, or null for "no preference".
  *

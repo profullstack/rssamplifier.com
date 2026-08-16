@@ -78,17 +78,25 @@ export async function POST(req) {
 
   await translations.setReadingLanguage(client, String(user.id), lang);
 
-  const result = lang
+  const attempt = lang
     ? await ensureTranslation(client, {
         itemId: String(item.id),
         title: String(item.title),
         summary: item.summary === null ? null : String(item.summary),
         targetLang: lang,
         sourceLang: feed.language === null ? null : String(feed.language),
+        userId: String(user.id),
       })
-    : null;
+    : { translation: null, limited: false };
 
+  // The daily spend ceiling. To a browser this is not an error worth a page of
+  // its own — the reader lands back on the post, which renders the original and
+  // says why. An API caller gets the status that means "not now, try later",
+  // because that is exactly what it means.
   if (wantsHtml) return redirect(lang ? `${back}&lang=${lang}` : back);
+  if (attempt.limited) return json({ error: 'translation-limit-reached', slug, guid, lang }, 429);
+
+  const result = attempt.translation;
 
   return json({
     ok: true,

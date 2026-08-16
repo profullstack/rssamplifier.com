@@ -109,6 +109,39 @@ test('a reader has no reading language until they pick one', async () => {
   assert.equal(await t.readingLanguage(db, userId), null);
 });
 
+test('usage counts up per reader per day, and sums across readers', async () => {
+  const day = t.usageDay();
+  const other = String((await a.findOrCreateUser(db, 'other@example.com')).id);
+
+  assert.equal(await t.usageForUser(db, userId, day), 0);
+  assert.equal(await t.usageForDay(db, day), 0);
+
+  assert.equal(await t.recordUsage(db, userId, day), 1);
+  assert.equal(await t.recordUsage(db, userId, day), 2);
+  await t.recordUsage(db, other, day);
+
+  assert.equal(await t.usageForUser(db, userId, day), 2);
+  assert.equal(await t.usageForUser(db, other, day), 1);
+  assert.equal(await t.usageForDay(db, day), 3);
+});
+
+test('usage is scoped to its own day', async () => {
+  // Fixed dates well away from the real one: the ledger is shared across this
+  // file, so borrowing today's date would count the rows an earlier test wrote.
+  const before = t.usageDay(new Date('2020-01-01T23:59:59Z'));
+  const after = t.usageDay(new Date('2020-01-02T00:00:01Z'));
+  assert.notEqual(before, after);
+
+  await t.recordUsage(db, userId, before);
+  assert.equal(await t.usageForUser(db, userId, before), 1);
+  assert.equal(await t.usageForUser(db, userId, after), 0);
+});
+
+test('usageDay is a UTC calendar day, so the global cap is one window', () => {
+  assert.equal(t.usageDay(new Date('2026-08-16T00:00:00Z')), '2026-08-16');
+  assert.equal(t.usageDay(new Date('2026-08-16T23:59:59Z')), '2026-08-16');
+});
+
 test('deleting a post takes its translations with it', async () => {
   await t.saveTranslation(db, {
     itemId,

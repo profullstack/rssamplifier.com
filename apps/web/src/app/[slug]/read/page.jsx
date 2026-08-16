@@ -105,7 +105,7 @@ export default async function ReaderPage({ params, searchParams }) {
   // Signed out, the bar is an invitation to sign in rather than a translator:
   // a first translation is a paid API call, so it is not something an anonymous
   // request gets to trigger. See /api/translate.
-  const translated =
+  const attempt =
     userId && wanted
       ? await ensureTranslation(client, {
           itemId,
@@ -113,8 +113,11 @@ export default async function ReaderPage({ params, searchParams }) {
           summary: post.summary === null ? null : String(post.summary),
           targetLang: wanted,
           sourceLang: feed.language === null ? null : String(feed.language),
+          userId,
         })
-      : null;
+      : { translation: null, limited: false };
+
+  const translated = attempt.translation;
 
   const title = translated ? translated.title : String(post.title);
   const summary = translated ? translated.summary : (post.summary ?? null);
@@ -141,6 +144,20 @@ export default async function ReaderPage({ params, searchParams }) {
           <p className="translated-note">
             Translated {sourceLang ? `from ${languageName(sourceLang, 'en')} ` : ''}by machine. The
             original is a click away in the toolbar.
+          </p>
+        )}
+
+        {/*
+         * Worth saying out loud rather than silently showing the original: this
+         * is the one failure that fixes itself, and a reader who is told the
+         * limit resets will come back instead of concluding the feature is
+         * broken. Posts somebody has already had translated stay readable
+         * throughout — the limit is on paying for new ones, not on reading.
+         */}
+        {attempt.limited && (
+          <p className="translated-note">
+            Translation limit reached for today — showing the original. Posts already translated
+            still are.
           </p>
         )}
 
