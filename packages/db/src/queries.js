@@ -748,6 +748,11 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
             -- parser — would otherwise be re-derived back to 'blog' on the
             -- feed's next crawl, which is to say within the hour.
             category = case when category_source = 'curated' then category else ? end,
+            -- Kept when the feed stops declaring one rather than overwritten
+            -- with nothing: a language that was true last week is a better
+            -- answer than null, and null is what the reader's language bar is
+            -- built from.
+            language = coalesce(nullif(?, ''), language),
             last_fetched_at = ?, last_success_at = ?, last_error = null,
             error_count = 0,
             fetch_interval_minutes = ?, next_fetch_at = ?, item_count = ?, updated_at = ?
@@ -762,6 +767,12 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
       // of rows imported before this column existed get their real category
       // the first time the poller reaches them.
       normalizeKind(feed.kind) ?? 'blog',
+      // Backfilled on every crawl for the same reason as the category above.
+      // The catalogue arrived as 47k rows with no metadata at all, so a feed's
+      // language is only ever learned by crawling it — and until it was written
+      // back here, the language bar could offer nothing but the handful of
+      // feeds that came in through the submit form.
+      feed.language || null,
       now,
       now,
       intervalMinutes,

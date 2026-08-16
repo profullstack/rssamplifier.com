@@ -12,6 +12,28 @@
 export const BASE_LANGUAGE = 'en';
 
 /**
+ * The languages the bar offers whatever the directory declares.
+ *
+ * Deriving the whole list from feed metadata was the original plan, and it does
+ * not survive contact with the catalogue: of 120 crawled feeds sampled at
+ * random, 112 declared no language at all and every one of the other eight said
+ * English. A directory of ~47k feeds produced a two-entry bar — "en | sv" — off
+ * the ~260 feeds that happen to say so.
+ *
+ * The mistake was treating "languages the catalogue is written in" as "languages
+ * a reader wants it in". They are different questions, and only the second one
+ * decides what belongs here: someone reading a German forum thread needs
+ * English, and no amount of German in the catalogue tells us that. So the bar
+ * starts from the languages readers are most likely to want and the catalogue
+ * adds to it, rather than being the only thing that fills it.
+ *
+ * Widening this does not widen what can be spent — /api/translate accepts only
+ * codes on this list, but the daily ceilings in ../index.js are what bound the
+ * bill, not the length of the menu.
+ */
+export const READER_LANGUAGES = ['en', 'es', 'de', 'fr', 'pt', 'ja'];
+
+/**
  * How many languages the bar shows at most.
  *
  * A row of links is a navigation aid, not a catalogue: past a handful it stops

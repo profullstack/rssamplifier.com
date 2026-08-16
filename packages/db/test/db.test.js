@@ -480,6 +480,52 @@ test('a crawl re-derives a derived category, and never a curated one', async () 
   await rm(dir2, { recursive: true, force: true });
 });
 
+test('a crawl backfills the language a bulk import never had', async () => {
+  const dir3 = await mkdtemp(join(tmpdir(), 'rssamp-lang-'));
+  const db3 = connect({ url: `file:${join(dir3, 'lang.db')}` });
+  await migrate(db3);
+
+  // Exactly what `pnpm import:catalogue` leaves behind: a URL, a title from the
+  // OPML, and nothing else. The reader's language bar is built by counting this
+  // column, so a catalogue that never learns its languages has no bar worth
+  // showing.
+  const { id } = await q.insertFeed(db3, {
+    slug: 'ein-blog',
+    feed_url: 'https://de.example/feed.xml',
+    title: 'Ein Blog',
+  });
+  assert.equal((await q.feedBySlug(db3, 'ein-blog')).language, null);
+
+  await q.markCrawlSuccess(
+    db3,
+    id,
+    { title: 'Ein Blog', description: '', siteUrl: '', imageUrl: '', language: 'de-DE' },
+    4,
+  );
+  assert.equal(String((await q.feedBySlug(db3, 'ein-blog')).language), 'de-DE');
+
+  // A feed that stops declaring one keeps what it last told us. Overwriting it
+  // with null would empty the bar again on the next crawl.
+  await q.markCrawlSuccess(
+    db3,
+    id,
+    { title: 'Ein Blog', description: '', siteUrl: '', imageUrl: '', language: '' },
+    4,
+  );
+  assert.equal(String((await q.feedBySlug(db3, 'ein-blog')).language), 'de-DE');
+
+  // And a feed that changes it is believed.
+  await q.markCrawlSuccess(
+    db3,
+    id,
+    { title: 'Ein Blog', description: '', siteUrl: '', imageUrl: '', language: 'nl' },
+    4,
+  );
+  assert.equal(String((await q.feedBySlug(db3, 'ein-blog')).language), 'nl');
+
+  await rm(dir3, { recursive: true, force: true });
+});
+
 test('topics: keywords are replaced wholesale, and the rollup drops single-feed topics', async () => {
   const dir3 = await mkdtemp(join(tmpdir(), 'rssamp-topics-'));
   const db3 = connect({ url: `file:${join(dir3, 'topics.db')}` });
