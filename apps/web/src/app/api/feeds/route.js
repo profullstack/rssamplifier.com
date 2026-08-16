@@ -39,7 +39,7 @@ export async function GET(req) {
       siteUrl: f.site_url,
       feedUrl: f.feed_url,
       language: f.language,
-      kind: f.kind,
+      kind: f.category,
       itemCount: f.item_count,
       status: f.status,
       lastSuccessAt: f.last_success_at,

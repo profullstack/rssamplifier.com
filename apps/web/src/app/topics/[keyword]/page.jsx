@@ -70,7 +70,7 @@ export default async function TopicPage({ params, searchParams }) {
     about: { '@type': 'Thing', name: topic.keyword },
     url: `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}`,
     hasPart: rows.slice(0, 20).map((f) => ({
-      '@type': f.kind === 'podcast' ? 'PodcastSeries' : 'Blog',
+      '@type': f.category === 'podcast' ? 'PodcastSeries' : 'Blog',
       name: f.title,
       url: `${siteUrl()}/${f.slug}`,
     })),
@@ -102,13 +102,13 @@ export default async function TopicPage({ params, searchParams }) {
               <h3>{f.title}</h3>
               {f.description && <p>{f.description}</p>}
               <div className="feed-meta">
-                <span>{f.kind === 'podcast' ? 'Podcast' : 'Blog'}</span>
+                <span>{f.category === 'podcast' ? 'Podcast' : 'Blog'}</span>
                 {/* Where this feed's place on the page came from. A publisher's
                     own tag is a different claim from a word we counted, and the
                     reader deserves to know which they are looking at. */}
                 <span>{f.source === 'category' ? 'tagged by the author' : `${f.count} mentions`}</span>
                 <span>
-                  {f.item_count} {f.kind === 'podcast' ? 'episodes' : 'posts'}
+                  {f.item_count} {f.category === 'podcast' ? 'episodes' : 'posts'}
                 </span>
               </div>
             </a>

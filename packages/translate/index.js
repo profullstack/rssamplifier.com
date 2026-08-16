@@ -1,7 +1,8 @@
 import { translations } from '@rssamplifier/db';
+import { sanitizeHtml, textLength } from '@rssamplifier/feed';
 
 import { normalizeLang } from './src/languages.js';
-import { translatePost } from './src/translate.js';
+import { MIN_ARTICLE_CHARS, translateArticle, translatePost } from './src/translate.js';
 
 export {
   BASE_LANGUAGE,
@@ -10,7 +11,14 @@ export {
   normalizeLang,
   offeredLanguages,
 } from './src/languages.js';
-export { MODEL, MAX_SOURCE_CHARS, translatePost } from './src/translate.js';
+export {
+  MODEL,
+  MAX_SOURCE_CHARS,
+  MAX_ARTICLE_CHARS,
+  MIN_ARTICLE_CHARS,
+  translatePost,
+  translateArticle,
+} from './src/translate.js';
 
 /**
  * Paid translations one reader may trigger in a UTC day.
@@ -83,13 +91,17 @@ function positive(raw, fallback) {
  *   itemId: string,
  *   title: string,
  *   summary?: string|null,
+ *   contentHtml?: string|null,
  *   targetLang: string,
  *   sourceLang?: string|null,
  *   userId?: string|null,
  *   now?: Date,
  * }} input
  * @returns {Promise<{
- *   translation: { title: string, summary: string|null, sourceLang: string|null, cached: boolean }|null,
+ *   translation: {
+ *     title: string, summary: string|null, contentHtml: string|null,
+ *     truncated: boolean, sourceLang: string|null, cached: boolean
+ *   }|null,
  *   limited: boolean,
  * }>}
  */
@@ -104,11 +116,17 @@ export async function ensureTranslation(db, input) {
   if (source && source === target) return none();
 
   const cached = await translations.translationFor(db, input.itemId, target);
-  if (cached) {
+  // A cached row with a body is the finished article. One without — written
+  // before articles were translated, or for a feed that had no body to
+  // translate — is not re-translated on the strength of that alone: the
+  // caller says whether a body is available to work from.
+  if (cached && (cached.content_html || !input.contentHtml)) {
     return {
       translation: {
         title: String(cached.title),
         summary: cached.summary === null ? null : String(cached.summary),
+        contentHtml: cached.content_html === null ? null : sanitizeHtml(String(cached.content_html)),
+        truncated: Number(cached.truncated ?? 0) === 1,
         sourceLang: cached.source_lang === null ? null : String(cached.source_lang),
         cached: true,
       },
@@ -137,14 +155,29 @@ export async function ensureTranslation(db, input) {
   // world to arrange. An honest reader loses one of sixty to a transient error.
   await translations.recordUsage(db, userId, day);
 
+  // The whole post when there is a post to translate, the title and summary
+  // when there is not. A feed that publishes teasers only — and there are a
+  // lot of them — has nothing else to give, and the reader still gets a page
+  // it can read.
+  const body = String(input.contentHtml ?? '');
+  const wholeArticle = textLength(body) >= MIN_ARTICLE_CHARS;
+
   let fresh;
   try {
-    fresh = await translatePost({
-      title: input.title,
-      summary: input.summary,
-      targetLang: target,
-      sourceLang: source,
-    });
+    fresh = wholeArticle
+      ? await translateArticle({
+          title: input.title,
+          summary: input.summary,
+          contentHtml: body,
+          targetLang: target,
+          sourceLang: source,
+        })
+      : await translatePost({
+          title: input.title,
+          summary: input.summary,
+          targetLang: target,
+          sourceLang: source,
+        });
   } catch {
     // Rate limits, timeouts, a revoked key: all of them mean "show the
     // original", and none of them should reach the reader as an error page.
@@ -153,11 +186,19 @@ export async function ensureTranslation(db, input) {
 
   if (!fresh) return none();
 
+  // Sanitized before it is stored as well as before it is rendered. The model
+  // is not a trusted author — a post can ask it for a script tag — and a
+  // sanitizer that only runs at render time is one forgotten call site away
+  // from serving whatever came back.
+  const translatedHtml = fresh.contentHtml ? sanitizeHtml(fresh.contentHtml) : null;
+
   await translations.saveTranslation(db, {
     itemId: input.itemId,
     lang: target,
     title: fresh.title,
     summary: fresh.summary,
+    contentHtml: translatedHtml,
+    truncated: Boolean(fresh.truncated),
     model: fresh.model,
     sourceLang: fresh.sourceLang ?? source,
   });
@@ -166,6 +207,8 @@ export async function ensureTranslation(db, input) {
     translation: {
       title: fresh.title,
       summary: fresh.summary,
+      contentHtml: translatedHtml,
+      truncated: Boolean(fresh.truncated),
       sourceLang: fresh.sourceLang ?? source,
       cached: false,
     },

@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { q, reactions, translations } from '@rssamplifier/db';
-import { isFrameable } from '@rssamplifier/feed';
+import { isFrameable, sanitizeHtml } from '@rssamplifier/feed';
 import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/translate';
 
 import { db, siteUrl } from '../../../lib/db.js';
@@ -9,6 +9,7 @@ import { popularLanguages } from '../../../lib/languages.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
+import EpisodePlayer from '../../EpisodePlayer.jsx';
 import LanguageBar from '../../LanguageBar.jsx';
 import PostActions from '../../PostActions.jsx';
 import ReaderToolbar from '../../ReaderToolbar.jsx';
@@ -44,11 +45,17 @@ export async function generateMetadata({ params }) {
  * honest card rather than a blank rectangle.
  *
  * A lot of the small web is not written in English, and a post nobody in the
- * room can read is a dead end no matter how well it is framed. Signed-in
- * readers get a language bar; picking one swaps the title and the summary for a
- * cached machine translation. The framed page stays in its own language —
- * that is somebody else's document and this reader has no business rewriting
- * it — so the translation is offered alongside it rather than in place of it.
+ * room can read is a dead end no matter how well it is framed. Asking for a
+ * language translates the whole post — title, summary and body — and the
+ * translated article is rendered here in place of the frame.
+ *
+ * That last part is a reversal, and worth saying why. The frame shows the
+ * publisher's own page, served from their server, and nothing we do can
+ * translate it; a reader who asked for Swedish and got a Swedish headline over
+ * an English page has been shown that they cannot read this, not helped to.
+ * The post's own text is something we already hold, so when a translation
+ * exists the reader gets that instead, and the original is one click away in
+ * the toolbar — where it now matters more, not less.
  *
  * @param {{
  *   params: Promise<{ slug: string }>,
@@ -100,28 +107,53 @@ export default async function ReaderPage({ params, searchParams }) {
     normalizeLang(lang) ??
     (userId ? normalizeLang(await translations.readingLanguage(client, userId)) : null);
 
-  const wanted = asked && languages.includes(asked) ? asked : null;
+  // Any language the URL can spell, not only the eight the bar offers. The bar
+  // is a shortlist of what the directory is mostly written in; a link someone
+  // was sent — or a reader whose language is not in the top eight — asked for
+  // something real either way, and refusing it silently is how "?lang=sv did
+  // nothing" happens.
+  const wanted = asked;
 
-  // Signed out, the bar is an invitation to sign in rather than a translator:
-  // a first translation is a paid API call, so it is not something an anonymous
-  // request gets to trigger. See /api/translate.
-  const attempt =
-    userId && wanted
-      ? await ensureTranslation(client, {
-          itemId,
-          title: String(post.title),
-          summary: post.summary === null ? null : String(post.summary),
-          targetLang: wanted,
-          sourceLang: feed.language === null ? null : String(feed.language),
-          userId,
-        })
-      : { translation: null, limited: false };
+  // Anonymous readers get translations somebody else already paid for: the row
+  // is written, serving it costs nothing, and the alternative is showing a
+  // reader English on a page whose translation is sitting in the database.
+  // Paying for a *new* one still needs an account — ensureTranslation stops at
+  // the cache without a userId. See /api/translate.
+  const source = await translations.itemText(client, itemId);
+
+  const attempt = wanted
+    ? await ensureTranslation(client, {
+        itemId,
+        title: String(post.title),
+        summary: post.summary === null ? null : String(post.summary),
+        contentHtml: source?.content_html ? String(source.content_html) : null,
+        targetLang: wanted,
+        sourceLang: feed.language === null ? null : String(feed.language),
+        userId,
+      })
+    : { translation: null, limited: false };
 
   const translated = attempt.translation;
 
   const title = translated ? translated.title : String(post.title);
   const summary = translated ? translated.summary : (post.summary ?? null);
   const sourceLang = normalizeLang(translated?.sourceLang ?? feed.language);
+
+  // The body to render, already sanitized. Translated bodies are sanitized on
+  // the way out of the translator as well; the original is sanitized here
+  // because until now nothing rendered it and it has never been through a
+  // sanitizer at all.
+  const article = translated?.contentHtml
+    ? translated.contentHtml
+    : source?.content_html
+      ? sanitizeHtml(String(source.content_html))
+      : null;
+
+  // Framing is what the reader does with a post it cannot show itself. A
+  // translated article is one it can, so the frame gives way to it.
+  const readable = Boolean(translated?.contentHtml);
+
+  const audio = post.audio_url ? String(post.audio_url) : null;
 
   return (
     <div className="reader">
@@ -172,62 +204,116 @@ export default async function ReaderPage({ params, searchParams }) {
       </div>
 
       {/*
-       * A translated summary above the frame, and only above the frame. The
-       * frame renders the original site in its own language and always will —
-       * it is a stranger's document, served from their server. This is the
-       * gist, in the reader's language, so they can decide whether the page
-       * below is worth the effort.
+       * The whole post, in the reader's language, in place of the frame.
+       *
+       * dangerouslySetInnerHTML with two untrusted authors behind it — the
+       * publisher and the model — so nothing reaches here that has not been
+       * through sanitizeHtml, which is an allowlist and drops scripts,
+       * handlers, embeds and unsafe URL schemes.
        */}
-      {translated && summary && verdict.frameable && (
-        <p className="lede translated">{summary}</p>
-      )}
+      {readable ? (
+        <>
+          {summary && <p className="lede translated">{summary}</p>}
+          <article
+            className="reader-article translated"
+            lang={wanted ?? undefined}
+            dangerouslySetInnerHTML={{ __html: article ?? '' }}
+          />
 
-      {verdict.frameable && postUrl ? (
-        <iframe
-          className="reader-frame"
-          src={postUrl}
-          title={title}
-          // The framed page is a stranger's: allow it to render and navigate
-          // itself, and nothing else. No same-origin, so it can never reach
-          // into this document.
-          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
-          referrerPolicy="no-referrer-when-downgrade"
-          loading="eager"
-        />
-      ) : (
-        <div className="reader-fallback">
-          <p className="notice">
-            {explain(verdict.reason)} You can still read it on the original site — the toolbar
-            below keeps your place in the directory.
-          </p>
-
-          {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
-
-          {postUrl && (
-            <p>
-              <a className="button" href={postUrl} target="_blank" rel="noopener">
-                Read on {hostOf(postUrl)} ↗
-              </a>
+          {translated?.truncated && (
+            <p className="notice">
+              This post was longer than one translation, so it stops partway. The rest is on the
+              original site — the toolbar below has the link.
             </p>
           )}
 
+          {postUrl && (
+            <p className="hint">
+              <a href={postUrl} target="_blank" rel="noopener">
+                Read the original on {hostOf(postUrl)} ↗
+              </a>
+            </p>
+          )}
+        </>
+      ) : (
+        <>
           {/*
-           * The only advertising in the reader, and only on this branch.
-           *
-           * When the frame loads, everything on screen is somebody else's
-           * article and the money an ad made here would be made off their
-           * writing. That is the same reason this page is already noindex —
-           * it must not compete with the original — and selling space around
-           * it would be the same trespass with a bill attached.
-           *
-           * This branch is different: nothing was framed, so the page is our
-           * own summary and our own link out, and it can carry a unit.
+           * Not translated, so the frame stands and the summary sits above it:
+           * the frame is the publisher's own page in its own language, and
+           * this is the gist in the reader's, so they can decide whether the
+           * page below is worth the effort.
            */}
-          <Ad format={AD_MREC} />
-        </div>
+          {translated && summary && verdict.frameable && (
+            <p className="lede translated">{summary}</p>
+          )}
+
+          {verdict.frameable && postUrl ? (
+            <iframe
+              className="reader-frame"
+              src={postUrl}
+              title={title}
+              // The framed page is a stranger's: allow it to render and
+              // navigate itself, and nothing else. No same-origin, so it can
+              // never reach into this document.
+              sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
+              referrerPolicy="no-referrer-when-downgrade"
+              loading="eager"
+            />
+          ) : (
+            <div className="reader-fallback">
+              <p className="notice">
+                {explain(verdict.reason)} You can still read it on the original site — the toolbar
+                below keeps your place in the directory.
+              </p>
+
+              {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
+
+              {/* The post's own text, where the publisher put it in the feed.
+                  Better than a link nobody can follow when the site refuses to
+                  be framed — which is most of the reason this branch exists. */}
+              {article && !summary && (
+                <article className="reader-article" dangerouslySetInnerHTML={{ __html: article }} />
+              )}
+
+              {postUrl && (
+                <p>
+                  <a className="button" href={postUrl} target="_blank" rel="noopener">
+                    Read on {hostOf(postUrl)} ↗
+                  </a>
+                </p>
+              )}
+
+              {/*
+               * The only advertising in the reader, and only on this branch.
+               *
+               * When the frame loads, everything on screen is somebody else's
+               * article and the money an ad made here would be made off their
+               * writing. That is the same reason this page is already noindex
+               * — it must not compete with the original — and selling space
+               * around it would be the same trespass with a bill attached.
+               *
+               * This branch is different: nothing was framed, so the page is
+               * our own summary and our own link out, and it can carry a unit.
+               */}
+              <Ad format={AD_MREC} />
+            </div>
+          )}
+        </>
       )}
 
       <Comments slug={slug} guid={String(post.guid)} comments={thread} userId={userId} />
+
+      {/* Docked above the toolbar, so the episode keeps playing while the
+          show notes scroll behind it. */}
+      {audio && (
+        <EpisodePlayer
+          src={audio}
+          type={post.audio_type ? String(post.audio_type) : null}
+          title={title}
+          seconds={post.audio_seconds ? Number(post.audio_seconds) : null}
+          feedTitle={String(feed.title)}
+        />
+      )}
 
       <ReaderToolbar
         slug={slug}

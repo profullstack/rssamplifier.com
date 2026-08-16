@@ -370,14 +370,20 @@ test('feeds are filtered and counted by kind', async () => {
   assert.equal(await q.countFeeds(kindDb, false, 'blog'), 2);
   assert.equal(await q.countFeeds(kindDb), 3, 'unfiltered count still spans the directory');
 
-  assert.deepEqual(await q.countFeedsByKind(kindDb), { blog: 2, podcast: 1 });
+  const counts = await q.countFeedsByKind(kindDb);
+  assert.equal(counts.blog, 2);
+  assert.equal(counts.podcast, 1);
+  assert.equal(counts.music, 0, 'a category with no feeds still reports zero');
 
   // A category the directory has none of still reports zero rather than being
   // absent, so a page can say "0 podcasts" instead of rendering nothing.
   const emptyDir = await mkdtemp(join(tmpdir(), 'rssamp-empty-'));
   const emptyDb = connect({ url: `file:${join(emptyDir, 'empty.db')}` });
   await migrate(emptyDb);
-  assert.deepEqual(await q.countFeedsByKind(emptyDb), { blog: 0, podcast: 0 });
+  assert.deepEqual(
+    await q.countFeedsByKind(emptyDb),
+    Object.fromEntries(q.KINDS.map((k) => [k, 0])),
+  );
   await rm(emptyDir, { recursive: true, force: true });
 
   // Dead feeds are excluded from a category exactly as they are from the index.
@@ -393,7 +399,7 @@ test('feeds are filtered and counted by kind', async () => {
   await rm(kindDir, { recursive: true, force: true });
 });
 
-test('a crawl re-derives the kind of a feed already in the directory', async () => {
+test('a crawl re-derives a derived category, and never a curated one', async () => {
   const dir2 = await mkdtemp(join(tmpdir(), 'rssamp-recrawl-'));
   const db2 = connect({ url: `file:${join(dir2, 'recrawl.db')}` });
   await migrate(db2);
@@ -404,7 +410,7 @@ test('a crawl re-derives the kind of a feed already in the directory', async () 
     feed_url: 'https://x.example/feed.xml',
     title: 'Became a show',
   });
-  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).kind), 'blog');
+  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).category), 'blog');
 
   await q.markCrawlSuccess(
     db2,
@@ -412,7 +418,32 @@ test('a crawl re-derives the kind of a feed already in the directory', async () 
     { title: 'Became a show', description: '', siteUrl: '', imageUrl: '', kind: 'podcast' },
     3,
   );
-  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).kind), 'podcast');
+  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).category), 'podcast');
+
+  // A category no parser can see — comics, lives, reels — is set by hand and
+  // has to survive the next crawl, which re-derives every other feed's.
+  const curated = await q.insertFeed(db2, {
+    slug: 'a-webcomic',
+    feed_url: 'https://c.example/feed.xml',
+    title: 'A Webcomic',
+  });
+  assert.equal(await q.curateCategory(db2, ['https://c.example/feed.xml'], 'comic'), 1);
+  assert.equal(String((await q.feedBySlug(db2, 'a-webcomic')).category), 'comic');
+
+  await q.markCrawlSuccess(
+    db2,
+    curated.id,
+    { title: 'A Webcomic', description: '', siteUrl: '', imageUrl: '', kind: 'blog' },
+    5,
+  );
+  assert.equal(
+    String((await q.feedBySlug(db2, 'a-webcomic')).category),
+    'comic',
+    'the crawler must not re-derive a curated category back to blog',
+  );
+
+  // An unknown category is refused rather than stored.
+  assert.equal(await q.curateCategory(db2, ['https://c.example/feed.xml'], 'newsletter'), 0);
 
   await rm(dir2, { recursive: true, force: true });
 });
