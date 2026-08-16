@@ -84,6 +84,11 @@ export default function RootLayout({ children }) {
 
         <ServiceWorker />
               <Script data-site="98aa7ae4-f205-4cf3-8c0f-40182ea3638e" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
+              <div data-cp-ad="" data-slot="2768fe0d-c51c-4629-8d86-0efba3d9ec1f" data-format="banner_300x250" />
+        <div data-cp-ad="" data-slot="2768fe0d-c51c-4629-8d86-0efba3d9ec1f" data-format="banner_728x90" />
+        <div data-cp-ad="" data-slot="2768fe0d-c51c-4629-8d86-0efba3d9ec1f" data-format="banner_320x50" />
+        <div data-cp-ad="" data-slot="2768fe0d-c51c-4629-8d86-0efba3d9ec1f" data-format="text_link" />
+        <Script src="https://crawlproof.com/ad.js" strategy="afterInteractive" />
       </body>
     </html>
   );
