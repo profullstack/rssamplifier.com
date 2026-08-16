@@ -69,7 +69,13 @@ export default async function ReaderPage({ params, searchParams }) {
   // just neighbours in the same query the blog page already makes.
   const posts = await q.itemsForFeed(client, feedId, 200);
   const index = guid ? posts.findIndex((item) => String(item.guid) === guid) : 0;
-  const post = index >= 0 ? posts[index] : null;
+
+  // That window is a running order, not the archive: a fifth of all the posts
+  // we hold sit outside their own feed's newest 200. Search reaches them, so
+  // the reader has to as well — fall back to fetching the one post by guid and
+  // simply do without neighbours, rather than claiming it does not exist.
+  const inOrder = index >= 0 && posts[index] !== undefined;
+  const post = inOrder ? posts[index] : guid ? await q.itemByGuid(client, feedId, guid) : null;
 
   if (!post) notFound();
 
@@ -233,8 +239,8 @@ export default async function ReaderPage({ params, searchParams }) {
         slug={slug}
         feedTitle={String(feed.title)}
         postUrl={postUrl}
-        prevGuid={index > 0 ? String(posts[index - 1].guid) : null}
-        nextGuid={index < posts.length - 1 ? String(posts[index + 1].guid) : null}
+        prevGuid={inOrder && index > 0 ? String(posts[index - 1].guid) : null}
+        nextGuid={inOrder && index < posts.length - 1 ? String(posts[index + 1].guid) : null}
         nextBlog={nav.next}
       />
     </div>

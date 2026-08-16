@@ -906,7 +906,8 @@ export async function searchItems(db, query, limit = 40, mode = 'all') {
   if (!match) return [];
 
   const { rows } = await db.execute({
-    sql: `select i.title, i.url, i.summary, i.published_at, f.slug as feed_slug, f.title as feed_title
+    sql: `select i.guid, i.title, i.url, i.summary, i.published_at,
+                 f.slug as feed_slug, f.title as feed_title
           from feed_items_fts
           join feed_items i on i.rowid = feed_items_fts.rowid
           join feeds f on f.id = i.feed_id
