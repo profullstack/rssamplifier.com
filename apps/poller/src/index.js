@@ -1,5 +1,11 @@
 import { connect, migrate, q, accounts } from '@rssamplifier/db';
-import { crawlDue, notifyFinishedSubmissions } from '@rssamplifier/ingest';
+import {
+  crawlDue,
+  notifyFinishedSubmissions,
+  notifyFinishedDiscoveries,
+  drainDiscoveryQueue,
+  drainDiscoveryKeywords,
+} from '@rssamplifier/ingest';
 
 /**
  * Feed crawler daemon.
@@ -23,6 +29,14 @@ const batchSize = Number(env['POLL_BATCH_SIZE']) || 25;
 // is throughput, not pressure on any one server — crawlDue keeps a single host's
 // feeds strictly sequential regardless of this number.
 const concurrency = Number(env['POLL_CONCURRENCY']) || 8;
+// Discovery candidates checked per tick. Smaller than the crawl batch on
+// purpose: each one is a cold site that may need three fetches to find a feed,
+// and unlike a crawl it is speculative work nobody is waiting on.
+const discoveryBatch = Number(env['DISCOVERY_BATCH_SIZE']) || 10;
+// Keyword searches per tick. Each one spends a credit against a metered monthly
+// plan, so this is a budget as much as a batch size: at the default tick of 60
+// seconds, five per tick is 7,200 searches a day if the queue is ever that deep.
+const keywordBatch = Number(env['DISCOVERY_KEYWORD_BATCH_SIZE']) || 5;
 
 // How often the topics rollup is rebuilt. It is one grouped scan of
 // feed_keywords, and the index it feeds is a browsing aid — a topic's own page
@@ -64,11 +78,24 @@ async function tick() {
       log('crawl', { crawled, failed, ms: Date.now() - started, due: await q.countDueFeeds(db) });
     }
 
+    // A keyword search queues more work than its request could finish, in both
+    // phases: keywords still to search, then the sites those searches turn up.
+    // Both run after the crawl — an indexed blog going stale matters more than
+    // finding a new one.
+    const searched = await drainDiscoveryKeywords(db, keywordBatch);
+    if (searched.searched || searched.failed || searched.fatal) log('discovery-search', searched);
+
+    const discovered = await drainDiscoveryQueue(db, discoveryBatch);
+    if (discovered.checked) log('discovery', discovered);
+
     // Queued submissions finish long after the upload, so the daemon that
     // drains the queue is also what tells the submitter it drained. A no-op
     // when no mail provider is configured.
     const notified = await notifyFinishedSubmissions(db);
     if (notified.sent || notified.failed) log('notified', notified);
+
+    const toldSearchers = await notifyFinishedDiscoveries(db);
+    if (toldSearchers.sent || toldSearchers.failed) log('notified-discovery', toldSearchers);
 
     // Expired sessions and spent challenges are already refused on read, so
     // clearing them is housekeeping — and this is the process that runs anyway.
@@ -107,7 +134,7 @@ try {
 const timer = setInterval(tick, intervalMs);
 void tick();
 
-log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency });
+log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency, discoveryBatch });
 
 /**
  * Shut down cleanly so Railway's SIGTERM does not sever an in-flight crawl.

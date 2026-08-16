@@ -51,6 +51,9 @@ pnpm --filter @rssamplifier/db migrate
 | `/<slug>` | One blog: metadata plus its latest posts |
 | `/search?q=` | Full-text search (SQLite FTS5) |
 | `/submit` | Submission form — URLs or an OPML upload |
+| `/discover` | Keyword search — name a subject, we go and find blogs about it |
+| `/discoveries/{id}` | Progress of one keyword run: what was added, and why the rest was not |
+| `/crawlstats` | Crawler and discovery queues, live (`/crawlstatus` redirects here) |
 | `/random` | Redirect to a random blog — the toolbar's ✦ |
 
 ## Agent endpoints
@@ -65,12 +68,55 @@ All send `access-control-allow-origin: *` and need no key.
 | `/api/search?q=` | Full-text search as JSON (`?limit=`, `?mode=any`) |
 | `/opml` | The whole directory as a subscription list |
 | `/api/submit` | `POST {"url"}`, `{"urls":[…]}` or `{"opml":"…"}` |
+| `/api/discover` | `POST {"keywords":[…]}` — up to 100 keywords per run |
+| `/api/discoveries/{id}` | Progress of one keyword run |
+| `/api/crawlstats` | Crawler health, including the two discovery queues |
 
 ```bash
 curl -X POST https://rssamplifier.com/api/submit \
   -H 'content-type: application/json' \
   -d '{"urls":["example.com","another.blog"]}'
+
+curl -X POST https://rssamplifier.com/api/discover \
+  -H 'content-type: application/json' \
+  -d '{"keywords":["siberian huskies"]}'
 ```
+
+## Finding blogs by keyword
+
+Submission needs someone to already know a blog exists. Discovery is the other
+direction: give it a subject and it searches the web (ValueSERP), collects the
+sites that come back, resolves a feed on each and keeps the ones that are
+actually blogs about that subject.
+
+Two things make it survive a hundred keywords at once. Both slow phases are
+queued — keywords to search, then sites to check — and the request only spends
+a fixed time budget on each before handing the rest to the poller. And search
+results never touch the `feeds` table directly: they wait in
+`discovery_candidates` until a feed has been resolved and judged, because a row
+in `feeds` is a public page and a search result is nobody's recommendation.
+
+A site is added only if a feed can be found and it passes both gates:
+
+- **Worthiness** (`packages/feed/src/worthiness.js`) — at least two entries, a
+  post inside about eighteen months, entries that link somewhere and do not all
+  share one title. Comment feeds and tag feeds are refused outright.
+- **Relevance** (`packages/feed/src/relevance.js`) — half the keyword's
+  significant words, stemmed, must appear in the feed's text. This is what stops
+  a search for "siberian huskies" adding a veterinary clinic's newsletter.
+
+Configuration:
+
+| Variable | Default | What |
+| --- | --- | --- |
+| `VALUESERP_API_KEY` | — | Required. Without it `/api/discover` answers 503 and the form says so. |
+| `DISCOVERY_KEYWORD_BATCH_SIZE` | 5 | Keyword searches the poller runs per tick |
+| `DISCOVERY_BATCH_SIZE` | 10 | Candidate sites the poller checks per tick |
+
+Credits are the thing to watch: each keyword costs one credit **per result
+page**, and three pages are fetched by default. Google stopped honouring
+`&num=100`, so a single request returns eight to ten organic results however
+large `num` is — paging is the only way to see more.
 
 Blog pages carry schema.org `Blog` / `BlogPosting` JSON-LD, and `robots.txt` names the AI crawlers
 explicitly to allow them rather than merely not blocking them.

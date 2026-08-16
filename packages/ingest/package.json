@@ -17,6 +17,7 @@
   "dependencies": {
     "@rssamplifier/feed": "workspace:*",
     "@rssamplifier/db": "workspace:*",
-    "@rssamplifier/mail": "workspace:*"
+    "@rssamplifier/mail": "workspace:*",
+    "@rssamplifier/search": "workspace:*"
   }
 }

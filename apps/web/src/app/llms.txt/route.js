@@ -62,6 +62,8 @@ export async function GET() {
     `- [One topic, JSON](${base}/api/topics/{keyword}): the feeds filed under it`,
     `- [OPML export](${base}/opml): the whole directory as a subscription list, or one category with ?kind=`,
     `- [Submit](${base}/api/submit): POST {"url":"..."} or {"urls":[...]} or {"opml":"..."}`,
+    `- [Discover](${base}/api/discover): POST {"keywords":["..."]} — find blogs by subject`,
+    `- [Discovery status](${base}/api/discoveries/{id}): progress of one keyword run`,
     '',
     '## Notes for agents',
     '',

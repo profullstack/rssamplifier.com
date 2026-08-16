@@ -1,4 +1,4 @@
-import { q } from '@rssamplifier/db';
+import { q, discovery } from '@rssamplifier/db';
 import { sendEmail, emailEnabled } from '@rssamplifier/mail';
 
 /**
@@ -40,6 +40,79 @@ export async function sendSubmissionEmail(params) {
     subject: `Your ${params.queued} feeds are indexed`,
     text: lines.join('\n'),
   });
+}
+
+/**
+ * Send one "your keyword search finished" note.
+ *
+ * @param {{ to: string, runId: string, keywords: string[], accepted: number, checked: number }} params
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+export async function sendDiscoveryEmail(params) {
+  const site = process.env['SITE_URL'] || 'https://rssamplifier.com';
+  const statusUrl = `${site}/discoveries/${params.runId}`;
+  const shown = params.keywords.slice(0, 5).join(', ');
+  const more = params.keywords.length > 5 ? ` and ${params.keywords.length - 5} more` : '';
+
+  const lines = [
+    `Your keyword search on RSS Amplifier has finished.`,
+    ``,
+    `  Keywords:     ${shown}${more}`,
+    `  Sites checked: ${params.checked}`,
+    `  Blogs added:   ${params.accepted}`,
+    ``,
+    `Full status: ${statusUrl}`,
+  ];
+
+  return sendEmail({
+    to: params.to,
+    subject: `${params.accepted} new blogs from your keyword search`,
+    text: lines.join('\n'),
+  });
+}
+
+/**
+ * Notify every discovery run whose candidate queue has drained, once each.
+ *
+ * Same one-attempt rule as submissions: marked notified whether or not the
+ * send worked, so a bouncing address is not retried every tick forever.
+ *
+ * @param {import('@libsql/client').Client} db
+ * @param {number} [limit]
+ * @returns {Promise<{ sent: number, failed: number }>}
+ */
+export async function notifyFinishedDiscoveries(db, limit = 5) {
+  if (!emailEnabled()) return { sent: 0, failed: 0 };
+
+  const due = await discovery.runsAwaitingNotice(db, limit);
+  let sent = 0;
+  let failed = 0;
+
+  for (const row of due) {
+    const id = String(row.id);
+    const progress = await discovery.runProgress(db, id);
+
+    let keywords = [];
+    try {
+      keywords = JSON.parse(String(row.keywords ?? '[]'));
+    } catch {
+      keywords = [];
+    }
+
+    const res = await sendDiscoveryEmail({
+      to: String(row.notify_email),
+      runId: id,
+      keywords,
+      accepted: progress.accepted,
+      checked: progress.total - progress.waiting,
+    });
+
+    await discovery.markRunNotified(db, id);
+    if (res.ok) sent += 1;
+    else failed += 1;
+  }
+
+  return { sent, failed };
 }
 
 /**

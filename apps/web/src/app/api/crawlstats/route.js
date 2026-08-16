@@ -1,4 +1,4 @@
-import { q } from '@rssamplifier/db';
+import { q, discovery } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 
@@ -18,16 +18,21 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const client = db();
 
-  const [stats, failing, recent] = await Promise.all([
+  const [stats, failing, recent, sitesToCheck, keywordsQueued] = await Promise.all([
     q.crawlStats(client),
     q.failingFeeds(client, 20),
     q.recentlyCrawled(client, 20),
+    discovery.countQueuedCandidates(client),
+    discovery.countQueuedKeywords(client),
   ]);
 
   return new Response(
     JSON.stringify(
       {
         ...stats,
+        // The discovery queues run on the same poller, so a monitor watching
+        // this endpoint should see them stall too.
+        discovery: { keywordsQueued, sitesToCheck },
         failing: failing.map((row) => ({
           slug: String(row.slug),
           title: String(row.title),

@@ -65,6 +65,7 @@ export default function RootLayout({ children }) {
               <a href="/videos">Videos</a>
               <a href="/topics">Topics</a>
               <a href="/submit">Submit</a>
+              <a href="/discover">Discover</a>
               <a href="/search">Search</a>
               <a href="/opml">OPML</a>
               <a href="/llms.txt">llms.txt</a>

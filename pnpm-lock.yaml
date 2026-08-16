@@ -49,6 +49,9 @@ importers:
       '@rssamplifier/mail':
         specifier: workspace:*
         version: link:../../packages/mail
+      '@rssamplifier/search':
+        specifier: workspace:*
+        version: link:../../packages/search
       '@rssamplifier/translate':
         specifier: workspace:*
         version: link:../../packages/translate
@@ -103,8 +106,13 @@ importers:
       '@rssamplifier/mail':
         specifier: workspace:*
         version: link:../mail
+      '@rssamplifier/search':
+        specifier: workspace:*
+        version: link:../search
 
   packages/mail: {}
+
+  packages/search: {}
 
   packages/translate:
     dependencies:

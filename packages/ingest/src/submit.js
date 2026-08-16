@@ -23,7 +23,7 @@ const INLINE_LIMIT = 100;
  * @param {string} feedUrl
  * @returns {Promise<string>}
  */
-async function claimSlug(db, title, feedUrl) {
+export async function claimSlug(db, title, feedUrl) {
   // parseFeed substitutes '(untitled)' for a missing title, which would
   // slugify to a perfectly valid "untitled" and defeat uniqueSlug's hostname
   // fallback — every untitled feed would land on untitled, untitled-2, …

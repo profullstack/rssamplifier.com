@@ -206,8 +206,9 @@ export async function insertFeed(db, feed) {
     sql: `insert into feeds
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
        categories, category, status, last_fetched_at, last_success_at, error_count,
-       fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?)`,
+       fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at,
+       discovery_run_id)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?, ?)`,
     args: [
       id,
       feed.slug,
@@ -227,6 +228,7 @@ export async function insertFeed(db, feed) {
       feed.item_count ?? 0,
       now,
       now,
+      feed.discovery_run_id ?? null,
     ],
   });
 
