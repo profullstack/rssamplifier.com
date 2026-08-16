@@ -1,0 +1,382 @@
+/*
+ * An editorial palette rather than a "dev tool" one: this is a reading
+ * directory, so type and whitespace carry the design and colour stays quiet.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #fbfaf8;
+  --surface: #ffffff;
+  --ink: #16150f;
+  --muted: #6b6862;
+  --line: #e4e0d8;
+  --accent: #b4552d;
+  --accent-soft: #f3e5dd;
+
+  --serif: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --measure: 68rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12110f;
+    --surface: #191815;
+    --ink: #ece9e2;
+    --muted: #9a958c;
+    --line: #2c2a26;
+    --accent: #e08055;
+    --accent-soft: #2a1f19;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  line-height: 1.6;
+  /* Room for the fixed toolbar so the last row is never trapped under it. */
+  padding-bottom: 6rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+.wrap {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.masthead {
+  border-bottom: 1px solid var(--line);
+  padding: 1.5rem 0;
+  margin-bottom: 2.5rem;
+}
+
+.masthead-inner {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 1.25rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.wordmark {
+  font-family: var(--serif);
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.wordmark span {
+  color: var(--accent);
+}
+
+.masthead nav {
+  display: flex;
+  gap: 1.4rem;
+  font-size: 0.9rem;
+}
+
+.masthead nav a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  padding-bottom: 2px;
+}
+
+.masthead nav a:hover {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- type */
+
+h1 {
+  font-family: var(--serif);
+  font-size: clamp(2rem, 5vw, 2.9rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.6rem;
+  font-weight: 600;
+}
+
+h2 {
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 3rem 0 1rem;
+  letter-spacing: -0.01em;
+}
+
+.lede {
+  font-size: 1.12rem;
+  color: var(--muted);
+  max-width: 42rem;
+  margin: 0 0 2rem;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+
+/* ---------------------------------------------------------------- cards */
+
+.feed-list {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.feed-row {
+  background: var(--surface);
+  padding: 1.15rem 1.35rem;
+  display: block;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.feed-row:hover {
+  background: var(--accent-soft);
+}
+
+.feed-row h3 {
+  font-family: var(--serif);
+  font-size: 1.08rem;
+  font-weight: 600;
+  margin: 0 0 0.2rem;
+}
+
+.feed-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.feed-meta {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------------- entries */
+
+.entry {
+  padding: 1.6rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.entry:last-child {
+  border-bottom: none;
+}
+
+.entry h3 {
+  font-family: var(--serif);
+  font-size: 1.2rem;
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.entry h3 a {
+  text-decoration: none;
+}
+
+.entry h3 a:hover {
+  color: var(--accent);
+}
+
+.entry p {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+}
+
+.entry time {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- forms */
+
+.submit-box {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+textarea,
+input[type='text'],
+input[type='search'] {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--ink);
+  resize: vertical;
+}
+
+textarea:focus,
+input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.6rem 1.3rem;
+  border: none;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+/* ---------------------------------------------------------------- toolbar
+ *
+ * Kagi Small Web's roaming toolbar, restyled: a single low-contrast pill that
+ * floats clear of the content instead of a chunky pixel bar. Backdrop blur so
+ * it reads over text without an opaque slab.
+ */
+
+.toolbar {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: 0 6px 28px rgb(0 0 0 / 0.1);
+  z-index: 50;
+  font-size: 0.85rem;
+}
+
+.toolbar a,
+.toolbar span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.42rem 0.85rem;
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.toolbar a:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.toolbar .sep {
+  width: 1px;
+  height: 1.1rem;
+  padding: 0;
+  background: var(--line);
+}
+
+.toolbar .primary {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+@media (max-width: 34rem) {
+  .toolbar .label {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- misc */
+
+.pill {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.notice {
+  padding: 0.9rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 0.92rem;
+  margin-bottom: 1.5rem;
+}
+
+footer.site {
+  margin-top: 4rem;
+  border-top: 1px solid var(--line);
+  padding: 1.5rem 0 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+footer.site a {
+  color: var(--muted);
+}
+
+.empty {
+  color: var(--muted);
+  padding: 3rem 0;
+  text-align: center;
+}

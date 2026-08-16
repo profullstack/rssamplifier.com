@@ -1,0 +1,14 @@
+{
+  "name": "@rssamplifier/poller",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@rssamplifier/feed": "workspace:*",
+    "@rssamplifier/ingest": "workspace:*",
+    "@supabase/supabase-js": "^2.76.1"
+  }
+}

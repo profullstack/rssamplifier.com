@@ -1,0 +1,17 @@
+{
+  "name": "rssamplifier.com",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent-first public RSS directory. Submit a URL, a list or an OPML file; every blog gets its own page.",
+  "scripts": {
+    "test": "pnpm -r test",
+    "dev": "pnpm --filter @rssamplifier/web dev",
+    "build": "pnpm --filter @rssamplifier/web build",
+    "poll": "pnpm --filter @rssamplifier/poller start"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.18.0"
+}

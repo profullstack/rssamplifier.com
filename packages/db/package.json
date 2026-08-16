@@ -1,0 +1,16 @@
+{
+  "name": "@rssamplifier/db",
+  "version": "0.1.0",
+  "description": "Turso/libSQL client, schema migrations and queries",
+  "type": "module",
+  "main": "index.js",
+  "exports": { ".": "./index.js" },
+  "files": ["index.js", "src", "migrations"],
+  "scripts": {
+    "migrate": "node src/migrate.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.9"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@rssamplifier/feed",
+  "version": "0.1.0",
+  "description": "Feed discovery, parsing and OPML handling for rssamplifier.com",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.2.5"
+  }
+}
