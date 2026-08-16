@@ -93,9 +93,10 @@ export default async function FeedPage({ params }) {
           <article className="entry" key={String(p.guid)}>
             <h3>
               {p.url ? (
-                <a href={String(p.url)} rel="noopener">
-                  {p.title}
-                </a>
+                // Into the reader rather than straight out: the toolbar stays
+                // on screen, and the reader falls back to the original site for
+                // anything that refuses to be framed.
+                <a href={`/${slug}/read?p=${encodeURIComponent(String(p.guid))}`}>{p.title}</a>
               ) : (
                 p.title
               )}
