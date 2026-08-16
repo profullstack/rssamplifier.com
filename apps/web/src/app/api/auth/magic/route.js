@@ -1,6 +1,7 @@
 import { requestSignInLink } from '@rssamplifier/auth';
 
 import { db, siteUrl } from '../../../../lib/db.js';
+import { magicReturnPath } from '../../../../lib/signInForm.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,12 +18,18 @@ export const dynamic = 'force-dynamic';
 export async function POST(req) {
   const contentType = req.headers.get('content-type') ?? '';
   let email = '';
+  // Which page the form was on, so a reader who asked to *create* an account is
+  // not answered by a page headed "Sign in". Anything unrecognised falls back
+  // to /login rather than being reflected into the Location header.
+  let from = '/login';
 
   try {
     if (contentType.includes('application/json')) {
       email = String((await req.json())?.email ?? '');
     } else {
-      email = String((await req.formData()).get('email') ?? '');
+      const form = await req.formData();
+      email = String(form.get('email') ?? '');
+      from = magicReturnPath(form.get('from'));
     }
   } catch {
     return json({ ok: false, error: 'bad-request' }, 400);
@@ -36,7 +43,7 @@ export async function POST(req) {
 
   if ((req.headers.get('accept') ?? '').includes('text/html')) {
     const status = hardFailure ? `error=${result.error}` : 'sent=1';
-    return new Response(null, { status: 303, headers: { location: `/login?${status}` } });
+    return new Response(null, { status: 303, headers: { location: `${from}?${status}` } });
   }
 
   if (hardFailure) return json({ ok: false, error: result.error }, 400);
