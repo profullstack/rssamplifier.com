@@ -1,7 +1,7 @@
 {
-  "name": "@rssamplifier/ingest",
+  "name": "@rssamplifier/auth",
   "version": "0.1.0",
-  "description": "Feed ingestion: submit, crawl and persist to Turso",
+  "description": "Accounts: magic-link sign-in, passkeys and sessions",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -15,8 +15,8 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "@rssamplifier/feed": "workspace:*",
     "@rssamplifier/db": "workspace:*",
+    "@simplewebauthn/server": "^13.0.0",
     "@rssamplifier/mail": "workspace:*"
   }
 }

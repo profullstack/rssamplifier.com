@@ -1,0 +1,9 @@
+{
+  "name": "@rssamplifier/mail",
+  "version": "0.1.0",
+  "description": "Outbound email, or a no-op when none is configured",
+  "type": "module",
+  "main": "index.js",
+  "exports": { ".": "./index.js" },
+  "files": ["index.js", "src"]
+}

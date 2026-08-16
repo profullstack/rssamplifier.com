@@ -61,6 +61,12 @@ export default function RootLayout({ children }) {
               <a href="/opml">OPML</a>
               <a href="/llms.txt">llms.txt</a>
               <a href="/about">About</a>
+              {/* Always "Account", never "Sign in" or the reader's address:
+                  telling them apart means reading the session cookie here,
+                  which would make every page in the site dynamic. /account
+                  sends a signed-out visitor to /login, which costs one redirect
+                  and keeps the static pages static. */}
+              <a href="/account">Account</a>
             </nav>
           </div>
         </header>

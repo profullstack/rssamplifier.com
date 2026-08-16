@@ -1,4 +1,5 @@
 import { q } from '@rssamplifier/db';
+import { sendEmail, emailEnabled } from '@rssamplifier/mail';
 
 /**
  * Telling submitters their import finished.
@@ -12,16 +13,7 @@ import { q } from '@rssamplifier/db';
  * cannot send mail should still accept submissions.
  */
 
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-
-/**
- * Is outbound email configured at all?
- *
- * @returns {boolean}
- */
-export function emailEnabled() {
-  return Boolean(process.env['RESEND_API_KEY']);
-}
+export { emailEnabled };
 
 /**
  * Send one "your import finished" note.
@@ -30,11 +22,7 @@ export function emailEnabled() {
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function sendSubmissionEmail(params) {
-  const key = process.env['RESEND_API_KEY'];
-  if (!key) return { ok: false, error: 'email-not-configured' };
-
   const site = process.env['SITE_URL'] || 'https://rssamplifier.com';
-  const from = process.env['EMAIL_FROM'] || 'RSS Amplifier <noreply@rssamplifier.com>';
   const statusUrl = `${site}/submissions/${params.submissionId}`;
 
   const lines = [
@@ -47,26 +35,11 @@ export async function sendSubmissionEmail(params) {
     `Full status: ${statusUrl}`,
   ];
 
-  try {
-    const res = await fetch(RESEND_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${key}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        from,
-        to: [params.to],
-        subject: `Your ${params.queued} feeds are indexed`,
-        text: lines.join('\n'),
-      }),
-    });
-
-    if (!res.ok) return { ok: false, error: `resend-${res.status}` };
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err?.message ?? err) };
-  }
+  return sendEmail({
+    to: params.to,
+    subject: `Your ${params.queued} feeds are indexed`,
+    text: lines.join('\n'),
+  });
 }
 
 /**
