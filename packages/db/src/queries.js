@@ -206,7 +206,7 @@ export async function countItems(db, feedId) {
  */
 export async function dueFeeds(db, limit = 25) {
   const { rows } = await db.execute({
-    sql: `select id, feed_url, error_count from feeds
+    sql: `select id, feed_url, error_count, fetch_interval_minutes from feeds
           where status <> 'dead' and next_fetch_at <= ?
           order by next_fetch_at asc limit ?`,
     args: [nowIso(), limit],
@@ -215,20 +215,43 @@ export async function dueFeeds(db, limit = 25) {
 }
 
 /**
+ * How many feeds are waiting to be crawled.
+ *
+ * The poller logs this so a backlog that never drains is visible without
+ * opening the database — at directory scale that is the number that says
+ * whether the crawler is keeping up.
+ *
+ * @param {Client} db
+ * @returns {Promise<number>}
+ */
+export async function countDueFeeds(db) {
+  const { rows } = await db.execute({
+    sql: `select count(*) as n from feeds where status <> 'dead' and next_fetch_at <= ?`,
+    args: [nowIso()],
+  });
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
  * Record a successful crawl.
+ *
+ * The caller supplies the next interval rather than it being fixed here: a
+ * directory of tens of thousands of feeds cannot re-fetch every one of them
+ * hourly, so a quiet blog earns a longer gap. See `nextIntervalMinutes`.
  *
  * @param {Client} db
  * @param {string} id
  * @param {object} feed parsed feed metadata
  * @param {number} itemCount
+ * @param {number} [intervalMinutes]
  */
-export async function markCrawlSuccess(db, id, feed, itemCount) {
+export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes = 60) {
   const now = nowIso();
   await db.execute({
     sql: `update feeds set
             status = 'active', title = ?, description = ?, site_url = ?, image_url = ?,
             last_fetched_at = ?, last_success_at = ?, last_error = null, error_count = 0,
-            fetch_interval_minutes = 60, next_fetch_at = ?, item_count = ?, updated_at = ?
+            fetch_interval_minutes = ?, next_fetch_at = ?, item_count = ?, updated_at = ?
           where id = ?`,
     args: [
       feed.title,
@@ -237,12 +260,78 @@ export async function markCrawlSuccess(db, id, feed, itemCount) {
       feed.imageUrl || null,
       now,
       now,
-      nowIso(60 * 60_000),
+      intervalMinutes,
+      nowIso(intervalMinutes * 60_000),
       itemCount,
       now,
       id,
     ],
   });
+}
+
+/**
+ * Insert many feeds in one round trip, skipping any that are already known.
+ *
+ * Bulk imports arrive as tens of thousands of rows from an OPML catalogue, and
+ * the submit path cannot be reused for them: it fetches every feed before
+ * inserting it, which would mean 47k outbound requests held open by one
+ * process. These rows land as `pending` with the catalogue's own title, and the
+ * poller fills in the real metadata when it first crawls each one.
+ *
+ * `on conflict do nothing` covers both unique columns, so a re-run of the same
+ * catalogue is a no-op rather than an error.
+ *
+ * @param {Client} db
+ * @param {Array<{ slug: string, feed_url: string, site_url?: string|null, title: string, next_fetch_at: string }>} feeds
+ * @returns {Promise<number>} rows actually inserted
+ */
+export async function insertFeedsBulk(db, feeds) {
+  if (feeds.length === 0) return 0;
+
+  const now = nowIso();
+  const statements = feeds.map((f) => ({
+    sql: `insert into feeds
+      (id, slug, feed_url, site_url, title, description, language, image_url, author,
+       categories, status, last_fetched_at, last_success_at, last_error, error_count,
+       fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at)
+      values (?, ?, ?, ?, ?, null, null, null, null, '[]', 'pending', null, null, null, 0,
+              60, ?, 0, ?, ?)
+      on conflict do nothing`,
+    args: [newId(), f.slug, f.feed_url, f.site_url ?? null, f.title, f.next_fetch_at, now, now],
+  }));
+
+  const results = await db.batch(statements, 'write');
+  return results.reduce((n, r) => n + Number(r.rowsAffected ?? 0), 0);
+}
+
+/**
+ * Every feed_url and slug already in the directory.
+ *
+ * Read in pages because an import has to check ~50k rows against the table and
+ * a single unbounded select of that size is the one query most likely to time
+ * out against a remote libSQL server.
+ *
+ * @param {Client} db
+ * @param {number} [pageSize]
+ * @returns {Promise<{ urls: Set<string>, slugs: Set<string> }>}
+ */
+export async function existingFeedKeys(db, pageSize = 5000) {
+  const urls = new Set();
+  const slugs = new Set();
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { rows } = await db.execute({
+      sql: 'select feed_url, slug from feeds order by rowid limit ? offset ?',
+      args: [pageSize, offset],
+    });
+    for (const row of rows) {
+      urls.add(String(row.feed_url).toLowerCase());
+      slugs.add(String(row.slug));
+    }
+    if (rows.length < pageSize) break;
+  }
+
+  return { urls, slugs };
 }
 
 /**
