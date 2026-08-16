@@ -185,6 +185,27 @@ export async function itemsForFeed(db, feedId, limit = 50) {
 }
 
 /**
+ * One post of a feed, by its guid.
+ *
+ * The reader addresses posts by guid rather than by URL on purpose: the URL it
+ * frames then always comes out of our own database, so the reader cannot be
+ * pointed at an arbitrary page by editing the query string.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @param {string} guid
+ * @returns {Promise<object|null>}
+ */
+export async function itemByGuid(db, feedId, guid) {
+  const { rows } = await db.execute({
+    sql: `select guid, url, title, summary, author, image_url, published_at
+          from feed_items where feed_id = ? and guid = ? limit 1`,
+    args: [feedId, guid],
+  });
+  return rows[0] ?? null;
+}
+
+/**
  * @param {Client} db
  * @param {string} feedId
  * @returns {Promise<number>}

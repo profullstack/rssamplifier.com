@@ -363,6 +363,75 @@ button:hover {
   margin-bottom: 1.5rem;
 }
 
+/* ---------------------------------------------------------------- reader */
+
+/* The framed-article view. The site footer would sit below a full-height frame
+   where nobody would ever scroll to it, and the usual reading measure would
+   waste most of the width on someone else's page, so the reader opts out of
+   both. */
+body:has(.reader) footer.site {
+  display: none;
+}
+
+body:has(.reader) main.wrap {
+  max-width: none;
+  padding: 0 0.75rem;
+}
+
+.reader {
+  display: flex;
+  flex-direction: column;
+}
+
+.reader-head {
+  padding: 0.25rem 0.25rem 0.75rem;
+}
+
+.reader-head h1 {
+  font-size: 1.35rem;
+  margin: 0.2rem 0 0;
+}
+
+.reader-head .eyebrow {
+  margin: 0;
+}
+
+/* dvh, not vh: on a phone the address bar collapses on scroll and vh would
+   leave the frame overhanging by exactly that much. */
+.reader-frame {
+  width: 100%;
+  height: calc(100dvh - 14rem);
+  min-height: 22rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.reader-fallback {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 1rem 0.5rem;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.button:hover {
+  background: var(--accent-soft);
+}
+
+/* A control that exists so the row keeps its shape, but leads nowhere. */
+.toolbar .disabled {
+  opacity: 0.35;
+}
+
 /* Explanatory line inside a form, below the control it describes. */
 .hint {
   font-size: 0.86rem;
