@@ -192,6 +192,45 @@ test('submission audit and rate-limit window', async () => {
   assert.equal(await q.submissionCount(db, 'someone-else'), 0);
 });
 
+test('eachFeedForExport yields the whole directory, not one page of it', async () => {
+  const exportDir = await mkdtemp(join(tmpdir(), 'rssamp-export-'));
+  const exportDb = connect({ url: `file:${join(exportDir, 'test.db')}` });
+  await migrate(exportDb);
+
+  // Titles deliberately collide: the export cursor is (title, id), and a cursor
+  // on title alone would either skip or repeat rows wherever a page boundary
+  // lands inside a run of the same title.
+  const total = 25;
+  for (let i = 0; i < total; i += 1) {
+    await q.insertFeed(exportDb, {
+      slug: `blog-${String(i).padStart(3, '0')}`,
+      feed_url: `https://blog-${i}.example/feed.xml`,
+      site_url: `https://blog-${i}.example/`,
+      title: i % 5 === 0 ? 'Shared Title' : `Blog ${String(i).padStart(3, '0')}`,
+      description: null,
+    });
+  }
+
+  const seen = [];
+  for await (const row of q.eachFeedForExport(exportDb, 4)) seen.push(String(row.slug));
+
+  assert.equal(seen.length, total, 'every feed came back across page boundaries');
+  assert.equal(new Set(seen).size, total, 'no feed was yielded twice');
+
+  const titles = [];
+  for await (const row of q.eachFeedForExport(exportDb, 4)) titles.push(String(row.title));
+  assert.deepEqual(titles, [...titles].sort(), 'paging preserved the title ordering');
+
+  // A page larger than the table must still terminate, and dead feeds stay out.
+  await exportDb.execute("update feeds set status = 'dead' where slug = 'blog-001'");
+  const alive = [];
+  for await (const row of q.eachFeedForExport(exportDb, 500)) alive.push(String(row.slug));
+  assert.equal(alive.length, total - 1);
+  assert.equal(alive.includes('blog-001'), false, 'dead feeds are excluded from exports');
+
+  await rm(exportDir, { recursive: true, force: true });
+});
+
 test('newId is unique and nowIso offsets correctly', () => {
   assert.notEqual(newId(), newId());
   const later = new Date(nowIso(60_000)).getTime() - new Date(nowIso()).getTime();

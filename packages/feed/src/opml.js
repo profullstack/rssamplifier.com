@@ -82,27 +82,54 @@ export function parseOpml(xml) {
  * @returns {string} OPML 2.0 document
  */
 export function buildOpml(feeds, title = 'RSS Amplifier') {
-  const rows = feeds
-    .map((f) => {
-      const attrs = [
-        `text="${esc(f.title)}"`,
-        `title="${esc(f.title)}"`,
-        'type="rss"',
-        `xmlUrl="${esc(f.feed_url)}"`,
-      ];
-      if (f.site_url) attrs.push(`htmlUrl="${esc(f.site_url)}"`);
-      return `    <outline ${attrs.join(' ')} />`;
-    })
-    .join('\n');
+  const rows = feeds.map((f) => opmlOutline(f)).join('\n');
+  return `${opmlHead(title)}${rows}\n${opmlFoot()}`;
+}
 
+/**
+ * Everything in an OPML document before the first outline.
+ *
+ * Split out so the full directory export can be streamed: it is tens of
+ * thousands of entries, and rendering it into one string would hold both the
+ * rows and the finished document in memory at once.
+ *
+ * @param {string} [title]
+ * @returns {string}
+ */
+export function opmlHead(title = 'RSS Amplifier') {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
   <head>
     <title>${esc(title)}</title>
   </head>
   <body>
-${rows}
-  </body>
+`;
+}
+
+/**
+ * A single `<outline>` element, without its trailing newline.
+ *
+ * @param {{ title: string, feed_url: string, site_url?: string|null }} feed
+ * @returns {string}
+ */
+export function opmlOutline(feed) {
+  const attrs = [
+    `text="${esc(feed.title)}"`,
+    `title="${esc(feed.title)}"`,
+    'type="rss"',
+    `xmlUrl="${esc(feed.feed_url)}"`,
+  ];
+  if (feed.site_url) attrs.push(`htmlUrl="${esc(feed.site_url)}"`);
+  return `    <outline ${attrs.join(' ')} />`;
+}
+
+/**
+ * Everything in an OPML document after the last outline.
+ *
+ * @returns {string}
+ */
+export function opmlFoot() {
+  return `  </body>
 </opml>
 `;
 }

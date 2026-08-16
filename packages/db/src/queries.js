@@ -638,7 +638,12 @@ export async function submissionCount(db, ipHash, windowMs = 3_600_000) {
 }
 
 /**
- * All feeds for OPML and sitemap output.
+ * The first `limit` feeds in export order.
+ *
+ * A capped sample, for callers that genuinely want the head of the list rather
+ * than the directory — llms.txt, which is a summary document. Anything that
+ * claims to be a complete export must use {@link eachFeedForExport} instead;
+ * this one truncates silently by design.
  *
  * @param {Client} db
  * @param {number} [limit]
@@ -647,8 +652,70 @@ export async function submissionCount(db, ipHash, windowMs = 3_600_000) {
 export async function allFeedsForExport(db, limit = 5000) {
   const { rows } = await db.execute({
     sql: `select slug, title, feed_url, site_url, description, item_count, updated_at
-          from feeds where status <> 'dead' order by title asc limit ?`,
+          from feeds where status <> 'dead' order by title asc, id asc limit ?`,
     args: [limit],
   });
   return rows;
+}
+
+/**
+ * One page of the export ordering, resumed from a cursor.
+ *
+ * Keyset paging rather than OFFSET: SQLite answers OFFSET by walking and
+ * discarding the rows before it, so exporting the whole table page by page
+ * would cost O(n²) row visits. Comparing against the last row seen instead lets
+ * every page start where the previous one stopped.
+ *
+ * The cursor is (title, id), not title alone — titles are not unique in this
+ * directory, and a cursor on a duplicated title would either skip the rest of
+ * that title or repeat it forever. `id` is the primary key, so the pair is.
+ *
+ * @param {Client} db
+ * @param {{ afterTitle?: string|null, afterId?: string|null, limit?: number }} [cursor]
+ * @returns {Promise<object[]>}
+ */
+export async function feedsForExportPage(db, { afterTitle = null, afterId = null, limit = 2000 } = {}) {
+  const resuming = afterTitle !== null && afterId !== null;
+
+  const { rows } = await db.execute({
+    sql: `select id, slug, title, feed_url, site_url, description, item_count, updated_at
+          from feeds
+          where status <> 'dead'
+            ${resuming ? 'and (title > ? or (title = ? and id > ?))' : ''}
+          order by title asc, id asc
+          limit ?`,
+    args: resuming ? [afterTitle, afterTitle, afterId, limit] : [limit],
+  });
+  return rows;
+}
+
+/**
+ * Every non-dead feed, in export order, a page at a time.
+ *
+ * Yields rows instead of returning an array so a full export never holds the
+ * whole directory in memory — it is tens of thousands of rows and only grows,
+ * and the endpoints that use it stream their output as the pages arrive.
+ *
+ * @param {Client} db
+ * @param {number} [pageSize]
+ * @returns {AsyncGenerator<object, void, void>}
+ */
+export async function* eachFeedForExport(db, pageSize = 2000) {
+  let afterTitle = null;
+  let afterId = null;
+
+  for (;;) {
+    const rows = await feedsForExportPage(db, { afterTitle, afterId, limit: pageSize });
+    if (rows.length === 0) return;
+
+    for (const row of rows) yield row;
+
+    const last = rows[rows.length - 1];
+    afterTitle = String(last.title ?? '');
+    afterId = String(last.id ?? '');
+
+    // A short page means the cursor reached the end; asking again would only
+    // cost a round trip to learn the same thing.
+    if (rows.length < pageSize) return;
+  }
 }
