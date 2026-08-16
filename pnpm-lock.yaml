@@ -49,6 +49,9 @@ importers:
       '@rssamplifier/mail':
         specifier: workspace:*
         version: link:../../packages/mail
+      '@rssamplifier/search':
+        specifier: workspace:*
+        version: link:../../packages/search
       '@simplewebauthn/browser':
         specifier: ^13.0.0
         version: 13.3.0
@@ -100,8 +103,13 @@ importers:
       '@rssamplifier/mail':
         specifier: workspace:*
         version: link:../mail
+      '@rssamplifier/search':
+        specifier: workspace:*
+        version: link:../search
 
   packages/mail: {}
+
+  packages/search: {}
 
 packages:
 

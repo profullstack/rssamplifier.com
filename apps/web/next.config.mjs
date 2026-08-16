@@ -32,6 +32,10 @@ const nextConfig = {
 
       // What people type when they are looking for the sign-up page. There is
       // only one, and it is /signup.
+      // The crawler status board is at /crawlstats. /crawlstatus is what people
+      // type looking for it, including us.
+      { source: '/crawlstatus', destination: '/crawlstats', permanent: true },
+
       { source: '/register', destination: '/signup', permanent: true },
       { source: '/sign-up', destination: '/signup', permanent: true },
       { source: '/sign-in', destination: '/login', permanent: true },

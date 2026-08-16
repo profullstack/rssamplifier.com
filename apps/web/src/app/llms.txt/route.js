@@ -35,6 +35,8 @@ export async function GET() {
     `- [Search, JSON](${base}/api/search?q=): full-text over posts and blogs`,
     `- [OPML export](${base}/opml): the whole directory as a subscription list`,
     `- [Submit](${base}/api/submit): POST {"url":"..."} or {"urls":[...]} or {"opml":"..."}`,
+    `- [Discover](${base}/api/discover): POST {"keywords":["..."]} — find blogs by subject`,
+    `- [Discovery status](${base}/api/discoveries/{id}): progress of one keyword run`,
     '',
     '## Notes for agents',
     '',

@@ -1,4 +1,4 @@
-import { q } from '@rssamplifier/db';
+import { q, discovery } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import AutoRefresh from '../AutoRefresh.jsx';
@@ -28,10 +28,12 @@ export const metadata = {
 export default async function CrawlStatsPage() {
   const client = db();
 
-  const [stats, failing, recent] = await Promise.all([
+  const [stats, failing, recent, discoveryQueue, keywordQueue] = await Promise.all([
     q.crawlStats(client),
     q.failingFeeds(client, 15),
     q.recentlyCrawled(client, 15),
+    discovery.countQueuedCandidates(client),
+    discovery.countQueuedKeywords(client),
   ]);
 
   // A crawler that has fetched nothing in an hour is either idle because
@@ -67,6 +69,13 @@ export default async function CrawlStatsPage() {
         <Stat label="Stale" value={fmt(stats.staleActive)} note="active, no success in 24h" />
         <Stat label="Erroring" value={fmt(stats.errored)} note={`${fmt(stats.dead)} given up`} />
         <Stat label="Pending" value={fmt(stats.pending)} note="accepted, not yet crawled" />
+        {/*
+         * Discovery shares this poller, so it belongs on this board: a keyword
+         * queue that never moves is the same class of silent failure as a crawl
+         * backlog that never drains, and it is invisible everywhere else.
+         */}
+        <Stat label="Keywords queued" value={fmt(keywordQueue)} note="searches not yet run" />
+        <Stat label="Sites to check" value={fmt(discoveryQueue)} note="found, not yet resolved" />
       </div>
 
       <p className="meta">
