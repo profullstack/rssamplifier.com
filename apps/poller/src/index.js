@@ -6,6 +6,7 @@ import {
   drainDiscoveryQueue,
   drainDiscoveryKeywords,
 } from '@rssamplifier/ingest';
+import { runDueSources } from '@rssamplifier/discover';
 
 /**
  * Feed crawler daemon.
@@ -44,9 +45,15 @@ const keywordBatch = Number(env['DISCOVERY_KEYWORD_BATCH_SIZE']) || 5;
 // gap costs is how quickly a new topic shows up in the list.
 const topicsIntervalMs = (Number(env['TOPICS_REFRESH_SECONDS']) || 900) * 1000;
 
+// How often the daemon looks at its discovery sources. The sources have their
+// own per-source schedules — a hand-maintained list is re-read daily, not
+// hourly — so this only decides how often that schedule is consulted.
+const sourceIntervalMs = (Number(env['DISCOVERY_SOURCE_INTERVAL_SECONDS']) || 1800) * 1000;
+
 let running = false;
 let stopping = false;
 let lastPurge = 0;
+let lastSources = 0;
 let lastTopics = 0;
 
 /**
@@ -87,6 +94,21 @@ async function tick() {
 
     const discovered = await drainDiscoveryQueue(db, discoveryBatch);
     if (discovered.checked) log('discovery', discovered);
+
+    // Sources fill the queue the drain above empties. Checked on a long timer
+    // and rate-limited to one source per pass: each is a request to somebody
+    // else's server for a list that changes when a human edits it.
+    if (Date.now() - lastSources > sourceIntervalMs) {
+      lastSources = Date.now();
+      try {
+        for (const result of await runDueSources(db)) {
+          log('discovery-source', result);
+        }
+      } catch (err) {
+        // A source being unreachable must not stop the crawl loop.
+        log('discovery-source-error', { message: String(err?.message ?? err) });
+      }
+    }
 
     // Queued submissions finish long after the upload, so the daemon that
     // drains the queue is also what tells the submitter it drained. A no-op
