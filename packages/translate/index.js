@@ -7,6 +7,7 @@ import { MIN_ARTICLE_CHARS, translateArticle, translatePost } from './src/transl
 export {
   BASE_LANGUAGE,
   MAX_OFFERED,
+  READER_LANGUAGES,
   languageName,
   normalizeLang,
   offeredLanguages,
@@ -33,9 +34,20 @@ export const DEFAULT_DAILY_PER_USER = 60;
  *
  * This is the number that actually bounds the bill. Sign-up is a magic link to
  * any address, so an attacker can mint accounts for free and the per-user limit
- * alone would only decide how many accounts they need. At roughly a cent a call
- * this ceiling is a low-tens-of-dollars worst case for a day of sustained
- * abuse — and a deploy away from being lowered.
+ * alone would only decide how many accounts they need.
+ *
+ * Read the ceiling as calls, not as money: the two are no longer the same
+ * thing. A headline-and-summary translation caps at 4k output tokens, but a
+ * whole-article one caps at ARTICLE_MAX_TOKENS (32k) over as much as
+ * MAX_ARTICLE_CHARS (60k) of input, so the expensive kind costs on the order of
+ * ten times the cheap kind and one unit of this budget no longer means one
+ * roughly-fixed price. A day of sustained abuse against the article path is
+ * therefore a low-hundreds-of-dollars worst case rather than the low tens this
+ * number was originally sized for.
+ *
+ * Lower `TRANSLATE_DAILY_TOTAL` to bound it harder — it takes effect without a
+ * deploy. Making the ledger charge an article more units than a headline would
+ * fix this properly, and is the obvious next step if the article path stays.
  */
 export const DEFAULT_DAILY_TOTAL = 1000;
 

@@ -1,5 +1,5 @@
 import { translations } from '@rssamplifier/db';
-import { offeredLanguages } from '@rssamplifier/translate';
+import { READER_LANGUAGES, offeredLanguages } from '@rssamplifier/translate';
 
 import { db } from './db.js';
 
@@ -23,10 +23,12 @@ const TTL_MS = 60 * 60 * 1000;
 let cache = null;
 
 /**
- * The language codes to show in the bar, commonest in the directory first.
+ * The language codes to show in the bar: the reader languages first, then
+ * whatever else the directory declares enough of to be worth a slot.
  *
- * Falls back to English alone if the query fails: a language bar with one entry
- * is a worse feature, and a reader page that 500s is not a feature at all.
+ * Falls back to the reader languages if the query fails. Losing the aggregate
+ * costs the bar its long tail, not the bar itself — and a reader page that 500s
+ * is not a feature at all.
  *
  * @returns {Promise<string[]>}
  */
@@ -35,10 +37,10 @@ export async function popularLanguages() {
 
   try {
     const counts = await translations.languageCounts(db());
-    const languages = offeredLanguages(counts);
+    const languages = offeredLanguages(counts, { always: READER_LANGUAGES });
     cache = { languages, at: Date.now() };
     return languages;
   } catch {
-    return ['en'];
+    return [...READER_LANGUAGES];
   }
 }

@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { BASE_LANGUAGE, languageName, normalizeLang, offeredLanguages } from '../index.js';
+import {
+  BASE_LANGUAGE,
+  MAX_OFFERED,
+  READER_LANGUAGES,
+  languageName,
+  normalizeLang,
+  offeredLanguages,
+} from '../index.js';
 
 test('normalizeLang folds every spelling of a tag onto one code', () => {
   for (const raw of ['de', 'DE', 'de-DE', 'de_DE', ' de-de ', 'De-Latn-DE']) {
@@ -62,6 +69,29 @@ test('offeredLanguages caps the bar, but never below the pinned languages', () =
   // The cap never truncates a pinned language off the end: a bar without the
   // language the reader is already in is not a bar they can get back from.
   assert.deepEqual(offeredLanguages(counts, { max: 1, always: ['en', 'de'] }), ['en', 'de']);
+});
+
+test('the bar offers the reader languages even from a catalogue that declares none', () => {
+  // The real state of the directory: ~47k feeds, of which a couple of hundred
+  // declare a language and all but one of those say English. Deriving the bar
+  // from that alone gave readers "en | sv" and no way to ask for German.
+  const offered = offeredLanguages([{ language: 'en-US', feeds: 260 }], {
+    always: READER_LANGUAGES,
+  });
+
+  for (const code of ['en', 'de', 'es']) {
+    assert.ok(offered.includes(code), `${code} must be offered whatever the catalogue says`);
+  }
+});
+
+test('a language the directory actually holds still earns a slot', () => {
+  const offered = offeredLanguages([{ language: 'sv-SE', feeds: 400 }], {
+    always: READER_LANGUAGES,
+  });
+
+  assert.deepEqual(offered.slice(0, READER_LANGUAGES.length), READER_LANGUAGES);
+  assert.ok(offered.includes('sv'), 'the catalogue adds to the bar rather than being ignored');
+  assert.ok(offered.length <= MAX_OFFERED, 'and the bar stays a bar');
 });
 
 test('offeredLanguages drops rows it cannot normalise', () => {
