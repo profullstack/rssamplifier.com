@@ -274,17 +274,30 @@ export async function insertCandidates(db, runId, sites) {
  *
  * @param {Client} db
  * @param {number} [limit]
+ * @param {string|null} [runId] restrict to one run — what a waiting request wants,
+ *   so its own budget is not spent draining an older run's backlog
  * @returns {Promise<object[]>}
  */
-export async function queuedCandidates(db, limit = 20) {
-  const { rows } = await db.execute({
-    sql: `select id, run_id, keyword, site_url, host
-          from discovery_candidates
-          where status = 'queued'
-          order by created_at asc
-          limit ?`,
-    args: [limit],
-  });
+export async function queuedCandidates(db, limit = 20, runId = null) {
+  const { rows } = await db.execute(
+    runId
+      ? {
+          sql: `select id, run_id, keyword, site_url, host
+                from discovery_candidates
+                where status = 'queued' and run_id = ?
+                order by created_at asc
+                limit ?`,
+          args: [runId, limit],
+        }
+      : {
+          sql: `select id, run_id, keyword, site_url, host
+                from discovery_candidates
+                where status = 'queued'
+                order by created_at asc
+                limit ?`,
+          args: [limit],
+        },
+  );
   return rows;
 }
 

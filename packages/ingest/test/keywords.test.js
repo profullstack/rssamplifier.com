@@ -180,3 +180,29 @@ test('discovery never writes to feeds before a candidate is checked', async () =
   // must not become a public page at /<slug>.
   assert.equal(await q.countFeeds(db, true), before);
 });
+
+test('a run only checks its own candidates, and reports its own counts', async () => {
+  // An older run leaves a candidate sitting in the queue.
+  const stale = await discoverFromKeywords(db, ['stale subject'], {
+    inlineLimit: 0,
+    searchOpts: { apiKey: 'k', fetchImpl: stubSearch({ 'stale subject': ['https://stale.example/a'] }) },
+  });
+  assert.equal(stale.queuedCandidates, 1);
+
+  // A new run checks with a real budget. Its own candidate cannot resolve a
+  // feed offline, so it is recorded errored — but the stale one must be
+  // untouched, and the counts must describe this run rather than the loop.
+  const res = await discoverFromKeywords(db, ['fresh subject'], {
+    inlineLimit: 100,
+    searchOpts: { apiKey: 'k', fetchImpl: stubSearch({ 'fresh subject': ['https://mine.example/a'] }) },
+  });
+
+  const queued = await discovery.queuedCandidates(db, 500);
+  const stillQueued = queued.filter((r) => String(r.run_id) === stale.runId).map((r) => String(r.host));
+  assert.deepEqual(stillQueued, ['stale.example'], 'the older run was drained by someone else’s request');
+
+  const progress = await discovery.runProgress(db, res.runId);
+  assert.equal(res.candidates, progress.total);
+  assert.equal(res.accepted, progress.accepted);
+  assert.equal(res.rejected, progress.rejected + progress.errored);
+});

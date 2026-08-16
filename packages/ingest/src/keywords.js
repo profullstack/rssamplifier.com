@@ -282,27 +282,29 @@ export async function discoverFromKeywords(db, keywords, opts = {}) {
 
   // ---- check what turned up, until that budget runs out ------------------
   const checkDeadline = clock() + (opts.checkBudgetMs ?? CHECK_BUDGET_MS);
-  const head = await discovery.queuedCandidates(db, inlineLimit);
-
-  let accepted = 0;
-  let rejected = 0;
+  //
+  // Scoped to this run. The poller drains the queue globally, but a caller that
+  // is holding a connection open should spend its budget on the keywords it
+  // just asked about rather than on an older run's leftovers.
+  const head = await discovery.queuedCandidates(db, inlineLimit, runId);
 
   for (const candidate of head) {
     if (clock() > checkDeadline) break;
 
-    const res = await checkCandidate(db, candidate, { rules: opts.rules });
-    if (res.status === 'accepted') accepted += 1;
-    else rejected += 1;
+    await checkCandidate(db, candidate, { rules: opts.rules });
   }
 
   const { keywords: kw, candidates } = await refreshRun(db, runId, { error: fatal });
 
+  // Counted from the run's own rows, not from the loop above — the two disagree
+  // whenever the poller finishes a candidate concurrently, and the run is the
+  // half the status page shows.
   return {
     runId,
     searched,
     candidates: candidates.total,
-    accepted,
-    rejected,
+    accepted: candidates.accepted,
+    rejected: candidates.rejected + candidates.errored,
     queuedKeywords: kw.waiting,
     queuedCandidates: candidates.waiting,
     error: fatal,
