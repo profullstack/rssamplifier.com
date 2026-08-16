@@ -1,3 +1,5 @@
+import { AD_TEXT } from '../../lib/ads.js';
+import Ad from '../Ad.jsx';
 import Toolbar from '../Toolbar.jsx';
 
 export const metadata = {
@@ -67,6 +69,14 @@ export default async function SubmitPage({ searchParams }) {
       <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/submit \\
   -H 'content-type: application/json' \\
   -d '{"urls":["example.com","another.blog"]}'`}</pre>
+
+      {/*
+       * The only ad on the funnel, and it is below everything: both forms, the
+       * hint text and the API example. Putting inventory above a conversion
+       * step buys pennies of impression against whatever the conversion is
+       * worth, and here the conversion is the directory itself growing.
+       */}
+      <Ad format={AD_TEXT} />
 
       <Toolbar />
     </>

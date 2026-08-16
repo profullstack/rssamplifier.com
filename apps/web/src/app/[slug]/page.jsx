@@ -2,6 +2,9 @@ import { notFound } from 'next/navigation';
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
+import { adPlan } from '../../lib/ads.js';
+import Ad from '../Ad.jsx';
+import AdBanner from '../AdBanner.jsx';
 import Toolbar from '../Toolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -37,6 +40,13 @@ export default async function FeedPage({ params }) {
     q.itemsForFeed(client, String(feed.id), 50),
     q.neighbours(client, String(feed.created_at)),
   ]);
+
+  // A blog page is the longest read on the site — up to fifty summaries — so it
+  // is the one place a rectangle earns its keep, sat in the flow where somebody
+  // has already stopped to read. Three units across fifty posts, alternating so
+  // it never becomes a column of boxes, and none at all on a blog with only a
+  // handful of entries.
+  const ads = adPlan(posts.length, { first: 3, every: 12, max: 3 });
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -89,26 +99,33 @@ export default async function FeedPage({ params }) {
       {posts.length === 0 ? (
         <p className="empty">No posts collected yet — the crawler will pick this up shortly.</p>
       ) : (
-        posts.map((p) => (
-          <article className="entry" key={String(p.guid)}>
-            <h3>
-              {p.url ? (
-                // Into the reader rather than straight out: the toolbar stays
-                // on screen, and the reader falls back to the original site for
-                // anything that refuses to be framed.
-                <a href={`/${slug}/read?p=${encodeURIComponent(String(p.guid))}`}>{p.title}</a>
-              ) : (
-                p.title
-              )}
-            </h3>
-            {p.summary && <p>{p.summary}</p>}
-            <time dateTime={p.published_at ? String(p.published_at) : undefined}>
-              {formatDate(p.published_at)}
-              {p.author ? ` · ${p.author}` : ''}
-            </time>
-          </article>
-        ))
+        posts.flatMap((p, i) => {
+          const entry = (
+            <article className="entry" key={String(p.guid)}>
+              <h3>
+                {p.url ? (
+                  // Into the reader rather than straight out: the toolbar stays
+                  // on screen, and the reader falls back to the original site for
+                  // anything that refuses to be framed.
+                  <a href={`/${slug}/read?p=${encodeURIComponent(String(p.guid))}`}>{p.title}</a>
+                ) : (
+                  p.title
+                )}
+              </h3>
+              {p.summary && <p>{p.summary}</p>}
+              <time dateTime={p.published_at ? String(p.published_at) : undefined}>
+                {formatDate(p.published_at)}
+                {p.author ? ` · ${p.author}` : ''}
+              </time>
+            </article>
+          );
+
+          const format = ads.get(i);
+          return format ? [entry, <Ad key={`ad-${i}`} format={format} />] : [entry];
+        })
       )}
+
+      <AdBanner />
 
       <Toolbar
         prev={nav.prev}
