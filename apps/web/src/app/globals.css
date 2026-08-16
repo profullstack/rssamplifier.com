@@ -729,3 +729,284 @@ select {
   margin: 0 auto;
   padding: 1.35rem;
 }
+
+/* ------------------------------------------------------------- reactions */
+
+/* The like/vote row under a post's title. Each control is its own form, so the
+   row has to lay out forms rather than buttons — hence the inline-form reset:
+   without it every button lands on its own line. */
+.inline-form {
+  display: inline;
+  margin: 0;
+}
+
+.post-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+}
+
+.post-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.post-actions button:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+/* A cast vote and a saved like both read as "on": same treatment, so the state
+   is legible at a glance without reading the label. */
+.post-actions button.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.post-actions .score {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  min-width: 2.5rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+.post-actions .score.positive {
+  color: var(--accent);
+}
+
+.post-actions .score.negative {
+  opacity: 0.7;
+}
+
+.post-actions .sep {
+  width: 1px;
+  height: 1.2rem;
+  background: var(--line);
+  margin: 0 0.3rem;
+}
+
+.post-actions .hint {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+/* -------------------------------------------------------------- comments */
+
+.comments {
+  margin: 2.5rem 0 1rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1.5rem;
+}
+
+.comment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.8rem;
+}
+
+.comment {
+  border-bottom: 1px solid var(--line);
+  padding: 1rem 0;
+}
+
+.comment.removed {
+  color: var(--muted);
+}
+
+.comment-meta {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0 0 0.35rem;
+}
+
+.comment-body {
+  margin: 0;
+  /* Comments are rendered as text, so the line breaks somebody typed are the
+     only structure they have. */
+  white-space: pre-wrap;
+}
+
+.comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 42rem;
+}
+
+.comment-form label {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.comment-form textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  resize: vertical;
+}
+
+.comment-form button {
+  align-self: flex-start;
+}
+
+/* A button that has to behave like a link because it posts a form. */
+.linkish {
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.linkish:hover {
+  color: var(--ink);
+}
+
+/* ---------------------------------------------------------- crawl status */
+
+.crawl-health {
+  border-left: 3px solid var(--line);
+  padding: 0.6rem 0 0.6rem 0.9rem;
+  margin: 1.2rem 0;
+}
+
+.crawl-health-healthy {
+  border-color: var(--accent);
+}
+
+.crawl-health-degraded,
+.crawl-health-stalled {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1.5rem 0;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  background: var(--surface);
+  padding: 1rem 1.1rem;
+}
+
+.stat-value {
+  font-family: var(--serif);
+  font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.stat-label {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stat-note {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.crawl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  /* Long feed URLs and error strings would otherwise widen the page on a
+     phone; the table scrolls inside itself instead. */
+  display: block;
+  overflow-x: auto;
+}
+
+.crawl-table th,
+.crawl-table td {
+  text-align: left;
+  padding: 0.5rem 0.9rem 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.crawl-table th {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.crawl-error {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------- favorites */
+
+.post-list {
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0;
+}
+
+.post-list > li {
+  border-bottom: 1px solid var(--line);
+  padding: 1rem 0;
+}
+
+.post-list > li > a {
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  text-decoration: none;
+}
+
+.post-list > li > a:hover {
+  color: var(--accent);
+}
+
+.post-list .summary {
+  color: var(--muted);
+  margin: 0.35rem 0 0;
+}
+
+.meta {
+  font-size: 0.84rem;
+  color: var(--muted);
+  margin: 0.25rem 0 0;
+}

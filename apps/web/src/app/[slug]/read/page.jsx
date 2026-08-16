@@ -1,10 +1,13 @@
 import { notFound } from 'next/navigation';
-import { q } from '@rssamplifier/db';
+import { q, reactions } from '@rssamplifier/db';
 import { isFrameable } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { currentUser } from '../../../lib/auth.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
+import Comments from '../../Comments.jsx';
+import PostActions from '../../PostActions.jsx';
 import ReaderToolbar from '../../ReaderToolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -64,6 +67,18 @@ export default async function ReaderPage({ params, searchParams }) {
 
   const nav = await q.neighbours(client, String(feed.created_at));
 
+  // Reactions hang off the item id, which never leaves the server: the page and
+  // the API both address a post as (slug, guid).
+  const itemId = String(post.id);
+  const user = await currentUser();
+  const userId = user ? String(user.id) : null;
+
+  const [score, mine, thread] = await Promise.all([
+    reactions.scoreFor(client, itemId),
+    userId ? reactions.reactionFor(client, userId, itemId) : { liked: false, vote: 0 },
+    reactions.commentsFor(client, itemId),
+  ]);
+
   return (
     <div className="reader">
       <div className="reader-head">
@@ -72,6 +87,15 @@ export default async function ReaderPage({ params, searchParams }) {
           {post.published_at ? ` · ${formatDate(post.published_at)}` : ''}
         </p>
         <h1>{String(post.title)}</h1>
+
+        <PostActions
+          slug={slug}
+          guid={String(post.guid)}
+          score={score.score}
+          liked={mine.liked}
+          vote={mine.vote}
+          signedIn={Boolean(userId)}
+        />
       </div>
 
       {verdict.frameable && postUrl ? (
@@ -118,6 +142,8 @@ export default async function ReaderPage({ params, searchParams }) {
           <Ad format={AD_MREC} />
         </div>
       )}
+
+      <Comments slug={slug} guid={String(post.guid)} comments={thread} userId={userId} />
 
       <ReaderToolbar
         slug={slug}

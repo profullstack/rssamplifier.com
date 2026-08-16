@@ -175,7 +175,7 @@ export async function upsertItems(db, feedId, items) {
  */
 export async function itemsForFeed(db, feedId, limit = 50) {
   const { rows } = await db.execute({
-    sql: `select guid, url, title, summary, author, image_url, published_at
+    sql: `select id, guid, url, title, summary, author, image_url, published_at
           from feed_items where feed_id = ?
           order by published_at desc nulls last, created_at desc
           limit ?`,
@@ -198,7 +198,7 @@ export async function itemsForFeed(db, feedId, limit = 50) {
  */
 export async function itemByGuid(db, feedId, guid) {
   const { rows } = await db.execute({
-    sql: `select guid, url, title, summary, author, image_url, published_at
+    sql: `select id, guid, url, title, summary, author, image_url, published_at
           from feed_items where feed_id = ? and guid = ? limit 1`,
     args: [feedId, guid],
   });
@@ -216,6 +216,109 @@ export async function countItems(db, feedId) {
     args: [feedId],
   });
   return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * A snapshot of what the crawler is doing, for /crawlstats.
+ *
+ * One round trip rather than a dozen counts: the page is public and uncached,
+ * so the cost of rendering it has to stay flat as the directory grows. Every
+ * figure comes out of the feeds table the poller already maintains — there is
+ * no separate metrics store to drift out of step with reality.
+ *
+ * `stale` is the number the page leads with. A backlog (`due`) is normal and
+ * drains; feeds whose last successful fetch is older than a day are the ones
+ * that say something is actually wrong.
+ *
+ * @param {Client} db
+ * @returns {Promise<object>}
+ */
+export async function crawlStats(db) {
+  const now = nowIso();
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
+
+  const { rows } = await db.execute({
+    sql: `select
+            count(*)                                                          as total,
+            sum(case when status = 'active'  then 1 else 0 end)               as active,
+            sum(case when status = 'pending' then 1 else 0 end)               as pending,
+            sum(case when status = 'error'   then 1 else 0 end)               as errored,
+            sum(case when status = 'dead'    then 1 else 0 end)               as dead,
+            sum(case when status <> 'dead' and next_fetch_at <= ? then 1 else 0 end) as due,
+            sum(case when last_fetched_at >= ? then 1 else 0 end)             as fetched_hour,
+            sum(case when last_fetched_at >= ? then 1 else 0 end)             as fetched_day,
+            sum(case when last_success_at >= ? then 1 else 0 end)             as succeeded_day,
+            sum(case when status = 'active' and (last_success_at is null or last_success_at < ?)
+                     then 1 else 0 end)                                       as stale,
+            max(last_success_at)                                              as last_success_at,
+            min(case when status <> 'dead' then next_fetch_at end)            as next_fetch_at
+          from feeds`,
+    args: [now, hourAgo, dayAgo, dayAgo, dayAgo],
+  });
+
+  const row = rows[0] ?? {};
+  const items = await db.execute({
+    sql: 'select count(*) as n from feed_items where created_at >= ?',
+    args: [dayAgo],
+  });
+
+  return {
+    total: Number(row.total ?? 0),
+    active: Number(row.active ?? 0),
+    pending: Number(row.pending ?? 0),
+    errored: Number(row.errored ?? 0),
+    dead: Number(row.dead ?? 0),
+    due: Number(row.due ?? 0),
+    fetchedLastHour: Number(row.fetched_hour ?? 0),
+    fetchedLastDay: Number(row.fetched_day ?? 0),
+    succeededLastDay: Number(row.succeeded_day ?? 0),
+    staleActive: Number(row.stale ?? 0),
+    itemsLastDay: Number(items.rows[0]?.n ?? 0),
+    lastSuccessAt: row.last_success_at ? String(row.last_success_at) : null,
+    nextFetchAt: row.next_fetch_at ? String(row.next_fetch_at) : null,
+    generatedAt: now,
+  };
+}
+
+/**
+ * The feeds failing right now, worst first, so a reader can see which blog is
+ * broken rather than only that something is.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function failingFeeds(db, limit = 20) {
+  const { rows } = await db.execute({
+    sql: `select slug, title, feed_url, status, error_count, last_error,
+                 last_fetched_at, last_success_at
+          from feeds
+          where status in ('error', 'dead')
+          order by error_count desc, last_fetched_at desc
+          limit ?`,
+    args: [limit],
+  });
+  return rows;
+}
+
+/**
+ * The most recently crawled feeds — the live end of the crawler's work.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function recentlyCrawled(db, limit = 20) {
+  const { rows } = await db.execute({
+    sql: `select slug, title, status, item_count, last_fetched_at, last_success_at
+          from feeds
+          where last_fetched_at is not null
+          order by last_fetched_at desc
+          limit ?`,
+    args: [limit],
+  });
+  return rows;
 }
 
 /**
