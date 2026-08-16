@@ -3,6 +3,8 @@ import { q } from '@rssamplifier/db';
 import { isFrameable } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { AD_MREC } from '../../../lib/ads.js';
+import Ad from '../../Ad.jsx';
 import ReaderToolbar from '../../ReaderToolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -100,6 +102,20 @@ export default async function ReaderPage({ params, searchParams }) {
               </a>
             </p>
           )}
+
+          {/*
+           * The only advertising in the reader, and only on this branch.
+           *
+           * When the frame loads, everything on screen is somebody else's
+           * article and the money an ad made here would be made off their
+           * writing. That is the same reason this page is already noindex —
+           * it must not compete with the original — and selling space around
+           * it would be the same trespass with a bill attached.
+           *
+           * This branch is different: nothing was framed, so the page is our
+           * own summary and our own link out, and it can carry a unit.
+           */}
+          <Ad format={AD_MREC} />
         </div>
       )}
 

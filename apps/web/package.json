@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
+    "test": "node --test test/*.test.js",
     "start": "node .next/standalone/apps/web/server.js"
   },
   "dependencies": {

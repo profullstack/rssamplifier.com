@@ -1,6 +1,9 @@
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../lib/db.js';
+import { AD_TEXT, adPlan } from '../lib/ads.js';
+import Ad from './Ad.jsx';
+import AdBanner from './AdBanner.jsx';
 import Toolbar from './Toolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -11,6 +14,11 @@ export const dynamic = 'force-dynamic';
 export default async function Home() {
   const client = db();
   const [rows, total] = await Promise.all([q.listFeeds(client, { limit: 60 }), q.countFeeds(client)]);
+
+  // The index is a long scan, so ads go *between* rows rather than around the
+  // list. First one is deep enough that the fold is all directory, and there
+  // are at most two however far the list runs.
+  const ads = adPlan(rows.length, { first: 11, every: 24, max: 2 });
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -54,6 +62,13 @@ export default async function Home() {
         </div>
       </form>
 
+      {/*
+       * Below the submit box, never above it: the form is what this page is
+       * for. A text link is the only format that can sit here at all — it is a
+       * line of type, so it costs the fold 40px rather than a 250px block.
+       */}
+      <Ad format={AD_TEXT} />
+
       <h2>
         Recently added <span className="pill">{total} blogs</span>
       </h2>
@@ -62,18 +77,25 @@ export default async function Home() {
         <p className="empty">Nothing here yet. Be the first — paste a URL above.</p>
       ) : (
         <div className="feed-list">
-          {rows.map((f) => (
-            <a className="feed-row" key={String(f.slug)} href={`/${f.slug}`}>
-              <h3>{f.title}</h3>
-              {f.description && <p>{f.description}</p>}
-              <div className="feed-meta">
-                {f.site_url && <span>{hostOf(String(f.site_url))}</span>}
-                <span>{f.item_count} posts</span>
-              </div>
-            </a>
-          ))}
+          {rows.flatMap((f, i) => {
+            const row = (
+              <a className="feed-row" key={String(f.slug)} href={`/${f.slug}`}>
+                <h3>{f.title}</h3>
+                {f.description && <p>{f.description}</p>}
+                <div className="feed-meta">
+                  {f.site_url && <span>{hostOf(String(f.site_url))}</span>}
+                  <span>{f.item_count} posts</span>
+                </div>
+              </a>
+            );
+
+            const format = ads.get(i);
+            return format ? [row, <Ad key={`ad-${i}`} format={format} inFeed />] : [row];
+          })}
         </div>
       )}
+
+      <AdBanner />
 
       <Toolbar next={rows[0]?.slug ? String(rows[0].slug) : null} />
     </>

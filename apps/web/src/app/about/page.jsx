@@ -1,3 +1,5 @@
+import { AD_MREC } from '../../lib/ads.js';
+import Ad from '../Ad.jsx';
 import Toolbar from '../Toolbar.jsx';
 
 export const metadata = {
@@ -54,6 +56,10 @@ export default function AboutPage() {
         </li>
       </ul>
       <p>All of them send an open CORS header and need no key.</p>
+
+      {/* One unit, at the end. Anyone who read this far is engaged; nobody
+          arriving at an About page is in a hurry to be sold to on the way in. */}
+      <Ad format={AD_MREC} />
 
       <Toolbar />
     </>
