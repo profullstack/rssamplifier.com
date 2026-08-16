@@ -2,6 +2,7 @@ import './globals.css';
 
 import { siteUrl } from '../lib/db.js';
 import ServiceWorker from './ServiceWorker.jsx';
+import Script from "next/script";
 
 export const metadata = {
   metadataBase: new URL(siteUrl()),
@@ -82,6 +83,7 @@ export default function RootLayout({ children }) {
         </footer>
 
         <ServiceWorker />
+              <Script data-site="98aa7ae4-f205-4cf3-8c0f-40182ea3638e" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
       </body>
     </html>
   );
