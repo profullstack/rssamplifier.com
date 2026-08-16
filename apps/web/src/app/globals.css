@@ -67,8 +67,10 @@ a {
 
 .masthead {
   border-bottom: 1px solid var(--line);
-  padding: 1.5rem 0;
-  margin-bottom: 2.5rem;
+  /* Deliberately modest: this strip is navigation, not content, and every rem
+     it takes is one the blog below it does not get above the fold. */
+  padding: 1rem 0;
+  margin-bottom: 1.5rem;
 }
 
 .masthead-inner {
@@ -378,18 +380,45 @@ body:has(.reader) main.wrap {
   padding: 0 0.75rem;
 }
 
+/* Micro header while reading.
+   The full masthead costs about seven rems once its padding and margin are
+   counted, and the article underneath is the entire point of the page — a fifth
+   of the fold spent on our own wordmark is a fifth the writer does not get.
+   Same markup, just wound down to a strip. */
+body:has(.reader) .masthead {
+  padding: 0.4rem 0;
+  margin-bottom: 0.5rem;
+}
+
+body:has(.reader) .wordmark {
+  font-size: 1rem;
+}
+
+body:has(.reader) .masthead nav {
+  font-size: 0.8rem;
+  gap: 0.9rem;
+}
+
+/* The toolbar is the only thing below the frame, so the page needs clearance
+   for it and not for the full-height footer the rest of the site leaves room
+   for. */
+body:has(.reader) {
+  padding-bottom: 5rem;
+}
+
 .reader {
   display: flex;
   flex-direction: column;
 }
 
 .reader-head {
-  padding: 0.25rem 0.25rem 0.75rem;
+  padding: 0 0.25rem 0.4rem;
 }
 
 .reader-head h1 {
-  font-size: 1.35rem;
-  margin: 0.2rem 0 0;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  margin: 0.1rem 0 0;
 }
 
 .reader-head .eyebrow {
@@ -400,7 +429,7 @@ body:has(.reader) main.wrap {
    leave the frame overhanging by exactly that much. */
 .reader-frame {
   width: 100%;
-  height: calc(100dvh - 14rem);
+  height: calc(100dvh - 9.5rem);
   min-height: 22rem;
   border: 1px solid var(--line);
   border-radius: 10px;
