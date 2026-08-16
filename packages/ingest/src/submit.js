@@ -141,9 +141,17 @@ export async function submitMany(db, urls) {
  * written straight to the queue for the poller to crawl. The submitter gets a
  * status URL instead of a spinner.
  *
+ * The tail is queued before the head is fetched, which is the opposite of the
+ * obvious order and matters twice. Writing the queue is one bulk insert and
+ * fetching the head is up to a hundred sequential requests, so doing the cheap
+ * durable half first means a request that times out has still recorded the
+ * upload instead of losing every entry past the hundredth. It is also what lets
+ * a caller answer early: by the time `onQueued` fires there is a real queue to
+ * show, and the fetching left to do is exactly the part worth watching.
+ *
  * @param {import('@libsql/client').Client} db
  * @param {Array<{ url: string, title?: string, siteUrl?: string|null }>} entries
- * @param {{ inlineLimit?: number, submissionId?: string|null, spreadMinutes?: number }} [opts]
+ * @param {{ inlineLimit?: number, submissionId?: string|null, spreadMinutes?: number, onQueued?: (queued: number) => void }} [opts]
  * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}
  */
 export async function submitCatalogue(db, entries, opts = {}) {
@@ -151,11 +159,6 @@ export async function submitCatalogue(db, entries, opts = {}) {
 
   const head = entries.slice(0, inlineLimit);
   const tail = entries.slice(inlineLimit);
-
-  const { accepted, rejected } = await submitMany(
-    db,
-    head.map((e) => e.url),
-  );
 
   let queued = 0;
   if (tail.length > 0) {
@@ -165,6 +168,13 @@ export async function submitCatalogue(db, entries, opts = {}) {
     });
     queued = imported.inserted;
   }
+
+  opts.onQueued?.(queued);
+
+  const { accepted, rejected } = await submitMany(
+    db,
+    head.map((e) => e.url),
+  );
 
   return { accepted, rejected, queued, total: entries.length };
 }

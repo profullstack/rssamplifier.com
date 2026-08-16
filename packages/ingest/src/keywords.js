@@ -223,7 +223,7 @@ export async function refreshRun(db, runId, extra = {}) {
  *
  * @param {import('@libsql/client').Client} db
  * @param {string[]} keywords
- * @param {{ runId?: string, inlineLimit?: number, searchBudgetMs?: number, checkBudgetMs?: number, notifyEmail?: string|null, ipHash?: string|null, userAgent?: string|null, searchOpts?: object, rules?: object, now?: () => number }} [opts]
+ * @param {{ runId?: string, inlineLimit?: number, searchBudgetMs?: number, checkBudgetMs?: number, notifyEmail?: string|null, ipHash?: string|null, userAgent?: string|null, searchOpts?: object, rules?: object, now?: () => number, onStarted?: (runId: string) => void }} [opts]
  * @returns {Promise<{ runId: string, searched: number, candidates: number, accepted: number, rejected: number, queuedKeywords: number, queuedCandidates: number, error: string|null }>}
  */
 export async function discoverFromKeywords(db, keywords, opts = {}) {
@@ -241,6 +241,13 @@ export async function discoverFromKeywords(db, keywords, opts = {}) {
     user_agent: opts.userAgent ?? null,
   });
   await discovery.insertKeywords(db, runId, keywords);
+
+  // Everything the status page needs now exists, and everything after this is
+  // work the page can watch happen. A caller that would rather show the page
+  // than hold the connection open for a minute and a half says so here and
+  // stops awaiting; the run carries on regardless, and if this process dies
+  // mid-run the poller drains the same two queues.
+  opts.onStarted?.(runId);
 
   // ---- search, until the budget runs out --------------------------------
   const known = await discovery.knownHosts(db);

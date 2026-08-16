@@ -50,11 +50,11 @@ export async function POST(req) {
   let kind = 'url';
   let raw = '';
   let email = null;
-  /** @type {{ accepted: any[], rejected: any[], queued: number, total: number }} */
-  let result;
+  /** @type {Array<{ url: string, title?: string, siteUrl?: string|null }>} */
+  let entries = [];
+  let opml = null;
 
-  // The id is minted before the work so the queued feeds can be stamped with
-  // it; the submission row is written afterwards, once the counts are known.
+  // The id is minted before the work so the queued feeds can be stamped with it.
   const submissionId = newId();
 
   try {
@@ -65,16 +65,12 @@ export async function POST(req) {
       if (typeof body?.opml === 'string') {
         kind = 'opml';
         raw = body.opml;
-        result = await submitOpml(client, raw, { submissionId });
+        opml = raw;
       } else {
         const urls = Array.isArray(body?.urls) ? body.urls : splitUrls(body?.url);
         raw = urls.join('\n');
         kind = urls.length > 1 ? 'list' : 'url';
-        result = await submitCatalogue(
-          client,
-          urls.map((url) => ({ url })),
-          { submissionId },
-        );
+        entries = urls.map((url) => ({ url }));
       }
     } else {
       const form = await req.formData();
@@ -84,53 +80,76 @@ export async function POST(req) {
       if (file && typeof file !== 'string' && file.size > 0) {
         kind = 'opml';
         raw = await file.text();
-        result = await submitOpml(client, raw, { submissionId });
+        opml = raw;
       } else {
         raw = String(form.get('input') ?? '');
         const urls = splitUrls(raw);
         kind = urls.length > 1 ? 'list' : 'url';
-        result = await submitCatalogue(
-          client,
-          urls.map((url) => ({ url })),
-          { submissionId },
-        );
+        entries = urls.map((url) => ({ url }));
       }
     }
   } catch {
     return json({ ok: false, error: 'bad-request' }, 400);
   }
 
+  // Written before the work rather than after it, so that an upload big enough
+  // to be worth watching has a status page to be sent to while it is still
+  // being worked on. The counts are filled in by completeSubmission; until then
+  // they are honestly zero rather than absent.
   await q.insertSubmission(client, {
     id: submissionId,
     kind,
     raw_input: raw.slice(0, 10_000),
-    accepted_count: result.accepted.length,
-    rejected_count: result.rejected.length,
-    queued_count: result.queued,
-    // Only stored when there is actually a queue to report on; a submission
-    // that finished inline has nothing left to notify anyone about.
-    notify_email: result.queued > 0 ? email : null,
-    errors: result.rejected,
     ip_hash: ipHash,
     user_agent: req.headers.get('user-agent')?.slice(0, 300) ?? null,
   });
 
+  const browser = (req.headers.get('accept') ?? '').includes('text/html');
+
+  let resolveQueued;
+  const queuedCount = new Promise((resolve) => {
+    resolveQueued = resolve;
+  });
+
+  const opts = { submissionId, onQueued: (n) => resolveQueued(n) };
+  const work = (
+    opml === null ? submitCatalogue(client, entries, opts) : submitOpml(client, opml, opts)
+  ).then(async (result) => {
+    await q.completeSubmission(client, submissionId, {
+      accepted_count: result.accepted.length,
+      rejected_count: result.rejected.length,
+      queued_count: result.queued,
+      // Only stored when there is actually a queue to report on; a submission
+      // that finished inline has nothing left to notify anyone about.
+      notify_email: result.queued > 0 ? email : null,
+      errors: result.rejected,
+    });
+    return result;
+  });
+
   const statusUrl = `${siteUrl()}/submissions/${submissionId}`;
 
-  // A browser form post gets a redirect; an agent or curl gets JSON.
-  if ((req.headers.get('accept') ?? '').includes('text/html')) {
-    const first = result.accepted[0];
-    // A queued upload goes to its status page — that is where the rest of the
-    // work is visible. A single blog goes straight to the blog.
-    const location =
-      result.queued > 0
-        ? `/submissions/${submissionId}`
-        : first
-          ? `/${first.slug}`
-          : '/submit?error=1';
+  if (browser) {
+    // An upload with a queue behind it is answered the moment that queue is
+    // durable: the status page streams the rest, so waiting for a hundred
+    // sequential fetches would buy the submitter nothing but a blank tab.
+    const settled = work.catch(() => null);
+    const queued = await Promise.race([queuedCount, settled.then(() => 0)]);
+
+    if (queued > 0) {
+      return new Response(null, { status: 303, headers: { location: `/submissions/${submissionId}` } });
+    }
+
+    // A handful of URLs resolves in seconds and has somewhere better to land:
+    // the blog itself. Nothing is gained by bouncing that through a status page.
+    const result = await settled;
+    const first = result?.accepted?.[0];
+    const location = first ? `/${first.slug}` : '/submit?error=1';
 
     return new Response(null, { status: 303, headers: { location } });
   }
+
+  const result = await work;
 
   return json({
     ok: result.accepted.length > 0 || result.queued > 0,

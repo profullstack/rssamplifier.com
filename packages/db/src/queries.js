@@ -1077,6 +1077,75 @@ export async function submissionProgress(db, id) {
 }
 
 /**
+ * Fill in a submission's tallies once its inline half has finished.
+ *
+ * A submission that answers before it is done has to exist before it is done,
+ * so the row is written first with zeroes and completed here. `notify_email` is
+ * deliberately part of this update rather than of the insert: the poller treats
+ * "has an address and has no pending feeds" as "owes an email", and a row
+ * carrying an address during the moment before its feeds were queued would be
+ * read as a finished import and mailed about immediately.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {{ accepted_count?: number, rejected_count?: number, queued_count?: number, errors?: unknown, notify_email?: string|null }} row
+ */
+export async function completeSubmission(db, id, row) {
+  await db.execute({
+    sql: `update submissions
+          set accepted_count = ?, rejected_count = ?, queued_count = ?,
+              errors = ?, notify_email = ?
+          where id = ?`,
+    args: [
+      row.accepted_count ?? 0,
+      row.rejected_count ?? 0,
+      row.queued_count ?? 0,
+      JSON.stringify(row.errors ?? []),
+      row.notify_email ?? null,
+      id,
+    ],
+  });
+}
+
+/**
+ * A submission as a log: one line per feed the crawler has settled.
+ *
+ * `last_fetched_at` is the event time and is null until the crawler has been to
+ * the feed, so "has it happened yet" needs no extra column — a pending feed
+ * simply is not in the result. Ordered oldest first and filtered by `since`, it
+ * appends to whatever the watcher is already showing.
+ *
+ * `tail` returns the most recent rows instead of the oldest, reversed back to
+ * oldest-first, for someone opening an import that finished while they were
+ * away — see the same option on discovery.eventsForRun.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {{ since?: string|null, limit?: number, tail?: boolean }} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function submissionEvents(db, id, opts = {}) {
+  const since = opts.since ?? null;
+  const limit = opts.limit ?? 200;
+
+  const sql = (direction) =>
+    `select slug, title, status, last_error, item_count, last_fetched_at as at
+     from feeds
+     where submission_id = ?1 and last_fetched_at is not null
+       and (?2 is null or last_fetched_at > ?2)
+     order by last_fetched_at ${direction}
+     limit ?3`;
+
+  if (opts.tail) {
+    const { rows } = await db.execute({ sql: sql('desc'), args: [id, since, limit] });
+    return rows.reverse();
+  }
+
+  const { rows } = await db.execute({ sql: sql('asc'), args: [id, since, limit] });
+  return rows;
+}
+
+/**
  * Submissions that asked for an email and whose queue has fully drained.
  *
  * The `not exists` clause is the whole point: a submission is only finished
