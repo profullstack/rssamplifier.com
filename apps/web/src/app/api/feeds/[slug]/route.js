@@ -28,7 +28,12 @@ export async function GET(req, { params }) {
     });
   }
 
-  const items = await q.itemsForFeed(client, String(feed.id), limit);
+  const [items, topics] = await Promise.all([
+    q.itemsForFeed(client, String(feed.id), limit),
+    // A feed's full topic set, including the ones no other feed shares — those
+    // are absent from /api/topics by design, and this is where they live.
+    q.keywordsForFeed(client, String(feed.id), 25),
+  ]);
 
   return new Response(
     JSON.stringify(
@@ -44,6 +49,15 @@ export async function GET(req, { params }) {
         itemCount: feed.item_count,
         lastSuccessAt: feed.last_success_at,
         page: `${siteUrl()}/${feed.slug}`,
+        topics: topics.map((t) => ({
+          slug: t.slug,
+          keyword: t.keyword,
+          // 'category' is the publisher's own tag, 'content' is counted from
+          // the feed's text.
+          source: t.source,
+          strength: Number(t.count ?? 0),
+          page: `${siteUrl()}/topics/${encodeURIComponent(String(t.slug))}`,
+        })),
         items: items.map((i) => ({
           guid: i.guid,
           url: i.url,

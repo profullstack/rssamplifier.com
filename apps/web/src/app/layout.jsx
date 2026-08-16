@@ -61,6 +61,7 @@ export default function RootLayout({ children }) {
                   you already know the site. */}
               <a href="/blogs">Blogs</a>
               <a href="/podcasts">Podcasts</a>
+              <a href="/topics">Topics</a>
               <a href="/submit">Submit</a>
               <a href="/search">Search</a>
               <a href="/opml">OPML</a>
@@ -96,7 +97,8 @@ export default function RootLayout({ children }) {
               account needed. Built by <a href="https://profullstack.com">Profullstack, Inc.</a>
             </p>
             <p>
-              Browse: <a href="/blogs">Blogs</a> · <a href="/podcasts">Podcasts</a>
+              Browse: <a href="/blogs">Blogs</a> · <a href="/podcasts">Podcasts</a> ·{' '}
+              <a href="/topics">Topics</a>
             </p>
             <p>
               Machine-readable: <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}

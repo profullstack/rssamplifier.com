@@ -37,9 +37,10 @@ export default async function FeedPage({ params }) {
   const feed = await q.feedBySlug(client, slug);
   if (!feed) notFound();
 
-  const [posts, nav, user] = await Promise.all([
+  const [posts, nav, topics, user] = await Promise.all([
     q.itemsForFeed(client, String(feed.id), 50),
     q.neighbours(client, String(feed.created_at)),
+    q.keywordsForFeed(client, String(feed.id)),
     currentUser(),
   ]);
 
@@ -68,6 +69,7 @@ export default async function FeedPage({ params }) {
     description: feed.description ?? undefined,
     url: feed.site_url ?? `${siteUrl()}/${feed.slug}`,
     webFeed: String(feed.feed_url),
+    keywords: topics.length ? topics.map((t) => String(t.keyword)).join(', ') : undefined,
     [podcast ? 'hasPart' : 'blogPost']: posts.slice(0, 20).map((p) => ({
       '@type': podcast ? 'PodcastEpisode' : 'BlogPosting',
       [podcast ? 'name' : 'headline']: p.title,
@@ -121,6 +123,31 @@ export default async function FeedPage({ params }) {
           {following ? 'Following ✓' : 'Follow'}
         </button>
       </form>
+
+      {/* What this feed writes about, and the way across to everyone else who
+          writes about it. Sat under the follow button rather than up in the
+          meta line: it is a second navigation surface, not a fact about the
+          feed like its host or its post count. */}
+      {topics.length > 0 && (
+        <nav className="topic-chips" aria-label="Topics">
+          {topics.map((t) => (
+            <a
+              key={String(t.slug)}
+              href={`/topics/${encodeURIComponent(String(t.slug))}`}
+              // The author's own tag is marked, because it is a different kind
+              // of claim from a phrase we counted.
+              className={t.source === 'category' ? 'tagged' : undefined}
+              title={
+                t.source === 'category'
+                  ? 'Tagged by the author'
+                  : `Appears in ${t.count} of this feed's posts`
+              }
+            >
+              {t.keyword}
+            </a>
+          ))}
+        </nav>
+      )}
 
       {feed.status === 'dead' && (
         <p className="notice">

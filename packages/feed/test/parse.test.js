@@ -95,6 +95,13 @@ test('summarize strips markup, decodes entities and cuts on a word boundary', ()
   assert.equal(summarize('<p>Hello &amp; welcome</p>'), 'Hello & welcome');
   assert.equal(summarize('<script>evil()</script><p>safe</p>'), 'safe');
 
+  // Hex numeric entities are what most publishing tools emit for a curly
+  // apostrophe. Left undecoded the residue survives tokenizing, and "#x27"
+  // shows up as one of the blog's topics.
+  assert.equal(summarize('Rust&#x27;s tooling'), "Rust's tooling");
+  assert.equal(summarize('a &#8212; b'), 'a — b');
+  assert.equal(summarize('bad &#x0;entity'), 'bad  entity'.replace(/\s+/g, ' '));
+
   const long = summarize('word '.repeat(200), 50);
   assert.ok(long.length <= 52, `expected a truncated string, got ${long.length}`);
   assert.ok(long.endsWith('…'));
@@ -234,6 +241,53 @@ test('a JSON feed with an audio attachment is a podcast', () => {
     ],
   });
   assert.equal(parseFeed(json).kind, 'podcast');
+});
+
+test('category tags are read from every format that has them', () => {
+  const rss = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <title>Tagged</title><link>https://t.example/</link><description>Tags</description>
+  <category>Technology</category>
+  <item>
+    <title>A post about several things</title>
+    <guid>https://t.example/1</guid>
+    <category>Linux</category>
+    <category>Home Lab</category>
+    <category>linux</category>
+  </item>
+</channel></rss>`;
+
+  const feed = parseFeed(rss);
+  assert.deepEqual(feed.categories, ['Technology']);
+  assert.deepEqual(
+    feed.items[0].categories,
+    ['Linux', 'Home Lab'],
+    'the duplicate differing only in case collapsed',
+  );
+
+  // Atom keeps the value in an attribute rather than the element.
+  const atom = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom tagged</title>
+  <entry><id>1</id><title>Post</title><category term="Rust"/><category term="Async"/></entry>
+</feed>`;
+  assert.deepEqual(parseFeed(atom).items[0].categories, ['Rust', 'Async']);
+
+  // iTunes keeps it in `text`, which is how a podcast declares its genre.
+  assert.deepEqual(parseFeed(PODCAST_RSS).categories, ['Technology']);
+
+  // JSON Feed calls them tags.
+  const json = JSON.stringify({
+    version: 'https://jsonfeed.org/version/1.1',
+    title: 'JSON tagged',
+    items: [{ id: '1', title: 'Post', tags: ['Design', 'Type'] }],
+  });
+  assert.deepEqual(parseFeed(json).items[0].categories, ['Design', 'Type']);
+
+  // A feed with no categories at all — the common case — yields empty lists
+  // rather than undefined, so callers never have to check.
+  assert.deepEqual(parseFeed(RSS).categories, []);
+  assert.deepEqual(parseFeed(RSS).items[0].categories, []);
 });
 
 test('an audio enclosure is not mistaken for the item image', () => {

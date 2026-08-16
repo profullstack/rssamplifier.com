@@ -445,6 +445,71 @@ button:disabled {
   color: var(--muted);
 }
 
+/* ----------------------------------------------------------------- topics */
+
+/* The topics index. A wrapped row of links rather than a list: three hundred
+   list items is a page nobody reads to the end of, and the same three hundred
+   as a cloud is one glance. */
+.topic-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+.topic-cloud a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: background 0.15s ease;
+}
+
+.topic-cloud a:hover {
+  background: var(--accent-soft);
+}
+
+.topic-cloud span {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* A feed's own topics, on its page. */
+.topic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1.5rem;
+}
+
+.topic-chips a {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.topic-chips a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The author's own tag, distinguished from a phrase we counted — a solid chip
+   for something asserted, an outline for something inferred. */
+.topic-chips a.tagged {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
 /* Paging through a category. Ends are pinned and the counter sits between
    them, so the two controls stay where the thumb left them from page to
    page. */

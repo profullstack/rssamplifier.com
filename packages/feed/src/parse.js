@@ -96,6 +96,36 @@ function kindOfChannel(channel, items) {
 }
 
 /**
+ * The category tags on an element, from wherever the format keeps them.
+ *
+ * RSS puts the text in the element (`<category>Linux</category>`), Atom puts it
+ * in an attribute (`<category term="Linux"/>`), and iTunes uses `text`. All
+ * three appear on the same document often enough to be worth reading together.
+ *
+ * @param {any} node
+ * @returns {string[]}
+ */
+function categories(node) {
+  const found = [
+    ...arr(node?.category),
+    ...arr(node?.['itunes:category']),
+    ...arr(node?.['media:category']),
+  ].map((c) => text(c?.['@term'] ?? c?.['@text'] ?? c?.['@label'] ?? c));
+
+  // Deduplicated case-insensitively: a feed that tags a post both "Linux" and
+  // "linux" has said one thing, not two.
+  const seen = new Set();
+  const out = [];
+  for (const value of found) {
+    const key = value.toLowerCase();
+    if (!value || value.length > 60 || seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+/**
  * The URL of an enclosure that is actually an image.
  *
  * `<enclosure>` is how a podcast attaches its audio file, so taking its URL as
@@ -108,6 +138,25 @@ function kindOfChannel(channel, items) {
 function enclosureImage(item) {
   const image = arr(item?.enclosure).find((e) => /^image\//i.test(String(e?.['@type'] ?? '')));
   return text(image?.['@url'] ?? '');
+}
+
+/**
+ * One numeric HTML entity, as a character.
+ *
+ * Control characters and anything out of range become a space rather than
+ * throwing or producing an unprintable summary — a malformed entity in one
+ * blog's feed must not be able to break the text of its page.
+ *
+ * @param {number} code
+ * @returns {string}
+ */
+function entity(code) {
+  if (!Number.isInteger(code) || code < 32 || code > 0x10ffff) return ' ';
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return ' ';
+  }
 }
 
 /**
@@ -131,8 +180,12 @@ export function summarize(html, max = 400) {
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
-    .replace(/&#3[49];/g, "'")
-    .replace(/&#\d+;/g, ' ')
+    // Numeric entities, decimal and hex. The hex form is what most CMSs emit
+    // for a curly apostrophe, and leaving it undecoded does not merely look
+    // wrong — the leftover "#x27" survives tokenizing as a word and turns up in
+    // the feed's topics.
+    .replace(/&#x([\da-f]+);/gi, (_, hex) => entity(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => entity(Number(dec)))
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -226,6 +279,7 @@ function parseRss(ch) {
       author: text(it['dc:creator']) || text(it.author),
       publishedAt: date(it.pubDate) || date(it['dc:date']),
       imageUrl: text(it['media:thumbnail']?.['@url']) || enclosureImage(it),
+      categories: categories(it),
     };
   });
 
@@ -237,6 +291,7 @@ function parseRss(ch) {
     // A podcast's cover art is in itunes:image; the plain <image> element is
     // optional and podcast hosts do not always emit it.
     imageUrl: text(ch.image?.url) || text(ch['itunes:image']?.['@href']),
+    categories: categories(ch),
     kind: kindOfChannel(ch, raw),
     items,
   };
@@ -258,6 +313,7 @@ function parseAtom(feed) {
       author: text(e.author?.name),
       publishedAt: date(e.published) || date(e.updated),
       imageUrl: '',
+      categories: categories(e),
     };
   });
 
@@ -277,6 +333,7 @@ function parseAtom(feed) {
     siteUrl: atomLink(feed.link),
     language: text(feed['@xml:lang']),
     imageUrl: text(feed.logo) || text(feed.icon),
+    categories: categories(feed),
     kind: audio || kindOfChannel(feed, []) === KIND_PODCAST ? KIND_PODCAST : KIND_BLOG,
     items,
   };
@@ -297,6 +354,7 @@ function parseRdf(rdf) {
     author: text(it['dc:creator']),
     publishedAt: date(it['dc:date']),
     imageUrl: '',
+    categories: categories(it),
   }));
 
   return {
@@ -305,6 +363,7 @@ function parseRdf(rdf) {
     siteUrl: text(ch.link),
     language: '',
     imageUrl: '',
+    categories: categories(ch),
     // RSS 1.0 keeps the channel and the items as siblings, so the channel tags
     // and the items are read from different objects.
     kind: kindOfChannel(ch, raw),
@@ -335,6 +394,9 @@ function parseJsonFeed(raw) {
       author: it.author?.name ?? j.author?.name ?? '',
       publishedAt: date(it.date_published),
       imageUrl: it.image ?? '',
+      // JSON Feed calls them tags; they are the same thing RSS calls
+      // categories, so they are read into the same field.
+      categories: Array.isArray(it.tags) ? it.tags.map((t) => String(t)) : [],
     };
   });
 
@@ -354,6 +416,7 @@ function parseJsonFeed(raw) {
     siteUrl: j.home_page_url ?? '',
     language: j.language ?? '',
     imageUrl: j.icon ?? '',
+    categories: [],
     kind: audio || j._itunes ? KIND_PODCAST : KIND_BLOG,
     items,
   };

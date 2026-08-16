@@ -21,10 +21,18 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   const base = siteUrl();
-  const chunks = await q.sitemapChunks(db(), CHUNK_SIZE);
+  const client = db();
+  const [chunks, topics] = await Promise.all([
+    q.sitemapChunks(client, CHUNK_SIZE),
+    q.countTopics(client),
+  ]);
 
   const entries = [
     `  <sitemap><loc>${esc(`${base}/sitemaps/static.xml`)}</loc></sitemap>`,
+    // Listed only once there is something in it: the chunk route 404s an empty
+    // topics file, and an index pointing at a 404 is an error in every
+    // crawler's report of the site.
+    ...(topics > 0 ? [`  <sitemap><loc>${esc(`${base}/sitemaps/topics.xml`)}</loc></sitemap>`] : []),
     ...chunks.map((chunk) => {
       const loc = `${base}/sitemaps/${chunkFilename(chunk)}`;
       const lastmod = chunk.lastmod ? `<lastmod>${esc(chunk.lastmod)}</lastmod>` : '';

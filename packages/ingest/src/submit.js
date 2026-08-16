@@ -2,6 +2,7 @@ import { resolveFeed, normalizeUrl, parseOpml, uniqueSlug } from '@rssamplifier/
 import { q } from '@rssamplifier/db';
 
 import { importFeeds } from './import.js';
+import { refreshFeedKeywords } from './crawl.js';
 
 /** Cap on a single bulk submission, so one paste can't queue thousands of fetches. */
 const MAX_BATCH = 200;
@@ -87,6 +88,18 @@ export async function submitOne(db, input) {
   }
 
   await q.upsertItems(db, inserted.id, feed.items);
+
+  // Extracted here as well as in the crawler so a blog added by hand has topics
+  // on the page the submitter is redirected to, rather than an hour later. A
+  // failure is not worth losing the submission over — the next crawl of a feed
+  // with no topics extracts them again.
+  try {
+    await refreshFeedKeywords(db, inserted.id, feed);
+  } catch {
+    // Deliberately silent: the blog is in the directory, which is what the
+    // submitter asked for.
+  }
+
   return { ok: true, slug: inserted.slug, existing: false };
 }
 
