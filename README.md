@@ -62,7 +62,7 @@ All send `access-control-allow-origin: *` and need no key.
 | `/llms.txt` | The directory described for language models |
 | `/api/feeds` | Every blog, paginated (`?limit=`, `?offset=`) |
 | `/api/feeds/{slug}` | One blog with recent items |
-| `/api/search?q=` | Full-text search as JSON |
+| `/api/search?q=` | Full-text search as JSON (`?limit=`, `?mode=any`) |
 | `/opml` | The whole directory as a subscription list |
 | `/api/submit` | `POST {"url"}`, `{"urls":[…]}` or `{"opml":"…"}` |
 

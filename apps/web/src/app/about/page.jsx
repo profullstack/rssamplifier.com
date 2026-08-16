@@ -49,7 +49,9 @@ export default function AboutPage() {
           <a href="/api/feeds">/api/feeds</a> — every blog, paginated JSON
         </li>
         <li>
-          <a href="/api/search?q=rss">/api/search?q=</a> — full-text search
+          <a href="/api/search?q=rss">/api/search?q=</a> — full-text search, or{' '}
+          <a href="/api/search?q=NVDA%20NVIDIA&mode=any">&amp;mode=any</a> for any term
+          rather than all of them
         </li>
         <li>
           <a href="/opml">/opml</a> — the whole directory as a subscription list
