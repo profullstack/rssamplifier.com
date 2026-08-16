@@ -137,6 +137,38 @@ test('ftsQuery neutralises FTS5 syntax so odd queries do not throw', async () =>
   }
 });
 
+test('search results carry the guid the reader addresses a post by', async () => {
+  // Without this the search page has no way to link into /read, and would have
+  // to send the reader straight off the site.
+  const posts = await q.searchItems(db, 'frogs');
+  assert.equal(posts.length, 1);
+  assert.equal(String(posts[0].guid), 'a');
+});
+
+test('a post outside the newest-N window is still reachable by guid', async () => {
+  // The reader lists the newest 200 to build prev/next, but a fifth of what we
+  // hold sits past that line and search reaches it. itemByGuid is the escape
+  // hatch that keeps those from 404ing.
+  const feed = await q.feedByUrl(db, 'https://test.example/feed.xml');
+  const id = String(feed.id);
+
+  const window = await q.itemsForFeed(db, id, 1);
+  assert.equal(window.length, 1, 'newest-1 window holds only one post');
+  assert.equal(String(window[0].guid), 'b', 'newest first');
+
+  // 'a' is now outside the window, but must still resolve.
+  assert.equal(
+    window.findIndex((r) => String(r.guid) === 'a'),
+    -1,
+    'the older post really is outside this window',
+  );
+  const older = await q.itemByGuid(db, id, 'a');
+  assert.ok(older, 'itemByGuid reaches past the window');
+  assert.equal(String(older.title), 'Alpha post');
+
+  assert.equal(await q.itemByGuid(db, id, 'no-such-guid'), null);
+});
+
 test('any-mode search unions the terms instead of intersecting them', async () => {
   // No single post mentions both, so the default must find nothing and
   // any-mode must find both. Anything else and the two modes are the same.
