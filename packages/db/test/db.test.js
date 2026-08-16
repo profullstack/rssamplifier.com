@@ -137,6 +137,74 @@ test('ftsQuery neutralises FTS5 syntax so odd queries do not throw', async () =>
   }
 });
 
+test('search results carry the guid the reader addresses a post by', async () => {
+  // Without this the search page has no way to link into /read, and would have
+  // to send the reader straight off the site.
+  const posts = await q.searchItems(db, 'frogs');
+  assert.equal(posts.length, 1);
+  assert.equal(String(posts[0].guid), 'a');
+});
+
+test('a post outside the newest-N window is still reachable by guid', async () => {
+  // The reader lists the newest 200 to build prev/next, but a fifth of what we
+  // hold sits past that line and search reaches it. itemByGuid is the escape
+  // hatch that keeps those from 404ing.
+  const feed = await q.feedByUrl(db, 'https://test.example/feed.xml');
+  const id = String(feed.id);
+
+  const window = await q.itemsForFeed(db, id, 1);
+  assert.equal(window.length, 1, 'newest-1 window holds only one post');
+  assert.equal(String(window[0].guid), 'b', 'newest first');
+
+  // 'a' is now outside the window, but must still resolve.
+  assert.equal(
+    window.findIndex((r) => String(r.guid) === 'a'),
+    -1,
+    'the older post really is outside this window',
+  );
+  const older = await q.itemByGuid(db, id, 'a');
+  assert.ok(older, 'itemByGuid reaches past the window');
+  assert.equal(String(older.title), 'Alpha post');
+
+  assert.equal(await q.itemByGuid(db, id, 'no-such-guid'), null);
+});
+
+test('any-mode search unions the terms instead of intersecting them', async () => {
+  // No single post mentions both, so the default must find nothing and
+  // any-mode must find both. Anything else and the two modes are the same.
+  assert.equal(q.ftsQuery('frogs kites', 'any'), '"frogs" OR "kites"');
+  assert.equal(q.ftsQuery('frogs kites'), '"frogs" "kites"', 'default stays AND');
+
+  assert.equal((await q.searchItems(db, 'frogs kites')).length, 0);
+
+  const either = await q.searchItems(db, 'frogs kites', 40, 'any');
+  assert.deepEqual(
+    either.map((r) => String(r.title)).sort(),
+    ['Alpha post', 'Beta post'],
+    'any-mode returns the union of both terms',
+  );
+
+  // A ticker paired with the name it is usually written under: the point of
+  // the mode. The unmatched term must not drag the matched one down with it.
+  const paired = await q.searchItems(db, 'zzzznotaticker frogs', 40, 'any');
+  assert.equal(paired.length, 1);
+  assert.equal(String(paired[0].title), 'Alpha post');
+
+  // Escaping still applies, so operators stay literal in either mode.
+  assert.equal(q.ftsQuery('a OR b', 'any'), '"a" OR "OR" OR "b"');
+  for (const bad of ['C++', 'a OR b', '*', 'NEAR(a b)']) {
+    await q.searchItems(db, bad, 40, 'any');
+  }
+});
+
+test('any-mode blog search behaves the same way', async () => {
+  const blogs = await q.searchFeeds(db, 'testing zzzznotablog', 20, 'any');
+  assert.equal(blogs.length, 1);
+  assert.equal(String(blogs[0].slug), 'test-blog');
+
+  assert.equal((await q.searchFeeds(db, 'testing zzzznotablog')).length, 0, 'default still AND');
+});
+
 test('slug collision helper returns the existing family', async () => {
   const taken = await q.takenSlugs(db, 'test-blog');
   assert.ok(taken.has('test-blog'));
@@ -294,6 +362,226 @@ test('sitemap chunks split an oversized month and cover it exactly once', async 
   assert.equal(empty.length, 0);
 
   await rm(chunkDir, { recursive: true, force: true });
+});
+
+test('feeds are filtered and counted by kind', async () => {
+  const kindDir = await mkdtemp(join(tmpdir(), 'rssamp-kind-'));
+  const kindDb = connect({ url: `file:${join(kindDir, 'kind.db')}` });
+  await migrate(kindDb);
+
+  await q.insertFeed(kindDb, {
+    slug: 'a-blog',
+    feed_url: 'https://a.example/feed.xml',
+    title: 'A Blog',
+  });
+  await q.insertFeed(kindDb, {
+    slug: 'a-show',
+    feed_url: 'https://s.example/feed.xml',
+    title: 'A Show',
+    kind: 'podcast',
+  });
+  // A kind nobody recognises must not become a third category: the column has a
+  // check constraint, so a bad value would otherwise fail the insert outright.
+  await q.insertFeed(kindDb, {
+    slug: 'mystery',
+    feed_url: 'https://m.example/feed.xml',
+    title: 'Mystery',
+    kind: 'newsletter',
+  });
+
+  const podcasts = await q.listFeeds(kindDb, { kind: 'podcast' });
+  assert.deepEqual(
+    podcasts.map((f) => String(f.slug)),
+    ['a-show'],
+  );
+
+  const blogs = await q.listFeeds(kindDb, { kind: 'blog' });
+  assert.equal(blogs.length, 2, 'the unrecognised kind fell back to blog');
+
+  assert.equal(await q.countFeeds(kindDb, false, 'podcast'), 1);
+  assert.equal(await q.countFeeds(kindDb, false, 'blog'), 2);
+  assert.equal(await q.countFeeds(kindDb), 3, 'unfiltered count still spans the directory');
+
+  const counts = await q.countFeedsByKind(kindDb);
+  assert.equal(counts.blog, 2);
+  assert.equal(counts.podcast, 1);
+  assert.equal(counts.music, 0, 'a category with no feeds still reports zero');
+
+  // A category the directory has none of still reports zero rather than being
+  // absent, so a page can say "0 podcasts" instead of rendering nothing.
+  const emptyDir = await mkdtemp(join(tmpdir(), 'rssamp-empty-'));
+  const emptyDb = connect({ url: `file:${join(emptyDir, 'empty.db')}` });
+  await migrate(emptyDb);
+  assert.deepEqual(
+    await q.countFeedsByKind(emptyDb),
+    Object.fromEntries(q.KINDS.map((k) => [k, 0])),
+  );
+  await rm(emptyDir, { recursive: true, force: true });
+
+  // Dead feeds are excluded from a category exactly as they are from the index.
+  await kindDb.execute("update feeds set status = 'dead' where slug = 'a-show'");
+  assert.equal(await q.countFeeds(kindDb, false, 'podcast'), 0);
+  assert.equal((await q.listFeeds(kindDb, { kind: 'podcast' })).length, 0);
+
+  assert.equal(q.normalizeKind('podcast'), 'podcast');
+  assert.equal(q.normalizeKind('PODCAST'), 'podcast');
+  assert.equal(q.normalizeKind('everything'), null);
+  assert.equal(q.normalizeKind(null), null);
+
+  await rm(kindDir, { recursive: true, force: true });
+});
+
+test('a crawl re-derives a derived category, and never a curated one', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'rssamp-recrawl-'));
+  const db2 = connect({ url: `file:${join(dir2, 'recrawl.db')}` });
+  await migrate(db2);
+
+  // The shape a bulk import leaves behind: no kind was knowable at insert time.
+  const { id } = await q.insertFeed(db2, {
+    slug: 'became-a-show',
+    feed_url: 'https://x.example/feed.xml',
+    title: 'Became a show',
+  });
+  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).category), 'blog');
+
+  await q.markCrawlSuccess(
+    db2,
+    id,
+    { title: 'Became a show', description: '', siteUrl: '', imageUrl: '', kind: 'podcast' },
+    3,
+  );
+  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).category), 'podcast');
+
+  // A category no parser can see — comics, lives, reels — is set by hand and
+  // has to survive the next crawl, which re-derives every other feed's.
+  const curated = await q.insertFeed(db2, {
+    slug: 'a-webcomic',
+    feed_url: 'https://c.example/feed.xml',
+    title: 'A Webcomic',
+  });
+  assert.equal(await q.curateCategory(db2, ['https://c.example/feed.xml'], 'comic'), 1);
+  assert.equal(String((await q.feedBySlug(db2, 'a-webcomic')).category), 'comic');
+
+  await q.markCrawlSuccess(
+    db2,
+    curated.id,
+    { title: 'A Webcomic', description: '', siteUrl: '', imageUrl: '', kind: 'blog' },
+    5,
+  );
+  assert.equal(
+    String((await q.feedBySlug(db2, 'a-webcomic')).category),
+    'comic',
+    'the crawler must not re-derive a curated category back to blog',
+  );
+
+  // An unknown category is refused rather than stored.
+  assert.equal(await q.curateCategory(db2, ['https://c.example/feed.xml'], 'newsletter'), 0);
+
+  await rm(dir2, { recursive: true, force: true });
+});
+
+test('topics: keywords are replaced wholesale, and the rollup drops single-feed topics', async () => {
+  const dir3 = await mkdtemp(join(tmpdir(), 'rssamp-topics-'));
+  const db3 = connect({ url: `file:${join(dir3, 'topics.db')}` });
+  await migrate(db3);
+
+  const a = await q.insertFeed(db3, {
+    slug: 'feed-a',
+    feed_url: 'https://a.example/feed.xml',
+    title: 'Feed A',
+  });
+  const b = await q.insertFeed(db3, {
+    slug: 'feed-b',
+    feed_url: 'https://b.example/feed.xml',
+    title: 'Feed B',
+    kind: 'podcast',
+  });
+
+  await q.replaceFeedKeywords(db3, a.id, [
+    { slug: 'home-lab', keyword: 'home lab', words: 2, count: 9, source: 'category' },
+    { slug: 'only-mine', keyword: 'only mine', words: 2, count: 4, source: 'content' },
+  ]);
+  await q.replaceFeedKeywords(db3, b.id, [
+    { slug: 'home-lab', keyword: 'home lab', words: 2, count: 3, source: 'content' },
+  ]);
+
+  assert.equal(await q.countFeedKeywords(db3, a.id), 2);
+
+  const topic = await q.topicBySlug(db3, 'home-lab');
+  assert.equal(topic.feedCount, 2);
+  assert.equal(topic.keyword, 'home lab');
+
+  const feeds = await q.feedsForTopic(db3, 'home-lab');
+  assert.deepEqual(
+    feeds.map((f) => String(f.slug)),
+    ['feed-a', 'feed-b'],
+    'the author-tagged feed ranks above the one we counted, whatever the counts',
+  );
+
+  // A rewrite drops topics the feed no longer has, rather than accumulating
+  // every subject it ever mentioned.
+  await q.replaceFeedKeywords(db3, a.id, [
+    { slug: 'home-lab', keyword: 'home lab', words: 2, count: 9, source: 'category' },
+  ]);
+  assert.equal(await q.countFeedKeywords(db3, a.id), 1);
+  assert.equal(await q.topicBySlug(db3, 'only-mine'), null, 'the dropped topic has no page');
+
+  const count = await q.refreshTopics(db3);
+  assert.equal(count, 1, 'only the shared topic is in the index');
+  const listed = await q.listTopics(db3);
+  assert.deepEqual(
+    listed.map((t) => `${t.slug}:${t.feed_count}`),
+    ['home-lab:2'],
+  );
+  assert.equal(await q.countTopics(db3), 1);
+
+  // Rebuilt from scratch each time, so a second refresh is not a second copy.
+  await q.refreshTopics(db3);
+  assert.equal(await q.countTopics(db3), 1);
+
+  // A dead feed leaves its topic behind: its page is still served, but it does
+  // not make a topic look more covered than it is.
+  await db3.execute("update feeds set status = 'dead' where slug = 'feed-b'");
+  assert.equal((await q.topicBySlug(db3, 'home-lab')).feedCount, 1);
+  await q.refreshTopics(db3);
+  assert.equal(await q.countTopics(db3), 0, 'one live feed is not a topic');
+
+  // The rollup is refreshed on a timer, so a topic that appeared since the last
+  // refresh must still have a working page.
+  assert.ok(await q.topicBySlug(db3, 'home-lab'), 'the page works ahead of the index');
+
+  // Cascade: deleting a feed takes its keywords with it.
+  await db3.execute({ sql: 'delete from feeds where id = ?', args: [a.id] });
+  assert.equal(await q.countFeedKeywords(db3, a.id), 0);
+
+  await rm(dir3, { recursive: true, force: true });
+});
+
+test('item categories survive a round trip through storage', async () => {
+  const dir4 = await mkdtemp(join(tmpdir(), 'rssamp-itemcat-'));
+  const db4 = connect({ url: `file:${join(dir4, 'cat.db')}` });
+  await migrate(db4);
+
+  const { id } = await q.insertFeed(db4, {
+    slug: 'tagged',
+    feed_url: 'https://t.example/feed.xml',
+    title: 'Tagged',
+  });
+
+  await q.upsertItems(db4, id, [
+    { guid: '1', title: 'One', summary: 'first', categories: ['Linux', 'Home Lab'] },
+    { guid: '2', title: 'Two', summary: 'second' },
+  ]);
+
+  const rows = await q.itemsForKeywords(db4, id);
+  const parsed = rows.map((r) => JSON.parse(String(r.categories)));
+  assert.deepEqual(parsed.flat().sort(), ['Home Lab', 'Linux']);
+  assert.ok(
+    parsed.some((p) => p.length === 0),
+    'an item with no categories stores an empty list, not null',
+  );
+
+  await rm(dir4, { recursive: true, force: true });
 });
 
 test('newId is unique and nowIso offsets correctly', () => {

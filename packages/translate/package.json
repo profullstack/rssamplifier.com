@@ -1,0 +1,17 @@
+{
+  "name": "@rssamplifier/translate",
+  "version": "0.1.0",
+  "description": "Machine translation of a post's title and summary, cached per language",
+  "type": "module",
+  "main": "index.js",
+  "exports": { ".": "./index.js" },
+  "files": ["index.js", "src"],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
+    "@rssamplifier/db": "workspace:*",
+    "@rssamplifier/feed": "workspace:*"
+  }
+}

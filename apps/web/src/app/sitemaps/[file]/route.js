@@ -30,6 +30,22 @@ export async function GET(request, ctx) {
     );
   }
 
+  // Topic pages in one file rather than chunked by month: a topic has no
+  // creation date to chunk on — it exists as long as two feeds share it and
+  // stops existing when they stop — and the browsable index is capped well
+  // under the 50,000-URL limit a single sitemap file allows.
+  if (file === 'topics.xml') {
+    const topics = await q.topicsForSitemap(db(), CHUNK_SIZE);
+    if (topics.length === 0) return new Response('Not found', { status: 404 });
+
+    return xml(
+      topics.map((t) => {
+        const lastmod = t.refreshed_at ? `<lastmod>${esc(t.refreshed_at)}</lastmod>` : '';
+        return `  <url><loc>${esc(`${base}/topics/${encodeURIComponent(String(t.slug))}`)}</loc>${lastmod}</url>`;
+      }),
+    );
+  }
+
   const chunk = parseChunkFilename(file);
   if (!chunk) return new Response('Not found', { status: 404 });
 

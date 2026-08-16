@@ -5,6 +5,7 @@ import { AD_TEXT, adPlan } from '../lib/ads.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
 import Toolbar from './Toolbar.jsx';
+import { CATEGORIES } from './CategoryIndex.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +14,11 @@ export const dynamic = 'force-dynamic';
  */
 export default async function Home() {
   const client = db();
-  const [rows, total] = await Promise.all([q.listFeeds(client, { limit: 60 }), q.countFeeds(client)]);
+  const [rows, total, byKind] = await Promise.all([
+    q.listFeeds(client, { limit: 60 }),
+    q.countFeeds(client),
+    q.countFeedsByKind(client),
+  ]);
 
   // The index is a long scan, so ads go *between* rows rather than around the
   // list. First one is deep enough that the fold is all directory, and there
@@ -68,6 +73,18 @@ export default async function Home() {
        * line of type, so it costs the fold 40px rather than a 250px block.
        */}
       <Ad format={AD_TEXT} />
+
+      {/* The index below is everything, newest first. These are the two ways
+          into it that are worth having their own page — the counts are the
+          point, because they say what the directory is mostly made of. */}
+      <nav className="categories" aria-label="Categories">
+        {Object.entries(CATEGORIES).map(([kind, category]) => (
+          <a key={kind} href={category.path}>
+            <strong>{category.heading}</strong>
+            <span>{byKind[kind] === 1 ? '1 feed' : `${byKind[kind] ?? 0} feeds`}</span>
+          </a>
+        ))}
+      </nav>
 
       <h2>
         Recently added <span className="pill">{total} blogs</span>

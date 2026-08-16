@@ -20,6 +20,7 @@
     "@swc/helpers": "^0.5.23",
     "@rssamplifier/auth": "workspace:*",
     "@rssamplifier/mail": "workspace:*",
+    "@rssamplifier/translate": "workspace:*",
     "@simplewebauthn/browser": "^13.0.0"
   }
 }

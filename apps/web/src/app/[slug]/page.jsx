@@ -37,9 +37,10 @@ export default async function FeedPage({ params }) {
   const feed = await q.feedBySlug(client, slug);
   if (!feed) notFound();
 
-  const [posts, nav, user] = await Promise.all([
+  const [posts, nav, topics, user] = await Promise.all([
     q.itemsForFeed(client, String(feed.id), 50),
     q.neighbours(client, String(feed.created_at)),
+    q.keywordsForFeed(client, String(feed.id)),
     currentUser(),
   ]);
 
@@ -55,15 +56,23 @@ export default async function FeedPage({ params }) {
   // handful of entries.
   const ads = adPlan(posts.length, { first: 3, every: 12, max: 3 });
 
+  const podcast = feed.category === 'podcast';
+
+  // A podcast described as a Blog is wrong in the one place a machine reads
+  // this page, so the type and the property that carries the entries both
+  // follow the feed's kind. The entries themselves are the same rows either
+  // way — what differs is what they are called.
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'Blog',
+    '@type': podcast ? 'PodcastSeries' : 'Blog',
     name: feed.title,
     description: feed.description ?? undefined,
     url: feed.site_url ?? `${siteUrl()}/${feed.slug}`,
-    blogPost: posts.slice(0, 20).map((p) => ({
-      '@type': 'BlogPosting',
-      headline: p.title,
+    webFeed: String(feed.feed_url),
+    keywords: topics.length ? topics.map((t) => String(t.keyword)).join(', ') : undefined,
+    [podcast ? 'hasPart' : 'blogPost']: posts.slice(0, 20).map((p) => ({
+      '@type': podcast ? 'PodcastEpisode' : 'BlogPosting',
+      [podcast ? 'name' : 'headline']: p.title,
       url: p.url ?? undefined,
       datePublished: p.published_at ?? undefined,
       author: p.author ? { '@type': 'Person', name: p.author } : undefined,
@@ -78,7 +87,12 @@ export default async function FeedPage({ params }) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
-      <p className="eyebrow">Blog</p>
+      {/* The eyebrow is a link, not a label: it is the only place on a feed's
+          page that says which category it was filed under, so it may as well be
+          the way back to the rest of that category. */}
+      <p className="eyebrow">
+        <a href={podcast ? '/podcasts' : '/blogs'}>{podcast ? 'Podcast' : 'Blog'}</a>
+      </p>
       <h1>{feed.title}</h1>
       {feed.description && <p className="lede">{feed.description}</p>}
 
@@ -91,7 +105,9 @@ export default async function FeedPage({ params }) {
         <a href={String(feed.feed_url)} rel="noopener">
           RSS feed ↗
         </a>
-        <span>{feed.item_count} posts</span>
+        <span>
+          {feed.item_count} {podcast ? 'episodes' : 'posts'}
+        </span>
       </div>
 
       {/* A plain form, so following works with JavaScript off. A signed-out
@@ -108,6 +124,31 @@ export default async function FeedPage({ params }) {
         </button>
       </form>
 
+      {/* What this feed writes about, and the way across to everyone else who
+          writes about it. Sat under the follow button rather than up in the
+          meta line: it is a second navigation surface, not a fact about the
+          feed like its host or its post count. */}
+      {topics.length > 0 && (
+        <nav className="topic-chips" aria-label="Topics">
+          {topics.map((t) => (
+            <a
+              key={String(t.slug)}
+              href={`/topics/${encodeURIComponent(String(t.slug))}`}
+              // The author's own tag is marked, because it is a different kind
+              // of claim from a phrase we counted.
+              className={t.source === 'category' ? 'tagged' : undefined}
+              title={
+                t.source === 'category'
+                  ? 'Tagged by the author'
+                  : `Appears in ${t.count} of this feed's posts`
+              }
+            >
+              {t.keyword}
+            </a>
+          ))}
+        </nav>
+      )}
+
       {feed.status === 'dead' && (
         <p className="notice">
           This feed stopped responding, so we no longer crawl it. The archive below is what we
@@ -115,10 +156,13 @@ export default async function FeedPage({ params }) {
         </p>
       )}
 
-      <h2>Latest posts</h2>
+      <h2>{podcast ? 'Latest episodes' : 'Latest posts'}</h2>
 
       {posts.length === 0 ? (
-        <p className="empty">No posts collected yet — the crawler will pick this up shortly.</p>
+        <p className="empty">
+          {podcast ? 'No episodes' : 'No posts'} collected yet — the crawler will pick this up
+          shortly.
+        </p>
       ) : (
         posts.flatMap((p, i) => {
           const entry = (

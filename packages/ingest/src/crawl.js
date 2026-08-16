@@ -1,4 +1,4 @@
-import { resolveFeed } from '@rssamplifier/feed';
+import { resolveFeed, feedTopics } from '@rssamplifier/feed';
 import { q } from '@rssamplifier/db';
 
 /** Backoff ladder in minutes, indexed by consecutive error count. */
@@ -45,6 +45,50 @@ export function nextIntervalMinutes(newItems, currentMinutes = MIN_INTERVAL) {
 }
 
 /**
+ * Recompute one feed's topics from what is stored for it.
+ *
+ * Read back out of the database rather than taken from the document just
+ * fetched: a feed only carries its most recent items, so extracting from the
+ * response would narrow a blog's topics to whatever it published this month and
+ * widen them again next month. The stored items are everything we have ever
+ * seen it publish.
+ *
+ * @param {import('@libsql/client').Client} db
+ * @param {string} feedId
+ * @param {{ title?: string, description?: string, categories?: string[] }} feed
+ * @returns {Promise<number>} topics stored
+ */
+export async function refreshFeedKeywords(db, feedId, feed = {}) {
+  const items = await q.itemsForKeywords(db, feedId);
+
+  const blocks = [];
+  if (feed.title) blocks.push(String(feed.title));
+  if (feed.description) blocks.push(String(feed.description));
+
+  const categories = Array.isArray(feed.categories) ? [...feed.categories] : [];
+
+  for (const item of items) {
+    if (item.title) blocks.push(String(item.title));
+    if (item.summary) blocks.push(String(item.summary));
+
+    // Stored as JSON because SQLite has no array type; a row written before the
+    // column existed, or by anything that wrote it badly, must not take the
+    // crawl down with it.
+    try {
+      const parsed = JSON.parse(String(item.categories ?? '[]'));
+      if (Array.isArray(parsed)) categories.push(...parsed.map((c) => String(c)));
+    } catch {
+      // Not JSON, so there are no categories on this item. Nothing to report:
+      // the topics of the other items are unaffected.
+    }
+  }
+
+  const topics = feedTopics({ blocks, categories });
+  await q.replaceFeedKeywords(db, feedId, topics);
+  return topics.length;
+}
+
+/**
  * Re-crawl one feed and store anything new.
  *
  * @param {import('@libsql/client').Client} db
@@ -71,7 +115,24 @@ export async function crawlFeed(db, feed) {
     nextIntervalMinutes(sent, feed.fetch_interval_minutes),
   );
 
-  return { ok: true, newItems: sent };
+  // Only when the feed actually published something, or when it has no topics
+  // yet. Re-extracting on every crawl would rewrite twenty-five rows per feed
+  // per hour across the whole directory to arrive at the same answer — the text
+  // cannot have changed if nothing was added to it.
+  //
+  // Topics are a browsing aid, so failing to extract them must not turn a crawl
+  // that stored its items into a failure — that would back the feed off and
+  // eventually mark a perfectly healthy blog dead.
+  let topics = 0;
+  try {
+    if (sent > 0 || (await q.countFeedKeywords(db, id)) === 0) {
+      topics = await refreshFeedKeywords(db, id, resolved.feed);
+    }
+  } catch (err) {
+    return { ok: true, newItems: sent, topics: 0, topicError: String(err?.message ?? err) };
+  }
+
+  return { ok: true, newItems: sent, topics };
 }
 
 /**

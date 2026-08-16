@@ -12,8 +12,37 @@ import { newId, nowIso } from './client.js';
 
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
-  author, categories, status, last_fetched_at, last_success_at, last_error, error_count,
+  author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
   fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at`;
+
+/** The categories the directory is browsable by. */
+export const KINDS = ['blog', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
+
+/**
+ * The categories a crawler can work out for itself.
+ *
+ * `comic`, `live` and `reel` are absent on purpose. A webcomic's feed is a
+ * blog with pictures in it as far as any parser is concerned; RSS has no way
+ * to say "this entry was a livestream" or "this one is a short", and YouTube's
+ * feed marks neither — that needs the platform's own API. Those three only
+ * ever arrive from a curated list. See `category_source` in 0013.
+ */
+export const DERIVED_KINDS = ['blog', 'podcast', 'music', 'video'];
+
+/**
+ * Read a caller-supplied kind, rejecting anything that is not one.
+ *
+ * Kind reaches the queries from a URL (`/api/feeds?kind=…`), so it is
+ * interpolated nowhere and validated here once rather than being trusted at
+ * each call site.
+ *
+ * @param {unknown} kind
+ * @returns {string|null} null meaning "every kind"
+ */
+export function normalizeKind(kind) {
+  const value = String(kind ?? '').toLowerCase();
+  return KINDS.includes(value) ? value : null;
+}
 
 /**
  * @param {Client} db
@@ -44,17 +73,32 @@ export async function feedByUrl(db, feedUrl) {
 /**
  * Newest feeds first, excluding dead ones by default.
  *
+ * `kind` narrows the list to one category page's worth. The tie-break on id is
+ * not cosmetic: the directory was bulk imported, so tens of thousands of rows
+ * share a created_at to the second, and paging by OFFSET through an order that
+ * leaves those rows unsorted relative to each other shows a blog twice on one
+ * page and never on the next.
+ *
  * @param {Client} db
- * @param {{ limit?: number, offset?: number, includeDead?: boolean }} [opts]
+ * @param {{ limit?: number, offset?: number, includeDead?: boolean, kind?: string|null }} [opts]
  * @returns {Promise<object[]>}
  */
 export async function listFeeds(db, opts = {}) {
-  const { limit = 60, offset = 0, includeDead = false } = opts;
+  const { limit = 60, offset = 0, includeDead = false, kind = null } = opts;
+  const where = [];
+  const args = [];
+
+  if (!includeDead) where.push("status <> 'dead'");
+  if (kind) {
+    where.push('category = ?');
+    args.push(kind);
+  }
+
   const { rows } = await db.execute({
     sql: `select ${FEED_COLS} from feeds
-          ${includeDead ? '' : "where status <> 'dead'"}
-          order by created_at desc limit ? offset ?`,
-    args: [limit, offset],
+          ${where.length ? `where ${where.join(' and ')}` : ''}
+          order by created_at desc, id desc limit ? offset ?`,
+    args: [...args, limit, offset],
   });
   return rows;
 }
@@ -62,13 +106,74 @@ export async function listFeeds(db, opts = {}) {
 /**
  * @param {Client} db
  * @param {boolean} [includeDead]
+ * @param {string|null} [kind] one category, or null for the whole directory
  * @returns {Promise<number>}
  */
-export async function countFeeds(db, includeDead = false) {
-  const { rows } = await db.execute(
-    `select count(*) as n from feeds ${includeDead ? '' : "where status <> 'dead'"}`,
-  );
+export async function countFeeds(db, includeDead = false, kind = null) {
+  const where = [];
+  const args = [];
+
+  if (!includeDead) where.push("status <> 'dead'");
+  if (kind) {
+    where.push('category = ?');
+    args.push(kind);
+  }
+
+  const { rows } = await db.execute({
+    sql: `select count(*) as n from feeds ${where.length ? `where ${where.join(' and ')}` : ''}`,
+    args,
+  });
   return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * File feeds under a category by hand, and make it stick.
+ *
+ * The categories a parser cannot see — comics, lives, reels — come from
+ * curated lists, and marking them `curated` is what stops the next crawl from
+ * re-deriving them back to 'blog'. Addressed by feed_url because that is what
+ * a curated list actually contains; a list is a list of feeds, not of our ids.
+ *
+ * @param {Client} db
+ * @param {string[]} feedUrls
+ * @param {string} category
+ * @returns {Promise<number>} rows recategorised
+ */
+export async function curateCategory(db, feedUrls, category) {
+  const kind = normalizeKind(category);
+  if (!kind || feedUrls.length === 0) return 0;
+
+  const statements = feedUrls.map((url) => ({
+    sql: `update feeds set category = ?, category_source = 'curated', updated_at = ?
+          where feed_url = ?`,
+    args: [kind, nowIso(), url],
+  }));
+
+  const results = await db.batch(statements, 'write');
+  return results.reduce((n, r) => n + Number(r.rowsAffected ?? 0), 0);
+}
+
+/**
+ * How many feeds of each kind the directory holds.
+ *
+ * One grouped scan rather than a count per category: the numbers are shown side
+ * by side, and asking twice for the same aggregate is two scans of the same
+ * table plus a window in which they disagree.
+ *
+ * Every kind is present in the result whether or not the directory has one yet,
+ * so a caller can render "0 podcasts" instead of nothing at all.
+ *
+ * @param {Client} db
+ * @returns {Promise<Record<string, number>>}
+ */
+export async function countFeedsByKind(db) {
+  const { rows } = await db.execute(
+    `select category, count(*) as n from feeds where status <> 'dead' group by category`,
+  );
+
+  const counts = Object.fromEntries(KINDS.map((k) => [k, 0]));
+  for (const row of rows) counts[String(row.category)] = Number(row.n ?? 0);
+  return counts;
 }
 
 /**
@@ -100,10 +205,10 @@ export async function insertFeed(db, feed) {
   await db.execute({
     sql: `insert into feeds
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
-       categories, status, last_fetched_at, last_success_at, error_count,
+       categories, category, status, last_fetched_at, last_success_at, error_count,
        fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at,
        discovery_run_id)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?, ?)`,
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?, ?)`,
     args: [
       id,
       feed.slug,
@@ -115,6 +220,7 @@ export async function insertFeed(db, feed) {
       feed.image_url ?? null,
       feed.author ?? null,
       JSON.stringify(feed.categories ?? []),
+      normalizeKind(feed.kind) ?? 'blog',
       feed.status ?? 'active',
       now,
       now,
@@ -147,9 +253,18 @@ export async function upsertItems(db, feedId, items) {
   const now = nowIso();
   const statements = rows.map((i) => ({
     sql: `insert into feed_items
-      (id, feed_id, guid, url, title, summary, content_html, author, image_url, published_at, created_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      on conflict (feed_id, guid) do nothing`,
+      (id, feed_id, guid, url, title, summary, content_html, author, image_url, published_at,
+       categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      on conflict (feed_id, guid) do update set
+        -- An episode already stored keeps its row, but a re-crawl fills in the
+        -- audio it was stored without. Items imported before the media columns
+        -- existed would otherwise never gain a player, because the guid is
+        -- already there and a do-nothing conflict skips the whole row.
+        audio_url = coalesce(feed_items.audio_url, excluded.audio_url),
+        audio_type = coalesce(feed_items.audio_type, excluded.audio_type),
+        audio_bytes = coalesce(feed_items.audio_bytes, excluded.audio_bytes),
+        audio_seconds = coalesce(feed_items.audio_seconds, excluded.audio_seconds)`,
     args: [
       newId(),
       feedId,
@@ -161,6 +276,11 @@ export async function upsertItems(db, feedId, items) {
       i.author || null,
       i.imageUrl || null,
       i.publishedAt ?? null,
+      JSON.stringify(Array.isArray(i.categories) ? i.categories : []),
+      i.audio?.url ?? null,
+      i.audio?.type ?? null,
+      i.audio?.bytes ?? null,
+      i.audio?.seconds ?? null,
       now,
     ],
   }));
@@ -177,7 +297,8 @@ export async function upsertItems(db, feedId, items) {
  */
 export async function itemsForFeed(db, feedId, limit = 50) {
   const { rows } = await db.execute({
-    sql: `select id, guid, url, title, summary, author, image_url, published_at
+    sql: `select id, guid, url, title, summary, author, image_url, published_at,
+                 audio_url, audio_type, audio_seconds
           from feed_items where feed_id = ?
           order by published_at desc nulls last, created_at desc
           limit ?`,
@@ -200,7 +321,8 @@ export async function itemsForFeed(db, feedId, limit = 50) {
  */
 export async function itemByGuid(db, feedId, guid) {
   const { rows } = await db.execute({
-    sql: `select id, guid, url, title, summary, author, image_url, published_at
+    sql: `select id, guid, url, title, summary, author, image_url, published_at,
+                 audio_url, audio_type, audio_seconds
           from feed_items where feed_id = ? and guid = ? limit 1`,
     args: [feedId, guid],
   });
@@ -218,6 +340,253 @@ export async function countItems(db, feedId) {
     args: [feedId],
   });
   return Number(rows[0]?.n ?? 0);
+}
+
+// ------------------------------------------------------------------- topics
+
+/**
+ * The text a feed's topics are extracted from.
+ *
+ * Titles and summaries only: they are the feed's own prose with the markup
+ * already stripped, and content_html is the same words again wrapped in tags
+ * that would have to be stripped a second time to say anything new.
+ *
+ * Capped, because a feed's topics are what it is about lately — an archive of
+ * four thousand posts would otherwise be re-tokenized on every crawl to
+ * rediscover the same subjects.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function itemsForKeywords(db, feedId, limit = 200) {
+  const { rows } = await db.execute({
+    sql: `select title, summary, categories from feed_items
+          where feed_id = ?
+          order by published_at desc nulls last, created_at desc
+          limit ?`,
+    args: [feedId, limit],
+  });
+  return rows;
+}
+
+/**
+ * Replace a feed's topics with a freshly extracted set.
+ *
+ * Delete-then-insert rather than an upsert: keywords are derived from the
+ * feed's current text, so a topic the feed has stopped writing about has to
+ * disappear, and an upsert would leave it behind forever.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @param {Array<{ slug: string, keyword: string, words: number, count: number, source: string }>} keywords
+ * @returns {Promise<number>} rows written
+ */
+export async function replaceFeedKeywords(db, feedId, keywords) {
+  const statements = [
+    { sql: 'delete from feed_keywords where feed_id = ?', args: [feedId] },
+    ...keywords.map((k) => ({
+      sql: `insert into feed_keywords (feed_id, slug, keyword, words, count, source)
+            values (?, ?, ?, ?, ?, ?)
+            on conflict (feed_id, slug) do nothing`,
+      args: [feedId, k.slug, k.keyword, k.words ?? 1, k.count ?? 0, k.source ?? 'content'],
+    })),
+  ];
+
+  // One batch, so a feed is never left with its old topics deleted and its new
+  // ones unwritten.
+  await db.batch(statements, 'write');
+  return keywords.length;
+}
+
+/**
+ * How many topics a feed has — the cheap "has this ever been extracted?" test.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @returns {Promise<number>}
+ */
+export async function countFeedKeywords(db, feedId) {
+  const { rows } = await db.execute({
+    sql: 'select count(*) as n from feed_keywords where feed_id = ?',
+    args: [feedId],
+  });
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * A feed's own topics, for its page.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function keywordsForFeed(db, feedId, limit = 12) {
+  const { rows } = await db.execute({
+    sql: `select slug, keyword, words, count, source from feed_keywords
+          where feed_id = ?
+          order by case source when 'category' then 0 else 1 end, count desc, keyword asc
+          limit ?`,
+    args: [feedId, limit],
+  });
+  return rows;
+}
+
+/**
+ * How many feeds carry a topic, and what it is called.
+ *
+ * Read from feed_keywords rather than the topics rollup so a topic page is
+ * never stale, and so a topic that appeared since the last refresh still has a
+ * working page.
+ *
+ * @param {Client} db
+ * @param {string} slug
+ * @returns {Promise<{ slug: string, keyword: string, feedCount: number }|null>}
+ */
+export async function topicBySlug(db, slug) {
+  const { rows } = await db.execute({
+    sql: `select k.slug,
+                 -- Any spelling will do as the display name: extraction
+                 -- lowercases its keywords and categories are lowercased before
+                 -- they are stored, so the rows under one slug differ only in
+                 -- ways the slug already erased. Same rule as the rollup, so
+                 -- the index and the page always agree on the title.
+                 min(k.keyword) as keyword,
+                 count(*) as feed_count
+          from feed_keywords k
+          join feeds f on f.id = k.feed_id and f.status <> 'dead'
+          where k.slug = ?
+          group by k.slug`,
+    args: [slug],
+  });
+
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    slug: String(row.slug),
+    keyword: String(row.keyword ?? row.slug),
+    feedCount: Number(row.feed_count ?? 0),
+  };
+}
+
+/**
+ * The feeds filed under one topic, strongest first.
+ *
+ * A feed's own categories rank above a keyword counted out of its prose: the
+ * publisher saying "this is about homelabs" outranks us noticing the word.
+ *
+ * @param {Client} db
+ * @param {string} slug
+ * @param {{ limit?: number, offset?: number }} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function feedsForTopic(db, slug, opts = {}) {
+  const { limit = 60, offset = 0 } = opts;
+
+  const { rows } = await db.execute({
+    sql: `select f.slug, f.title, f.description, f.site_url, f.category, f.item_count,
+                 k.keyword, k.count, k.source
+          from feed_keywords k
+          join feeds f on f.id = k.feed_id
+          where k.slug = ? and f.status <> 'dead'
+          order by case k.source when 'category' then 0 else 1 end, k.count desc, f.title asc
+          limit ? offset ?`,
+    args: [slug, limit, offset],
+  });
+  return rows;
+}
+
+/**
+ * The topics index, from the rollup.
+ *
+ * @param {Client} db
+ * @param {{ limit?: number, offset?: number, minFeeds?: number }} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function listTopics(db, opts = {}) {
+  const { limit = 200, offset = 0, minFeeds = 2 } = opts;
+
+  const { rows } = await db.execute({
+    sql: `select slug, keyword, feed_count from topics
+          where feed_count >= ?
+          order by feed_count desc, slug asc
+          limit ? offset ?`,
+    args: [minFeeds, limit, offset],
+  });
+  return rows;
+}
+
+/**
+ * @param {Client} db
+ * @param {number} [minFeeds]
+ * @returns {Promise<number>}
+ */
+export async function countTopics(db, minFeeds = 2) {
+  const { rows } = await db.execute({
+    sql: 'select count(*) as n from topics where feed_count >= ?',
+    args: [minFeeds],
+  });
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Rebuild the topics rollup.
+ *
+ * The whole table is rewritten rather than diffed. It is a projection of
+ * feed_keywords with nothing in it that cannot be recomputed, and a delete plus
+ * an insert-select is one round trip that always lands on the right answer —
+ * where an incremental refresh has to be right every time forever to avoid
+ * drifting into counts nobody can explain.
+ *
+ * Topics carried by a single feed are left out: they are the long tail of one
+ * blog's vocabulary, they are the overwhelming majority of the rows, and a page
+ * listing one feed is not a topic page.
+ *
+ * @param {Client} db
+ * @param {number} [minFeeds]
+ * @returns {Promise<number>} topics in the rollup
+ */
+export async function refreshTopics(db, minFeeds = 2) {
+  const now = nowIso();
+
+  await db.batch(
+    [
+      { sql: 'delete from topics', args: [] },
+      {
+        sql: `insert into topics (slug, keyword, feed_count, refreshed_at)
+              select k.slug,
+                     min(k.keyword),
+                     count(distinct k.feed_id),
+                     ?
+              from feed_keywords k
+              join feeds f on f.id = k.feed_id and f.status <> 'dead'
+              group by k.slug
+              having count(distinct k.feed_id) >= ?`,
+        args: [now, minFeeds],
+      },
+    ],
+    'write',
+  );
+
+  const { rows } = await db.execute('select count(*) as n from topics');
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Topics whose pages the sitemap should list.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function topicsForSitemap(db, limit = 20_000) {
+  const { rows } = await db.execute({
+    sql: 'select slug, refreshed_at from topics order by feed_count desc, slug asc limit ?',
+    args: [limit],
+  });
+  return rows;
 }
 
 /**
@@ -376,7 +745,13 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
   await db.execute({
     sql: `update feeds set
             status = 'active', title = ?, description = ?, site_url = ?, image_url = ?,
-            last_fetched_at = ?, last_success_at = ?, last_error = null, error_count = 0,
+            -- Only over a category this crawler derived. A curated one — the
+            -- comics, lives and reels lists, none of which are visible to a
+            -- parser — would otherwise be re-derived back to 'blog' on the
+            -- feed's next crawl, which is to say within the hour.
+            category = case when category_source = 'curated' then category else ? end,
+            last_fetched_at = ?, last_success_at = ?, last_error = null,
+            error_count = 0,
             fetch_interval_minutes = ?, next_fetch_at = ?, item_count = ?, updated_at = ?
           where id = ?`,
     args: [
@@ -384,6 +759,11 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
       feed.description || null,
       feed.siteUrl || null,
       feed.imageUrl || null,
+      // Re-derived on every crawl rather than set once at submission: a blog
+      // that starts publishing audio becomes music, and the tens of thousands
+      // of rows imported before this column existed get their real category
+      // the first time the poller reaches them.
+      normalizeKind(feed.kind) ?? 'blog',
       now,
       now,
       intervalMinutes,
@@ -553,16 +933,22 @@ export async function randomSlug(db) {
  * double quotes makes every token a literal phrase; embedded quotes are doubled
  * per FTS5's own escaping rule.
  *
+ * Quoting is also why a caller cannot smuggle its own operators in: `foo OR bar`
+ * searches for the literal word "OR". Somebody who wants either term therefore
+ * has no way to say so, which is what `mode` is for. It stays 'all' by default,
+ * because a human typing several words into the box means all of them.
+ *
  * @param {string} query
+ * @param {'all'|'any'} [mode] 'all' requires every term, 'any' requires one
  * @returns {string}
  */
-export function ftsQuery(query) {
+export function ftsQuery(query, mode = 'all') {
   const terms = String(query ?? '')
     .split(/\s+/)
     .map((t) => t.replace(/"/g, '""').trim())
     .filter(Boolean)
     .map((t) => `"${t}"`);
-  return terms.join(' ');
+  return terms.join(mode === 'any' ? ' OR ' : ' ');
 }
 
 /**
@@ -571,14 +957,16 @@ export function ftsQuery(query) {
  * @param {Client} db
  * @param {string} query
  * @param {number} [limit]
+ * @param {'all'|'any'} [mode]
  * @returns {Promise<object[]>}
  */
-export async function searchItems(db, query, limit = 40) {
-  const match = ftsQuery(query);
+export async function searchItems(db, query, limit = 40, mode = 'all') {
+  const match = ftsQuery(query, mode);
   if (!match) return [];
 
   const { rows } = await db.execute({
-    sql: `select i.title, i.url, i.summary, i.published_at, f.slug as feed_slug, f.title as feed_title
+    sql: `select i.guid, i.title, i.url, i.summary, i.published_at,
+                 f.slug as feed_slug, f.title as feed_title
           from feed_items_fts
           join feed_items i on i.rowid = feed_items_fts.rowid
           join feeds f on f.id = i.feed_id
@@ -596,10 +984,11 @@ export async function searchItems(db, query, limit = 40) {
  * @param {Client} db
  * @param {string} query
  * @param {number} [limit]
+ * @param {'all'|'any'} [mode]
  * @returns {Promise<object[]>}
  */
-export async function searchFeeds(db, query, limit = 20) {
-  const match = ftsQuery(query);
+export async function searchFeeds(db, query, limit = 20, mode = 'all') {
+  const match = ftsQuery(query, mode);
   if (!match) return [];
 
   const { rows } = await db.execute({
@@ -756,7 +1145,7 @@ export async function submissionCount(db, ipHash, windowMs = 3_600_000) {
  */
 export async function allFeedsForExport(db, limit = 5000) {
   const { rows } = await db.execute({
-    sql: `select slug, title, feed_url, site_url, description, item_count, updated_at
+    sql: `select slug, title, feed_url, site_url, description, category, item_count, updated_at
           from feeds where status <> 'dead' order by title asc, id asc limit ?`,
     args: [limit],
   });
@@ -776,20 +1165,28 @@ export async function allFeedsForExport(db, limit = 5000) {
  * that title or repeat it forever. `id` is the primary key, so the pair is.
  *
  * @param {Client} db
- * @param {{ afterTitle?: string|null, afterId?: string|null, limit?: number }} [cursor]
+ * @param {{ afterTitle?: string|null, afterId?: string|null, limit?: number, kind?: string|null }} [cursor]
  * @returns {Promise<object[]>}
  */
-export async function feedsForExportPage(db, { afterTitle = null, afterId = null, limit = 2000 } = {}) {
+export async function feedsForExportPage(
+  db,
+  { afterTitle = null, afterId = null, limit = 2000, kind = null } = {},
+) {
   const resuming = afterTitle !== null && afterId !== null;
 
   const { rows } = await db.execute({
-    sql: `select id, slug, title, feed_url, site_url, description, item_count, updated_at
+    sql: `select id, slug, title, feed_url, site_url, description, category, item_count, updated_at
           from feeds
           where status <> 'dead'
+            ${kind ? 'and category = ?' : ''}
             ${resuming ? 'and (title > ? or (title = ? and id > ?))' : ''}
           order by title asc, id asc
           limit ?`,
-    args: resuming ? [afterTitle, afterTitle, afterId, limit] : [limit],
+    args: [
+      ...(kind ? [kind] : []),
+      ...(resuming ? [afterTitle, afterTitle, afterId] : []),
+      limit,
+    ],
   });
   return rows;
 }
@@ -803,14 +1200,15 @@ export async function feedsForExportPage(db, { afterTitle = null, afterId = null
  *
  * @param {Client} db
  * @param {number} [pageSize]
+ * @param {string|null} [kind] one category, or null for the whole directory
  * @returns {AsyncGenerator<object, void, void>}
  */
-export async function* eachFeedForExport(db, pageSize = 2000) {
+export async function* eachFeedForExport(db, pageSize = 2000, kind = null) {
   let afterTitle = null;
   let afterId = null;
 
   for (;;) {
-    const rows = await feedsForExportPage(db, { afterTitle, afterId, limit: pageSize });
+    const rows = await feedsForExportPage(db, { afterTitle, afterId, limit: pageSize, kind });
     if (rows.length === 0) return;
 
     for (const row of rows) yield row;

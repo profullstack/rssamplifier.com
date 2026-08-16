@@ -38,9 +38,16 @@ const discoveryBatch = Number(env['DISCOVERY_BATCH_SIZE']) || 10;
 // seconds, five per tick is 7,200 searches a day if the queue is ever that deep.
 const keywordBatch = Number(env['DISCOVERY_KEYWORD_BATCH_SIZE']) || 5;
 
+// How often the topics rollup is rebuilt. It is one grouped scan of
+// feed_keywords, and the index it feeds is a browsing aid — a topic's own page
+// reads the keywords directly and is never stale, so the only thing a longer
+// gap costs is how quickly a new topic shows up in the list.
+const topicsIntervalMs = (Number(env['TOPICS_REFRESH_SECONDS']) || 900) * 1000;
+
 let running = false;
 let stopping = false;
 let lastPurge = 0;
+let lastTopics = 0;
 
 /**
  * Structured one-line log, so Railway's viewer stays greppable.
@@ -94,6 +101,14 @@ async function tick() {
     // clearing them is housekeeping — and this is the process that runs anyway.
     // Hourly rather than every tick: it is three deletes over indexed columns
     // and there is nothing to gain from doing them sixty times an hour.
+    // The topics index is a projection of the keywords the crawl above just
+    // rewrote, so it is rebuilt by the process that invalidated it.
+    if (Date.now() - lastTopics > topicsIntervalMs) {
+      lastTopics = Date.now();
+      const topics = await q.refreshTopics(db);
+      log('topics', { topics, ms: Date.now() - lastTopics });
+    }
+
     if (Date.now() - lastPurge > 3_600_000) {
       lastPurge = Date.now();
       const purged = await accounts.purgeExpired(db);

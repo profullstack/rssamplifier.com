@@ -1,12 +1,16 @@
 import { notFound } from 'next/navigation';
-import { q, reactions } from '@rssamplifier/db';
-import { isFrameable } from '@rssamplifier/feed';
+import { q, reactions, translations } from '@rssamplifier/db';
+import { isFrameable, sanitizeHtml } from '@rssamplifier/feed';
+import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/translate';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
+import { popularLanguages } from '../../../lib/languages.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
+import EpisodePlayer from '../../EpisodePlayer.jsx';
+import LanguageBar from '../../LanguageBar.jsx';
 import PostActions from '../../PostActions.jsx';
 import ReaderToolbar from '../../ReaderToolbar.jsx';
 
@@ -40,11 +44,27 @@ export async function generateMetadata({ params }) {
  * outside. So the policy is checked server-side first and a refusal renders an
  * honest card rather than a blank rectangle.
  *
- * @param {{ params: Promise<{ slug: string }>, searchParams: Promise<{ p?: string }> }} props
+ * A lot of the small web is not written in English, and a post nobody in the
+ * room can read is a dead end no matter how well it is framed. Asking for a
+ * language translates the whole post — title, summary and body — and the
+ * translated article is rendered here in place of the frame.
+ *
+ * That last part is a reversal, and worth saying why. The frame shows the
+ * publisher's own page, served from their server, and nothing we do can
+ * translate it; a reader who asked for Swedish and got a Swedish headline over
+ * an English page has been shown that they cannot read this, not helped to.
+ * The post's own text is something we already hold, so when a translation
+ * exists the reader gets that instead, and the original is one click away in
+ * the toolbar — where it now matters more, not less.
+ *
+ * @param {{
+ *   params: Promise<{ slug: string }>,
+ *   searchParams: Promise<{ p?: string, lang?: string }>,
+ * }} props
  */
 export default async function ReaderPage({ params, searchParams }) {
   const { slug } = await params;
-  const { p: guid } = await searchParams;
+  const { p: guid, lang } = await searchParams;
 
   const client = db();
   const feed = await q.feedBySlug(client, slug);
@@ -56,7 +76,13 @@ export default async function ReaderPage({ params, searchParams }) {
   // just neighbours in the same query the blog page already makes.
   const posts = await q.itemsForFeed(client, feedId, 200);
   const index = guid ? posts.findIndex((item) => String(item.guid) === guid) : 0;
-  const post = index >= 0 ? posts[index] : null;
+
+  // That window is a running order, not the archive: a fifth of all the posts
+  // we hold sit outside their own feed's newest 200. Search reaches them, so
+  // the reader has to as well — fall back to fetching the one post by guid and
+  // simply do without neighbours, rather than claiming it does not exist.
+  const inOrder = index >= 0 && posts[index] !== undefined;
+  const post = inOrder ? posts[index] : guid ? await q.itemByGuid(client, feedId, guid) : null;
 
   if (!post) notFound();
 
@@ -73,11 +99,67 @@ export default async function ReaderPage({ params, searchParams }) {
   const user = await currentUser();
   const userId = user ? String(user.id) : null;
 
-  const [score, mine, thread] = await Promise.all([
+  const [score, mine, thread, languages] = await Promise.all([
     reactions.scoreFor(client, itemId),
     userId ? reactions.reactionFor(client, userId, itemId) : { liked: false, vote: 0 },
     reactions.commentsFor(client, itemId),
+    popularLanguages(),
   ]);
+
+  // The URL wins over the stored preference, so a link someone was sent lands
+  // in the language it names; with nothing in the URL the account's own choice
+  // carries over from the last post they read.
+  const asked =
+    normalizeLang(lang) ??
+    (userId ? normalizeLang(await translations.readingLanguage(client, userId)) : null);
+
+  // Any language the URL can spell, not only the eight the bar offers. The bar
+  // is a shortlist of what the directory is mostly written in; a link someone
+  // was sent — or a reader whose language is not in the top eight — asked for
+  // something real either way, and refusing it silently is how "?lang=sv did
+  // nothing" happens.
+  const wanted = asked;
+
+  // Anonymous readers get translations somebody else already paid for: the row
+  // is written, serving it costs nothing, and the alternative is showing a
+  // reader English on a page whose translation is sitting in the database.
+  // Paying for a *new* one still needs an account — ensureTranslation stops at
+  // the cache without a userId. See /api/translate.
+  const source = await translations.itemText(client, itemId);
+
+  const attempt = wanted
+    ? await ensureTranslation(client, {
+        itemId,
+        title: String(post.title),
+        summary: post.summary === null ? null : String(post.summary),
+        contentHtml: source?.content_html ? String(source.content_html) : null,
+        targetLang: wanted,
+        sourceLang: feed.language === null ? null : String(feed.language),
+        userId,
+      })
+    : { translation: null, limited: false };
+
+  const translated = attempt.translation;
+
+  const title = translated ? translated.title : String(post.title);
+  const summary = translated ? translated.summary : (post.summary ?? null);
+  const sourceLang = normalizeLang(translated?.sourceLang ?? feed.language);
+
+  // The body to render, already sanitized. Translated bodies are sanitized on
+  // the way out of the translator as well; the original is sanitized here
+  // because until now nothing rendered it and it has never been through a
+  // sanitizer at all.
+  const article = translated?.contentHtml
+    ? translated.contentHtml
+    : source?.content_html
+      ? sanitizeHtml(String(source.content_html))
+      : null;
+
+  // Framing is what the reader does with a post it cannot show itself. A
+  // translated article is one it can, so the frame gives way to it.
+  const readable = Boolean(translated?.contentHtml);
+
+  const audio = post.audio_url ? String(post.audio_url) : null;
 
   return (
     <div className="reader">
@@ -86,7 +168,36 @@ export default async function ReaderPage({ params, searchParams }) {
           <a href={`/${slug}`}>{String(feed.title)}</a>
           {post.published_at ? ` · ${formatDate(post.published_at)}` : ''}
         </p>
-        <h1>{String(post.title)}</h1>
+        <h1>{title}</h1>
+
+        <LanguageBar
+          slug={slug}
+          guid={String(post.guid)}
+          languages={languages}
+          active={wanted}
+          signedIn={Boolean(userId)}
+        />
+
+        {translated && (
+          <p className="translated-note">
+            Translated {sourceLang ? `from ${languageName(sourceLang, 'en')} ` : ''}by machine. The
+            original is a click away in the toolbar.
+          </p>
+        )}
+
+        {/*
+         * Worth saying out loud rather than silently showing the original: this
+         * is the one failure that fixes itself, and a reader who is told the
+         * limit resets will come back instead of concluding the feature is
+         * broken. Posts somebody has already had translated stay readable
+         * throughout — the limit is on paying for new ones, not on reading.
+         */}
+        {attempt.limited && (
+          <p className="translated-note">
+            Translation limit reached for today — showing the original. Posts already translated
+            still are.
+          </p>
+        )}
 
         <PostActions
           slug={slug}
@@ -98,59 +209,124 @@ export default async function ReaderPage({ params, searchParams }) {
         />
       </div>
 
-      {verdict.frameable && postUrl ? (
-        <iframe
-          className="reader-frame"
-          src={postUrl}
-          title={String(post.title)}
-          // The framed page is a stranger's: allow it to render and navigate
-          // itself, and nothing else. No same-origin, so it can never reach
-          // into this document.
-          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
-          referrerPolicy="no-referrer-when-downgrade"
-          loading="eager"
-        />
-      ) : (
-        <div className="reader-fallback">
-          <p className="notice">
-            {explain(verdict.reason)} You can still read it on the original site — the toolbar
-            below keeps your place in the directory.
-          </p>
+      {/*
+       * The whole post, in the reader's language, in place of the frame.
+       *
+       * dangerouslySetInnerHTML with two untrusted authors behind it — the
+       * publisher and the model — so nothing reaches here that has not been
+       * through sanitizeHtml, which is an allowlist and drops scripts,
+       * handlers, embeds and unsafe URL schemes.
+       */}
+      {readable ? (
+        <>
+          {summary && <p className="lede translated">{summary}</p>}
+          <article
+            className="reader-article translated"
+            lang={wanted ?? undefined}
+            dangerouslySetInnerHTML={{ __html: article ?? '' }}
+          />
 
-          {post.summary && <p className="lede">{String(post.summary)}</p>}
-
-          {postUrl && (
-            <p>
-              <a className="button" href={postUrl} target="_blank" rel="noopener">
-                Read on {hostOf(postUrl)} ↗
-              </a>
+          {translated?.truncated && (
+            <p className="notice">
+              This post was longer than one translation, so it stops partway. The rest is on the
+              original site — the toolbar below has the link.
             </p>
           )}
 
+          {postUrl && (
+            <p className="hint">
+              <a href={postUrl} target="_blank" rel="noopener">
+                Read the original on {hostOf(postUrl)} ↗
+              </a>
+            </p>
+          )}
+        </>
+      ) : (
+        <>
           {/*
-           * The only advertising in the reader, and only on this branch.
-           *
-           * When the frame loads, everything on screen is somebody else's
-           * article and the money an ad made here would be made off their
-           * writing. That is the same reason this page is already noindex —
-           * it must not compete with the original — and selling space around
-           * it would be the same trespass with a bill attached.
-           *
-           * This branch is different: nothing was framed, so the page is our
-           * own summary and our own link out, and it can carry a unit.
+           * Not translated, so the frame stands and the summary sits above it:
+           * the frame is the publisher's own page in its own language, and
+           * this is the gist in the reader's, so they can decide whether the
+           * page below is worth the effort.
            */}
-          <Ad format={AD_MREC} />
-        </div>
+          {translated && summary && verdict.frameable && (
+            <p className="lede translated">{summary}</p>
+          )}
+
+          {verdict.frameable && postUrl ? (
+            <iframe
+              className="reader-frame"
+              src={postUrl}
+              title={title}
+              // The framed page is a stranger's: allow it to render and
+              // navigate itself, and nothing else. No same-origin, so it can
+              // never reach into this document.
+              sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
+              referrerPolicy="no-referrer-when-downgrade"
+              loading="eager"
+            />
+          ) : (
+            <div className="reader-fallback">
+              <p className="notice">
+                {explain(verdict.reason)} You can still read it on the original site — the toolbar
+                below keeps your place in the directory.
+              </p>
+
+              {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
+
+              {/* The post's own text, where the publisher put it in the feed.
+                  Better than a link nobody can follow when the site refuses to
+                  be framed — which is most of the reason this branch exists. */}
+              {article && !summary && (
+                <article className="reader-article" dangerouslySetInnerHTML={{ __html: article }} />
+              )}
+
+              {postUrl && (
+                <p>
+                  <a className="button" href={postUrl} target="_blank" rel="noopener">
+                    Read on {hostOf(postUrl)} ↗
+                  </a>
+                </p>
+              )}
+
+              {/*
+               * The only advertising in the reader, and only on this branch.
+               *
+               * When the frame loads, everything on screen is somebody else's
+               * article and the money an ad made here would be made off their
+               * writing. That is the same reason this page is already noindex
+               * — it must not compete with the original — and selling space
+               * around it would be the same trespass with a bill attached.
+               *
+               * This branch is different: nothing was framed, so the page is
+               * our own summary and our own link out, and it can carry a unit.
+               */}
+              <Ad format={AD_MREC} />
+            </div>
+          )}
+        </>
       )}
 
       <Comments slug={slug} guid={String(post.guid)} comments={thread} userId={userId} />
+
+      {/* Docked above the toolbar, so the episode keeps playing while the
+          show notes scroll behind it. */}
+      {audio && (
+        <EpisodePlayer
+          src={audio}
+          type={post.audio_type ? String(post.audio_type) : null}
+          title={title}
+          seconds={post.audio_seconds ? Number(post.audio_seconds) : null}
+          feedTitle={String(feed.title)}
+        />
+      )}
 
       <ReaderToolbar
         slug={slug}
         feedTitle={String(feed.title)}
         postUrl={postUrl}
-        prevGuid={index > 0 ? String(posts[index - 1].guid) : null}
-        nextGuid={index < posts.length - 1 ? String(posts[index + 1].guid) : null}
+        prevGuid={inOrder && index > 0 ? String(posts[index - 1].guid) : null}
+        nextGuid={inOrder && index < posts.length - 1 ? String(posts[index + 1].guid) : null}
         nextBlog={nav.next}
       />
     </div>

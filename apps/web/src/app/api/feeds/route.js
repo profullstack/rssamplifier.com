@@ -7,7 +7,10 @@ export const dynamic = 'force-dynamic';
 /**
  * Every feed in the directory — the agent-facing entry point.
  *
- * CORS-open, paginated, no key required.
+ * CORS-open, paginated, no key required. `?kind=blog` or `?kind=podcast`
+ * narrows it to one category; an unrecognised kind is ignored rather than
+ * rejected, so a caller that guesses wrong gets the whole directory instead of
+ * an error page it has to parse.
  *
  * @param {Request} req
  */
@@ -15,17 +18,20 @@ export async function GET(req) {
   const url = new URL(req.url);
   const limit = clamp(url.searchParams.get('limit'), 100, 500);
   const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
+  const kind = q.normalizeKind(url.searchParams.get('kind'));
 
   const client = db();
   const [rows, total] = await Promise.all([
-    q.listFeeds(client, { limit, offset }),
-    q.countFeeds(client),
+    q.listFeeds(client, { limit, offset, kind }),
+    q.countFeeds(client, false, kind),
   ]);
 
   return json({
     total,
     limit,
     offset,
+    kind,
+    kinds: q.KINDS,
     feeds: rows.map((f) => ({
       slug: f.slug,
       title: f.title,
@@ -33,6 +39,7 @@ export async function GET(req) {
       siteUrl: f.site_url,
       feedUrl: f.feed_url,
       language: f.language,
+      kind: f.category,
       itemCount: f.item_count,
       status: f.status,
       lastSuccessAt: f.last_success_at,
