@@ -56,6 +56,11 @@ export default function RootLayout({ children }) {
               RSS<span>Amplifier</span>
             </a>
             <nav aria-label="Primary">
+              {/* The two categories lead the nav: browsing is what a visitor
+                  came to do, and everything after Search is a thing you do once
+                  you already know the site. */}
+              <a href="/blogs">Blogs</a>
+              <a href="/podcasts">Podcasts</a>
               <a href="/submit">Submit</a>
               <a href="/search">Search</a>
               <a href="/opml">OPML</a>
@@ -89,6 +94,9 @@ export default function RootLayout({ children }) {
             <p>
               An open, agent-friendly directory of independent blogs. Anyone can add a feed; no
               account needed. Built by <a href="https://profullstack.com">Profullstack, Inc.</a>
+            </p>
+            <p>
+              Browse: <a href="/blogs">Blogs</a> · <a href="/podcasts">Podcasts</a>
             </p>
             <p>
               Machine-readable: <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}

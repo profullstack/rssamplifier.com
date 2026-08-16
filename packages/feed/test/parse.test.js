@@ -132,3 +132,113 @@ test('buildOpml escapes attribute values', () => {
   assert.ok(xml.includes('&quot;'), 'quote escaped');
   assert.ok(!xml.includes('"Jerry"'), 'raw quotes must not survive into the attribute');
 });
+
+// ---------------------------------------------------------------- kind
+
+const PODCAST_RSS = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>Linux Matters</title>
+    <link>https://linuxmatters.sh/</link>
+    <description>A show</description>
+    <itunes:author>Linux Matters</itunes:author>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Technology"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://linuxmatters.sh/cover.png"/>
+    <podcast:guid>8367df70-b8a6-11f0-98a7-bdf3d3f7c22c</podcast:guid>
+    <item>
+      <title>Herding online exams</title>
+      <link>https://linuxmatters.sh/87/</link>
+      <guid>https://linuxmatters.sh/87/</guid>
+      <description>Episode notes</description>
+      <enclosure url="https://audio.linuxmatters.net/LMP87.mp3" length="25464080" type="audio/mpeg"/>
+    </item>
+  </channel>
+</rss>`;
+
+const AUDIO_ONLY_RSS = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Hand-rolled show</title>
+    <link>https://s.example/</link>
+    <description>No namespaces at all</description>
+    <item>
+      <title>Episode one</title>
+      <guid>https://s.example/1</guid>
+      <enclosure url="https://s.example/1.mp3" type="audio/mpeg" length="1"/>
+    </item>
+  </channel>
+</rss>`;
+
+const IMAGE_ENCLOSURE_RSS = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Photo blog</title>
+    <link>https://p.example/</link>
+    <description>Pictures</description>
+    <item>
+      <title>A picture</title>
+      <guid>https://p.example/1</guid>
+      <enclosure url="https://p.example/1.jpg" type="image/jpeg" length="1"/>
+    </item>
+  </channel>
+</rss>`;
+
+test('a feed carrying the podcast namespaces is a podcast', () => {
+  const feed = parseFeed(PODCAST_RSS);
+  assert.equal(feed.kind, 'podcast');
+  assert.equal(feed.title, 'Linux Matters');
+  // Cover art comes from itunes:image when the plain <image> element is absent,
+  // which is the common shape from podcast hosting.
+  assert.equal(feed.imageUrl, 'https://linuxmatters.sh/cover.png');
+});
+
+test('an audio enclosure alone makes a podcast, with no namespace declared', () => {
+  assert.equal(parseFeed(AUDIO_ONLY_RSS).kind, 'podcast');
+});
+
+test('an ordinary blog stays a blog in every format', () => {
+  assert.equal(parseFeed(RSS).kind, 'blog');
+  assert.equal(parseFeed(ATOM).kind, 'blog');
+  assert.equal(parseFeed(JSON_FEED).kind, 'blog');
+});
+
+test('an atom feed with an audio enclosure link is a podcast', () => {
+  const atom = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom show</title>
+  <link rel="alternate" href="https://a.example/"/>
+  <entry>
+    <id>1</id>
+    <title>Episode</title>
+    <link rel="alternate" href="https://a.example/1"/>
+    <link rel="enclosure" type="audio/mpeg" href="https://a.example/1.mp3"/>
+  </entry>
+</feed>`;
+  assert.equal(parseFeed(atom).kind, 'podcast');
+});
+
+test('a JSON feed with an audio attachment is a podcast', () => {
+  const json = JSON.stringify({
+    version: 'https://jsonfeed.org/version/1.1',
+    title: 'JSON show',
+    items: [
+      {
+        id: '1',
+        url: 'https://j.example/1',
+        title: 'Episode',
+        attachments: [{ url: 'https://j.example/1.mp3', mime_type: 'audio/mpeg' }],
+      },
+    ],
+  });
+  assert.equal(parseFeed(json).kind, 'podcast');
+});
+
+test('an audio enclosure is not mistaken for the item image', () => {
+  // <enclosure> used to be read as an image unconditionally, which would put an
+  // mp3 in the image slot of every episode of every podcast in the directory.
+  assert.equal(parseFeed(PODCAST_RSS).items[0].imageUrl, '');
+  assert.equal(parseFeed(IMAGE_ENCLOSURE_RSS).items[0].imageUrl, 'https://p.example/1.jpg');
+});

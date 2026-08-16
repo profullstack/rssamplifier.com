@@ -296,6 +296,91 @@ test('sitemap chunks split an oversized month and cover it exactly once', async 
   await rm(chunkDir, { recursive: true, force: true });
 });
 
+test('feeds are filtered and counted by kind', async () => {
+  const kindDir = await mkdtemp(join(tmpdir(), 'rssamp-kind-'));
+  const kindDb = connect({ url: `file:${join(kindDir, 'kind.db')}` });
+  await migrate(kindDb);
+
+  await q.insertFeed(kindDb, {
+    slug: 'a-blog',
+    feed_url: 'https://a.example/feed.xml',
+    title: 'A Blog',
+  });
+  await q.insertFeed(kindDb, {
+    slug: 'a-show',
+    feed_url: 'https://s.example/feed.xml',
+    title: 'A Show',
+    kind: 'podcast',
+  });
+  // A kind nobody recognises must not become a third category: the column has a
+  // check constraint, so a bad value would otherwise fail the insert outright.
+  await q.insertFeed(kindDb, {
+    slug: 'mystery',
+    feed_url: 'https://m.example/feed.xml',
+    title: 'Mystery',
+    kind: 'newsletter',
+  });
+
+  const podcasts = await q.listFeeds(kindDb, { kind: 'podcast' });
+  assert.deepEqual(
+    podcasts.map((f) => String(f.slug)),
+    ['a-show'],
+  );
+
+  const blogs = await q.listFeeds(kindDb, { kind: 'blog' });
+  assert.equal(blogs.length, 2, 'the unrecognised kind fell back to blog');
+
+  assert.equal(await q.countFeeds(kindDb, false, 'podcast'), 1);
+  assert.equal(await q.countFeeds(kindDb, false, 'blog'), 2);
+  assert.equal(await q.countFeeds(kindDb), 3, 'unfiltered count still spans the directory');
+
+  assert.deepEqual(await q.countFeedsByKind(kindDb), { blog: 2, podcast: 1 });
+
+  // A category the directory has none of still reports zero rather than being
+  // absent, so a page can say "0 podcasts" instead of rendering nothing.
+  const emptyDir = await mkdtemp(join(tmpdir(), 'rssamp-empty-'));
+  const emptyDb = connect({ url: `file:${join(emptyDir, 'empty.db')}` });
+  await migrate(emptyDb);
+  assert.deepEqual(await q.countFeedsByKind(emptyDb), { blog: 0, podcast: 0 });
+  await rm(emptyDir, { recursive: true, force: true });
+
+  // Dead feeds are excluded from a category exactly as they are from the index.
+  await kindDb.execute("update feeds set status = 'dead' where slug = 'a-show'");
+  assert.equal(await q.countFeeds(kindDb, false, 'podcast'), 0);
+  assert.equal((await q.listFeeds(kindDb, { kind: 'podcast' })).length, 0);
+
+  assert.equal(q.normalizeKind('podcast'), 'podcast');
+  assert.equal(q.normalizeKind('PODCAST'), 'podcast');
+  assert.equal(q.normalizeKind('everything'), null);
+  assert.equal(q.normalizeKind(null), null);
+
+  await rm(kindDir, { recursive: true, force: true });
+});
+
+test('a crawl re-derives the kind of a feed already in the directory', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'rssamp-recrawl-'));
+  const db2 = connect({ url: `file:${join(dir2, 'recrawl.db')}` });
+  await migrate(db2);
+
+  // The shape a bulk import leaves behind: no kind was knowable at insert time.
+  const { id } = await q.insertFeed(db2, {
+    slug: 'became-a-show',
+    feed_url: 'https://x.example/feed.xml',
+    title: 'Became a show',
+  });
+  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).kind), 'blog');
+
+  await q.markCrawlSuccess(
+    db2,
+    id,
+    { title: 'Became a show', description: '', siteUrl: '', imageUrl: '', kind: 'podcast' },
+    3,
+  );
+  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).kind), 'podcast');
+
+  await rm(dir2, { recursive: true, force: true });
+});
+
 test('newId is unique and nowIso offsets correctly', () => {
   assert.notEqual(newId(), newId());
   const later = new Date(nowIso(60_000)).getTime() - new Date(nowIso()).getTime();

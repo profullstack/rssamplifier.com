@@ -20,20 +20,27 @@ export const dynamic = 'force-dynamic';
  * outlines immediately instead of after the last row is read, and the cost of
  * the endpoint stops scaling with the size of the directory.
  *
- * `?limit=` caps the export for callers that want a sample instead.
+ * `?limit=` caps the export for callers that want a sample instead, and
+ * `?kind=blog` / `?kind=podcast` exports one category — which is the form a
+ * podcast app actually wants, since it has no use for forty thousand blogs.
  */
 export async function GET(request) {
-  const limit = parseLimit(new URL(request.url).searchParams.get('limit'));
+  const params = new URL(request.url).searchParams;
+  const limit = parseLimit(params.get('limit'));
+  const kind = q.normalizeKind(params.get('kind'));
   const client = db();
+
+  const title = kind ? `RSS Amplifier — ${kind}s` : 'RSS Amplifier — full directory';
+  const filename = kind ? `rssamplifier-${kind}s.opml` : 'rssamplifier.opml';
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      controller.enqueue(encoder.encode(opmlHead('RSS Amplifier — full directory')));
+      controller.enqueue(encoder.encode(opmlHead(title)));
 
       try {
         let written = 0;
-        for await (const row of q.eachFeedForExport(client)) {
+        for await (const row of q.eachFeedForExport(client, 2000, kind)) {
           if (limit !== null && written >= limit) break;
 
           controller.enqueue(
@@ -63,7 +70,7 @@ export async function GET(request) {
   return new Response(stream, {
     headers: {
       'content-type': 'text/x-opml+xml; charset=utf-8',
-      'content-disposition': 'inline; filename="rssamplifier.opml"',
+      'content-disposition': `inline; filename="${filename}"`,
       'access-control-allow-origin': '*',
       'cache-control': 'public, max-age=600',
     },

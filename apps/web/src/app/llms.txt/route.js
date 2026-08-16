@@ -15,9 +15,10 @@ export async function GET() {
   const client = db();
   const base = siteUrl();
 
-  const [feeds, total] = await Promise.all([
+  const [feeds, total, byKind] = await Promise.all([
     q.allFeedsForExport(client, 500),
     q.countFeeds(client),
+    q.countFeedsByKind(client),
   ]);
 
   const lines = [
@@ -26,30 +27,42 @@ export async function GET() {
     '> An open directory of independent blogs and their RSS feeds. Anyone may submit a',
     '> feed; there are no accounts and no paywall. Crawling and reuse are welcome.',
     '',
-    `Total blogs indexed: ${total}`,
+    `Total feeds indexed: ${total} (${byKind.blog} blogs, ${byKind.podcast} podcasts)`,
+    '',
+    '## Categories',
+    '',
+    `- [Blogs](${base}/blogs): feeds with no audio attached`,
+    `- [Podcasts](${base}/podcasts): feeds carrying audio enclosures or the itunes/podcast namespaces`,
+    '',
+    'A feed is classified from its own document on every crawl, never by the',
+    'submitter, so the category is a fact about the feed rather than a claim.',
     '',
     '## Machine-readable endpoints',
     '',
-    `- [All feeds, JSON](${base}/api/feeds): paginated with ?limit= and ?offset=`,
+    `- [All feeds, JSON](${base}/api/feeds): paginated with ?limit= and ?offset=, filter with ?kind=blog|podcast`,
     `- [One feed, JSON](${base}/api/feeds/{slug}): metadata plus recent items`,
     `- [Search, JSON](${base}/api/search?q=): full-text over posts and blogs`,
-    `- [OPML export](${base}/opml): the whole directory as a subscription list`,
+    `- [OPML export](${base}/opml): the whole directory as a subscription list, or one category with ?kind=`,
     `- [Submit](${base}/api/submit): POST {"url":"..."} or {"urls":[...]} or {"opml":"..."}`,
     '',
     '## Notes for agents',
     '',
     '- Every endpoint sends `access-control-allow-origin: *`. No key is required.',
     '- Summaries are plain text, already stripped of markup.',
-    '- Each blog has a stable page at /{slug} carrying schema.org Blog JSON-LD.',
+    '- Each feed has a stable page at /{slug} carrying schema.org Blog or PodcastSeries JSON-LD.',
     '- Please identify yourself in your user-agent. Rate limits are generous but real.',
     '',
-    '## Blogs',
+    '## Feeds',
     '',
   ];
 
   for (const f of feeds) {
     const desc = f.description ? `: ${String(f.description).slice(0, 160)}` : '';
-    lines.push(`- [${f.title}](${base}/${f.slug})${desc}`);
+    // Only podcasts are marked. Blogs are the overwhelming majority, so
+    // labelling those too would add a word to nearly every line of the file to
+    // convey the default.
+    const kind = f.kind === 'podcast' ? ' (podcast)' : '';
+    lines.push(`- [${f.title}](${base}/${f.slug})${kind}${desc}`);
   }
 
   return new Response(`${lines.join('\n')}\n`, {

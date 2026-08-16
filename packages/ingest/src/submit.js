@@ -71,6 +71,10 @@ export async function submitOne(db, input) {
       description: feed.description,
       language: feed.language,
       image_url: feed.imageUrl,
+      // Read off the document, not asked of the submitter: anyone can add a
+      // feed here, so a category the submitter chose is a category anybody can
+      // claim.
+      kind: feed.kind,
       status: 'active',
       item_count: feed.items.length,
     });

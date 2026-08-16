@@ -13,7 +13,11 @@ export const dynamic = 'force-dynamic';
  */
 export default async function Home() {
   const client = db();
-  const [rows, total] = await Promise.all([q.listFeeds(client, { limit: 60 }), q.countFeeds(client)]);
+  const [rows, total, byKind] = await Promise.all([
+    q.listFeeds(client, { limit: 60 }),
+    q.countFeeds(client),
+    q.countFeedsByKind(client),
+  ]);
 
   // The index is a long scan, so ads go *between* rows rather than around the
   // list. First one is deep enough that the fold is all directory, and there
@@ -68,6 +72,20 @@ export default async function Home() {
        * line of type, so it costs the fold 40px rather than a 250px block.
        */}
       <Ad format={AD_TEXT} />
+
+      {/* The index below is everything, newest first. These are the two ways
+          into it that are worth having their own page — the counts are the
+          point, because they say what the directory is mostly made of. */}
+      <nav className="categories" aria-label="Categories">
+        <a href="/blogs">
+          <strong>Blogs</strong>
+          <span>{byKind.blog === 1 ? '1 feed' : `${byKind.blog} feeds`}</span>
+        </a>
+        <a href="/podcasts">
+          <strong>Podcasts</strong>
+          <span>{byKind.podcast === 1 ? '1 feed' : `${byKind.podcast} feeds`}</span>
+        </a>
+      </nav>
 
       <h2>
         Recently added <span className="pill">{total} blogs</span>
