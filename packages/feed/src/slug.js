@@ -16,6 +16,12 @@ const RESERVED = new Set([
   'about',
   'feeds',
   'blog',
+  // The category pages. A feed slugged 'podcasts' would not break the site —
+  // Next serves the static segment ahead of [slug] — but its own page would be
+  // unreachable, which is worse for the blog than a -2 suffix.
+  'blogs',
+  'podcasts',
+  'topics',
   'admin',
   'static',
   '_next',

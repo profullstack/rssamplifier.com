@@ -332,6 +332,195 @@ test('sitemap chunks split an oversized month and cover it exactly once', async 
   await rm(chunkDir, { recursive: true, force: true });
 });
 
+test('feeds are filtered and counted by kind', async () => {
+  const kindDir = await mkdtemp(join(tmpdir(), 'rssamp-kind-'));
+  const kindDb = connect({ url: `file:${join(kindDir, 'kind.db')}` });
+  await migrate(kindDb);
+
+  await q.insertFeed(kindDb, {
+    slug: 'a-blog',
+    feed_url: 'https://a.example/feed.xml',
+    title: 'A Blog',
+  });
+  await q.insertFeed(kindDb, {
+    slug: 'a-show',
+    feed_url: 'https://s.example/feed.xml',
+    title: 'A Show',
+    kind: 'podcast',
+  });
+  // A kind nobody recognises must not become a third category: the column has a
+  // check constraint, so a bad value would otherwise fail the insert outright.
+  await q.insertFeed(kindDb, {
+    slug: 'mystery',
+    feed_url: 'https://m.example/feed.xml',
+    title: 'Mystery',
+    kind: 'newsletter',
+  });
+
+  const podcasts = await q.listFeeds(kindDb, { kind: 'podcast' });
+  assert.deepEqual(
+    podcasts.map((f) => String(f.slug)),
+    ['a-show'],
+  );
+
+  const blogs = await q.listFeeds(kindDb, { kind: 'blog' });
+  assert.equal(blogs.length, 2, 'the unrecognised kind fell back to blog');
+
+  assert.equal(await q.countFeeds(kindDb, false, 'podcast'), 1);
+  assert.equal(await q.countFeeds(kindDb, false, 'blog'), 2);
+  assert.equal(await q.countFeeds(kindDb), 3, 'unfiltered count still spans the directory');
+
+  assert.deepEqual(await q.countFeedsByKind(kindDb), { blog: 2, podcast: 1 });
+
+  // A category the directory has none of still reports zero rather than being
+  // absent, so a page can say "0 podcasts" instead of rendering nothing.
+  const emptyDir = await mkdtemp(join(tmpdir(), 'rssamp-empty-'));
+  const emptyDb = connect({ url: `file:${join(emptyDir, 'empty.db')}` });
+  await migrate(emptyDb);
+  assert.deepEqual(await q.countFeedsByKind(emptyDb), { blog: 0, podcast: 0 });
+  await rm(emptyDir, { recursive: true, force: true });
+
+  // Dead feeds are excluded from a category exactly as they are from the index.
+  await kindDb.execute("update feeds set status = 'dead' where slug = 'a-show'");
+  assert.equal(await q.countFeeds(kindDb, false, 'podcast'), 0);
+  assert.equal((await q.listFeeds(kindDb, { kind: 'podcast' })).length, 0);
+
+  assert.equal(q.normalizeKind('podcast'), 'podcast');
+  assert.equal(q.normalizeKind('PODCAST'), 'podcast');
+  assert.equal(q.normalizeKind('everything'), null);
+  assert.equal(q.normalizeKind(null), null);
+
+  await rm(kindDir, { recursive: true, force: true });
+});
+
+test('a crawl re-derives the kind of a feed already in the directory', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'rssamp-recrawl-'));
+  const db2 = connect({ url: `file:${join(dir2, 'recrawl.db')}` });
+  await migrate(db2);
+
+  // The shape a bulk import leaves behind: no kind was knowable at insert time.
+  const { id } = await q.insertFeed(db2, {
+    slug: 'became-a-show',
+    feed_url: 'https://x.example/feed.xml',
+    title: 'Became a show',
+  });
+  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).kind), 'blog');
+
+  await q.markCrawlSuccess(
+    db2,
+    id,
+    { title: 'Became a show', description: '', siteUrl: '', imageUrl: '', kind: 'podcast' },
+    3,
+  );
+  assert.equal(String((await q.feedBySlug(db2, 'became-a-show')).kind), 'podcast');
+
+  await rm(dir2, { recursive: true, force: true });
+});
+
+test('topics: keywords are replaced wholesale, and the rollup drops single-feed topics', async () => {
+  const dir3 = await mkdtemp(join(tmpdir(), 'rssamp-topics-'));
+  const db3 = connect({ url: `file:${join(dir3, 'topics.db')}` });
+  await migrate(db3);
+
+  const a = await q.insertFeed(db3, {
+    slug: 'feed-a',
+    feed_url: 'https://a.example/feed.xml',
+    title: 'Feed A',
+  });
+  const b = await q.insertFeed(db3, {
+    slug: 'feed-b',
+    feed_url: 'https://b.example/feed.xml',
+    title: 'Feed B',
+    kind: 'podcast',
+  });
+
+  await q.replaceFeedKeywords(db3, a.id, [
+    { slug: 'home-lab', keyword: 'home lab', words: 2, count: 9, source: 'category' },
+    { slug: 'only-mine', keyword: 'only mine', words: 2, count: 4, source: 'content' },
+  ]);
+  await q.replaceFeedKeywords(db3, b.id, [
+    { slug: 'home-lab', keyword: 'home lab', words: 2, count: 3, source: 'content' },
+  ]);
+
+  assert.equal(await q.countFeedKeywords(db3, a.id), 2);
+
+  const topic = await q.topicBySlug(db3, 'home-lab');
+  assert.equal(topic.feedCount, 2);
+  assert.equal(topic.keyword, 'home lab');
+
+  const feeds = await q.feedsForTopic(db3, 'home-lab');
+  assert.deepEqual(
+    feeds.map((f) => String(f.slug)),
+    ['feed-a', 'feed-b'],
+    'the author-tagged feed ranks above the one we counted, whatever the counts',
+  );
+
+  // A rewrite drops topics the feed no longer has, rather than accumulating
+  // every subject it ever mentioned.
+  await q.replaceFeedKeywords(db3, a.id, [
+    { slug: 'home-lab', keyword: 'home lab', words: 2, count: 9, source: 'category' },
+  ]);
+  assert.equal(await q.countFeedKeywords(db3, a.id), 1);
+  assert.equal(await q.topicBySlug(db3, 'only-mine'), null, 'the dropped topic has no page');
+
+  const count = await q.refreshTopics(db3);
+  assert.equal(count, 1, 'only the shared topic is in the index');
+  const listed = await q.listTopics(db3);
+  assert.deepEqual(
+    listed.map((t) => `${t.slug}:${t.feed_count}`),
+    ['home-lab:2'],
+  );
+  assert.equal(await q.countTopics(db3), 1);
+
+  // Rebuilt from scratch each time, so a second refresh is not a second copy.
+  await q.refreshTopics(db3);
+  assert.equal(await q.countTopics(db3), 1);
+
+  // A dead feed leaves its topic behind: its page is still served, but it does
+  // not make a topic look more covered than it is.
+  await db3.execute("update feeds set status = 'dead' where slug = 'feed-b'");
+  assert.equal((await q.topicBySlug(db3, 'home-lab')).feedCount, 1);
+  await q.refreshTopics(db3);
+  assert.equal(await q.countTopics(db3), 0, 'one live feed is not a topic');
+
+  // The rollup is refreshed on a timer, so a topic that appeared since the last
+  // refresh must still have a working page.
+  assert.ok(await q.topicBySlug(db3, 'home-lab'), 'the page works ahead of the index');
+
+  // Cascade: deleting a feed takes its keywords with it.
+  await db3.execute({ sql: 'delete from feeds where id = ?', args: [a.id] });
+  assert.equal(await q.countFeedKeywords(db3, a.id), 0);
+
+  await rm(dir3, { recursive: true, force: true });
+});
+
+test('item categories survive a round trip through storage', async () => {
+  const dir4 = await mkdtemp(join(tmpdir(), 'rssamp-itemcat-'));
+  const db4 = connect({ url: `file:${join(dir4, 'cat.db')}` });
+  await migrate(db4);
+
+  const { id } = await q.insertFeed(db4, {
+    slug: 'tagged',
+    feed_url: 'https://t.example/feed.xml',
+    title: 'Tagged',
+  });
+
+  await q.upsertItems(db4, id, [
+    { guid: '1', title: 'One', summary: 'first', categories: ['Linux', 'Home Lab'] },
+    { guid: '2', title: 'Two', summary: 'second' },
+  ]);
+
+  const rows = await q.itemsForKeywords(db4, id);
+  const parsed = rows.map((r) => JSON.parse(String(r.categories)));
+  assert.deepEqual(parsed.flat().sort(), ['Home Lab', 'Linux']);
+  assert.ok(
+    parsed.some((p) => p.length === 0),
+    'an item with no categories stores an empty list, not null',
+  );
+
+  await rm(dir4, { recursive: true, force: true });
+});
+
 test('newId is unique and nowIso offsets correctly', () => {
   assert.notEqual(newId(), newId());
   const later = new Date(nowIso(60_000)).getTime() - new Date(nowIso()).getTime();

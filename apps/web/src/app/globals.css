@@ -389,6 +389,145 @@ button:disabled {
   margin-bottom: 1.5rem;
 }
 
+/* The eyebrow on a feed's page is a link back to its category. It keeps the
+   eyebrow's quiet colour rather than the link accent — it labels the page
+   first and navigates second. */
+.eyebrow a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.eyebrow a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ------------------------------------------------------------- categories */
+
+/* The two ways into the directory, on the home page. Stacked on a phone and
+   side by side as soon as there is room, because two boxes on one line is the
+   whole point — it is what says the directory has two halves. */
+.categories {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 2rem;
+}
+
+.categories a {
+  background: var(--surface);
+  padding: 1rem 1.35rem;
+  text-decoration: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  transition: background 0.15s ease;
+}
+
+.categories a:hover {
+  background: var(--accent-soft);
+}
+
+.categories strong {
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.categories span {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+/* ----------------------------------------------------------------- topics */
+
+/* The topics index. A wrapped row of links rather than a list: three hundred
+   list items is a page nobody reads to the end of, and the same three hundred
+   as a cloud is one glance. */
+.topic-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+.topic-cloud a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: background 0.15s ease;
+}
+
+.topic-cloud a:hover {
+  background: var(--accent-soft);
+}
+
+.topic-cloud span {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* A feed's own topics, on its page. */
+.topic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1.5rem;
+}
+
+.topic-chips a {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.topic-chips a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The author's own tag, distinguished from a phrase we counted — a solid chip
+   for something asserted, an outline for something inferred. */
+.topic-chips a.tagged {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+/* Paging through a category. Ends are pinned and the counter sits between
+   them, so the two controls stay where the thumb left them from page to
+   page. */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 2rem 0 1rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.pager .disabled {
+  color: var(--muted);
+  opacity: 0.4;
+}
+
 /* ---------------------------------------------------------------- reader */
 
 /* The framed-article view. The site footer would sit below a full-height frame
@@ -620,6 +759,10 @@ select {
 @media (min-width: 34rem) {
   button {
     width: auto;
+  }
+
+  .categories {
+    grid-template-columns: 1fr 1fr;
   }
 }
 

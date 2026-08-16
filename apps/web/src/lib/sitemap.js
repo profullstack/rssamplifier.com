@@ -23,6 +23,14 @@ export const CHUNK_SIZE = 20_000;
  */
 export const STATIC_PAGES = [
   { path: '', changefreq: 'hourly', priority: '1.0' },
+  // The category pages rank alongside the index: they are the two entry points
+  // into the directory that are about something, and both change as often as it
+  // does. Only page 1 of each is listed — the pager links the rest, and a
+  // sitemap that enumerated every page of a paginated list would be listing the
+  // same blogs a second time under a different URL.
+  { path: '/blogs', changefreq: 'hourly', priority: '0.9' },
+  { path: '/podcasts', changefreq: 'hourly', priority: '0.9' },
+  { path: '/topics', changefreq: 'daily', priority: '0.8' },
   { path: '/search', changefreq: 'daily', priority: '0.8' },
   { path: '/submit', changefreq: 'weekly', priority: '0.7' },
   { path: '/signup', changefreq: 'monthly', priority: '0.6' },
