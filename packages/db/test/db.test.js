@@ -231,6 +231,71 @@ test('eachFeedForExport yields the whole directory, not one page of it', async (
   await rm(exportDir, { recursive: true, force: true });
 });
 
+test('monthBounds is a half-open range and rolls over December', () => {
+  assert.deepEqual(q.monthBounds('2026-08'), { from: '2026-08-', to: '2026-09-' });
+  assert.deepEqual(q.monthBounds('2026-12'), { from: '2026-12-', to: '2027-01-' });
+  assert.deepEqual(q.monthBounds('2026-09'), { from: '2026-09-', to: '2026-10-' });
+});
+
+test('sitemap chunks split an oversized month and cover it exactly once', async () => {
+  const chunkDir = await mkdtemp(join(tmpdir(), 'rssamp-sitemap-'));
+  const chunkDb = connect({ url: `file:${join(chunkDir, 'test.db')}` });
+  await migrate(chunkDb);
+
+  // Two months, one of them far larger than the chunk size — the shape a bulk
+  // import leaves behind, where a single month holds the whole directory.
+  const seed = [
+    { month: '2026-07', n: 4 },
+    { month: '2026-08', n: 25 },
+  ];
+  let i = 0;
+  for (const { month, n } of seed) {
+    for (let k = 0; k < n; k += 1) {
+      const { id } = await q.insertFeed(chunkDb, {
+        slug: `feed-${i}`,
+        feed_url: `https://f${i}.example/feed.xml`,
+        site_url: null,
+        title: `Feed ${i}`,
+        description: null,
+      });
+      // Every row in a month shares a timestamp, as a bulk insert would leave it.
+      await chunkDb.execute({
+        sql: 'update feeds set created_at = ? where id = ?',
+        args: [`${month}-01T00:00:00.000Z`, id],
+      });
+      i += 1;
+    }
+  }
+
+  const chunks = await q.sitemapChunks(chunkDb, 10);
+  assert.deepEqual(
+    chunks.map((c) => `${c.month}#${c.part}:${c.count}`),
+    ['2026-07#1:4', '2026-08#1:10', '2026-08#2:10', '2026-08#3:5'],
+    'the big month split into parts, the small one did not',
+  );
+  assert.equal(
+    chunks.reduce((sum, c) => sum + c.count, 0),
+    29,
+    'the parts add up to the directory',
+  );
+
+  const seen = [];
+  for (const chunk of chunks) {
+    const rows = await q.feedsForSitemapChunk(chunkDb, { ...chunk, chunkSize: 10 });
+    assert.equal(rows.length, chunk.count, `${chunk.month} part ${chunk.part} is the promised size`);
+    seen.push(...rows.map((r) => String(r.slug)));
+  }
+
+  assert.equal(seen.length, 29, 'every feed appeared');
+  assert.equal(new Set(seen).size, 29, 'no feed appeared in two chunks');
+
+  // A month nobody has feeds in yields nothing rather than leaking the next month.
+  const empty = await q.feedsForSitemapChunk(chunkDb, { month: '2026-06', chunkSize: 10 });
+  assert.equal(empty.length, 0);
+
+  await rm(chunkDir, { recursive: true, force: true });
+});
+
 test('newId is unique and nowIso offsets correctly', () => {
   assert.notEqual(newId(), newId());
   const later = new Date(nowIso(60_000)).getTime() - new Date(nowIso()).getTime();

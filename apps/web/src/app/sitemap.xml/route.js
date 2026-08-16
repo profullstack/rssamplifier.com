@@ -1,55 +1,47 @@
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
+import { CHUNK_SIZE, chunkFilename, esc } from '../../lib/sitemap.js';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Sitemap covering the static pages and every blog page.
+ * A sitemap index, not a sitemap.
+ *
+ * This used to be a single file capped at 20,000 URLs, which hid roughly 27,700
+ * blog pages from every search engine. The cap could not simply be raised: the
+ * directory is already within reach of the spec's 50,000-URL ceiling for one
+ * file, so the next import would have put it right back here.
+ *
+ * The directory is split instead, into chunk files under /sitemaps/ grouped by
+ * the month each blog was added. A month that has passed never changes shape
+ * again — a blog submitted today lands in this month's file and leaves every
+ * earlier one untouched — so a crawler can skip what it already has on the
+ * strength of <lastmod> alone.
  */
 export async function GET() {
   const base = siteUrl();
-  const rows = await q.allFeedsForExport(db(), 20000);
+  const chunks = await q.sitemapChunks(db(), CHUNK_SIZE);
 
-  const urls = [
-    { loc: base, lastmod: null },
-    { loc: `${base}/submit`, lastmod: null },
-    { loc: `${base}/search`, lastmod: null },
-    { loc: `${base}/about`, lastmod: null },
-    // Worth crawling: it is the page that answers "can I have an account here".
-    // /login is deliberately left out — it is the same form for somebody who
-    // already knows the answer, and two entries for one mechanism is the sort
-    // of near-duplicate a sitemap should not be volunteering.
-    { loc: `${base}/signup`, lastmod: null },
-    ...rows.map((f) => ({
-      loc: `${base}/${f.slug}`,
-      lastmod: f.updated_at ? String(f.updated_at) : null,
-    })),
+  const entries = [
+    `  <sitemap><loc>${esc(`${base}/sitemaps/static.xml`)}</loc></sitemap>`,
+    ...chunks.map((chunk) => {
+      const loc = `${base}/sitemaps/${chunkFilename(chunk)}`;
+      const lastmod = chunk.lastmod ? `<lastmod>${esc(chunk.lastmod)}</lastmod>` : '';
+      return `  <sitemap><loc>${esc(loc)}</loc>${lastmod}</sitemap>`;
+    }),
   ];
 
   const body = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls
-  .map(
-    (u) =>
-      `  <url><loc>${esc(u.loc)}</loc>${u.lastmod ? `<lastmod>${esc(u.lastmod)}</lastmod>` : ''}</url>`,
-  )
-  .join('\n')}
-</urlset>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${entries.join('\n')}
+</sitemapindex>
 `;
 
   return new Response(body, {
-    headers: { 'content-type': 'application/xml; charset=utf-8' },
+    headers: {
+      'content-type': 'application/xml; charset=utf-8',
+      'cache-control': 'public, max-age=600',
+    },
   });
-}
-
-/**
- * @param {unknown} v
- * @returns {string}
- */
-function esc(v) {
-  return String(v ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
