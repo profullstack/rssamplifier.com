@@ -1,12 +1,15 @@
 import { notFound } from 'next/navigation';
-import { q, reactions } from '@rssamplifier/db';
+import { q, reactions, translations } from '@rssamplifier/db';
 import { isFrameable } from '@rssamplifier/feed';
+import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/translate';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
+import { popularLanguages } from '../../../lib/languages.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
+import LanguageBar from '../../LanguageBar.jsx';
 import PostActions from '../../PostActions.jsx';
 import ReaderToolbar from '../../ReaderToolbar.jsx';
 
@@ -40,11 +43,21 @@ export async function generateMetadata({ params }) {
  * outside. So the policy is checked server-side first and a refusal renders an
  * honest card rather than a blank rectangle.
  *
- * @param {{ params: Promise<{ slug: string }>, searchParams: Promise<{ p?: string }> }} props
+ * A lot of the small web is not written in English, and a post nobody in the
+ * room can read is a dead end no matter how well it is framed. Signed-in
+ * readers get a language bar; picking one swaps the title and the summary for a
+ * cached machine translation. The framed page stays in its own language —
+ * that is somebody else's document and this reader has no business rewriting
+ * it — so the translation is offered alongside it rather than in place of it.
+ *
+ * @param {{
+ *   params: Promise<{ slug: string }>,
+ *   searchParams: Promise<{ p?: string, lang?: string }>,
+ * }} props
  */
 export default async function ReaderPage({ params, searchParams }) {
   const { slug } = await params;
-  const { p: guid } = await searchParams;
+  const { p: guid, lang } = await searchParams;
 
   const client = db();
   const feed = await q.feedBySlug(client, slug);
@@ -73,11 +86,39 @@ export default async function ReaderPage({ params, searchParams }) {
   const user = await currentUser();
   const userId = user ? String(user.id) : null;
 
-  const [score, mine, thread] = await Promise.all([
+  const [score, mine, thread, languages] = await Promise.all([
     reactions.scoreFor(client, itemId),
     userId ? reactions.reactionFor(client, userId, itemId) : { liked: false, vote: 0 },
     reactions.commentsFor(client, itemId),
+    popularLanguages(),
   ]);
+
+  // The URL wins over the stored preference, so a link someone was sent lands
+  // in the language it names; with nothing in the URL the account's own choice
+  // carries over from the last post they read.
+  const asked =
+    normalizeLang(lang) ??
+    (userId ? normalizeLang(await translations.readingLanguage(client, userId)) : null);
+
+  const wanted = asked && languages.includes(asked) ? asked : null;
+
+  // Signed out, the bar is an invitation to sign in rather than a translator:
+  // a first translation is a paid API call, so it is not something an anonymous
+  // request gets to trigger. See /api/translate.
+  const translated =
+    userId && wanted
+      ? await ensureTranslation(client, {
+          itemId,
+          title: String(post.title),
+          summary: post.summary === null ? null : String(post.summary),
+          targetLang: wanted,
+          sourceLang: feed.language === null ? null : String(feed.language),
+        })
+      : null;
+
+  const title = translated ? translated.title : String(post.title);
+  const summary = translated ? translated.summary : (post.summary ?? null);
+  const sourceLang = normalizeLang(translated?.sourceLang ?? feed.language);
 
   return (
     <div className="reader">
@@ -86,7 +127,22 @@ export default async function ReaderPage({ params, searchParams }) {
           <a href={`/${slug}`}>{String(feed.title)}</a>
           {post.published_at ? ` · ${formatDate(post.published_at)}` : ''}
         </p>
-        <h1>{String(post.title)}</h1>
+        <h1>{title}</h1>
+
+        <LanguageBar
+          slug={slug}
+          guid={String(post.guid)}
+          languages={languages}
+          active={wanted}
+          signedIn={Boolean(userId)}
+        />
+
+        {translated && (
+          <p className="translated-note">
+            Translated {sourceLang ? `from ${languageName(sourceLang, 'en')} ` : ''}by machine. The
+            original is a click away in the toolbar.
+          </p>
+        )}
 
         <PostActions
           slug={slug}
@@ -98,11 +154,22 @@ export default async function ReaderPage({ params, searchParams }) {
         />
       </div>
 
+      {/*
+       * A translated summary above the frame, and only above the frame. The
+       * frame renders the original site in its own language and always will —
+       * it is a stranger's document, served from their server. This is the
+       * gist, in the reader's language, so they can decide whether the page
+       * below is worth the effort.
+       */}
+      {translated && summary && verdict.frameable && (
+        <p className="lede translated">{summary}</p>
+      )}
+
       {verdict.frameable && postUrl ? (
         <iframe
           className="reader-frame"
           src={postUrl}
-          title={String(post.title)}
+          title={title}
           // The framed page is a stranger's: allow it to render and navigate
           // itself, and nothing else. No same-origin, so it can never reach
           // into this document.
@@ -117,7 +184,7 @@ export default async function ReaderPage({ params, searchParams }) {
             below keeps your place in the directory.
           </p>
 
-          {post.summary && <p className="lede">{String(post.summary)}</p>}
+          {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
 
           {postUrl && (
             <p>
