@@ -655,3 +655,77 @@ select {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------------------------------------------------------------- ads
+ *
+ * Every unit is laid out twice: collapsed to nothing, and then given a box once
+ * crawlproof has something to put in it.
+ *
+ * That is what the [data-cp-filled] switch is for. ad.js sets the attribute the
+ * instant it starts a request and removes it again if the response comes back
+ * empty, so the two failure modes both come out right — a slot with no campaign
+ * against it leaves no hole in the page, and a slot that does fill has its
+ * height reserved before the creative lands, so nothing below it jumps. An
+ * ad-blocked page never gets the attribute at all and reads exactly as it would
+ * with no advertising on it.
+ *
+ * Reserved heights are the format plus roughly 16px, which is the disclosure
+ * caption ad.js prepends to every banner.
+ */
+
+.ad {
+  display: block;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.ad[data-cp-filled] {
+  margin: 2.5rem auto;
+}
+
+/* ad.js gives the frame display:block inline but no margin, so this is what
+   centres a 300px creative in a wider column. */
+.ad > iframe {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.ad-text_link[data-cp-filled] {
+  min-height: 40px;
+  margin: 1.75rem auto;
+}
+
+.ad-banner_300x250[data-cp-filled] {
+  min-height: 266px;
+  max-width: 300px;
+}
+
+/* The responsive unit. Two heights because <AdBanner> picks between a 320x50
+   and a 728x90 at the same breakpoint — see the component for why it is one
+   element and not two. */
+.ad-banner[data-cp-filled] {
+  min-height: 66px;
+}
+
+@media (min-width: 48rem) {
+  .ad-banner[data-cp-filled] {
+    min-height: 106px;
+    max-width: 728px;
+  }
+}
+
+/* In-feed: the unit is a row of the directory list, so it takes the row's
+   surface and padding rather than floating in the gap between cards. Hidden
+   outright until filled — a collapsed grid child would still draw the list's
+   hairline and read as an empty card. */
+.feed-list .ad-infeed {
+  display: none;
+  background: var(--surface);
+}
+
+.feed-list .ad-infeed[data-cp-filled] {
+  display: block;
+  max-width: none;
+  margin: 0 auto;
+  padding: 1.35rem;
+}

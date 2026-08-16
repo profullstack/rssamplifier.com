@@ -89,7 +89,20 @@ export default function RootLayout({ children }) {
         </footer>
 
         <ServiceWorker />
-              <Script data-site="98aa7ae4-f205-4cf3-8c0f-40182ea3638e" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
+
+        <Script
+          data-site="98aa7ae4-f205-4cf3-8c0f-40182ea3638e"
+          src="https://crawlproof.com/stats.js"
+          strategy="afterInteractive"
+        />
+
+        {/*
+         * The ad loader, once for the site. It only ever acts on the
+         * [data-cp-ad] positions the pages themselves place (<Ad> and
+         * <AdBanner>) — there are deliberately none here, because a unit in the
+         * root layout is a unit on the submit form and on the offline page too.
+         */}
+        <Script src="https://crawlproof.com/ad.js" strategy="afterInteractive" />
       </body>
     </html>
   );

@@ -1,6 +1,9 @@
 import { q } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
+import { AD_MREC, AD_TEXT, adPlan } from '../../lib/ads.js';
+import Ad from '../Ad.jsx';
+import AdBanner from '../AdBanner.jsx';
 import Toolbar from '../Toolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -30,6 +33,14 @@ export default async function SearchPage({ searchParams }) {
 
   const kagi = `https://kagi.com/search?q=${encodeURIComponent(query)}`;
 
+  // Somebody who has typed a query has told us what they want, which makes this
+  // the most valuable page on the site — and the easiest one to ruin. So: a
+  // blank /search carries no advertising at all (there is nothing to be
+  // relevant to), a search that found nothing carries exactly one line, and a
+  // search that found something carries the full set.
+  const found = blogs.length > 0 || posts.length > 0;
+  const postAds = adPlan(posts.length, { first: 8, every: 20, max: 2, formats: [AD_TEXT] });
+
   return (
     <>
       <h1>Search</h1>
@@ -47,6 +58,13 @@ export default async function SearchPage({ searchParams }) {
           <button type="submit">Search</button>
         </div>
       </form>
+
+      {/*
+       * Directly under the box, above the results: the sponsored-result
+       * position, and the strongest one on any search page. It stays a text
+       * link so it reads as an offer rather than as the first result.
+       */}
+      {query && <Ad format={AD_TEXT} />}
 
       {query && blogs.length === 0 && posts.length === 0 && (
         <p className="empty">
@@ -72,28 +90,38 @@ export default async function SearchPage({ searchParams }) {
         </>
       )}
 
+      {/* Between the two result sets — a natural break, so a box fits here. */}
+      {blogs.length > 0 && posts.length > 0 && <Ad format={AD_MREC} />}
+
       {posts.length > 0 && (
         <>
           <h2>Posts</h2>
-          {posts.map((p, i) => (
-            <article className="entry" key={`${p.url ?? p.title}-${i}`}>
-              <h3>
-                {p.url ? (
-                  <a href={String(p.url)} rel="noopener">
-                    {p.title}
-                  </a>
-                ) : (
-                  p.title
-                )}
-              </h3>
-              {p.summary && <p>{p.summary}</p>}
-              <time>
-                <a href={`/${p.feed_slug}`}>{p.feed_title}</a>
-              </time>
-            </article>
-          ))}
+          {posts.flatMap((p, i) => {
+            const entry = (
+              <article className="entry" key={`${p.url ?? p.title}-${i}`}>
+                <h3>
+                  {p.url ? (
+                    <a href={String(p.url)} rel="noopener">
+                      {p.title}
+                    </a>
+                  ) : (
+                    p.title
+                  )}
+                </h3>
+                {p.summary && <p>{p.summary}</p>}
+                <time>
+                  <a href={`/${p.feed_slug}`}>{p.feed_title}</a>
+                </time>
+              </article>
+            );
+
+            const format = postAds.get(i);
+            return format ? [entry, <Ad key={`ad-${i}`} format={format} />] : [entry];
+          })}
         </>
       )}
+
+      {found && <AdBanner />}
 
       {query && (
         <p className="also-search">
