@@ -1,32 +1,37 @@
-import { createClient } from '@supabase/supabase-js';
+import { connect, migrate } from '@rssamplifier/db';
 import { crawlDue } from '@rssamplifier/ingest';
 
 /**
  * Feed crawler daemon.
  *
  * Runs as its own Railway service so a slow crawl can never occupy a web
- * request, and so the two can be scaled apart.
+ * request, and so the two scale apart.
  */
 
 const env = process.env;
 
-const url = env['SUPABASE_URL'];
-const key = env['SUPABASE_SERVICE_ROLE_KEY'];
-
-if (!url || !key) {
-  console.error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
+if (!env['TURSO_DATABASE_URL']) {
+  console.error('TURSO_DATABASE_URL must be set');
   process.exit(1);
 }
 
-const sb = createClient(url, key, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+const db = connect();
 
 const intervalMs = (Number(env['POLL_INTERVAL_SECONDS']) || 60) * 1000;
 const batchSize = Number(env['POLL_BATCH_SIZE']) || 25;
 
 let running = false;
 let stopping = false;
+
+/**
+ * Structured one-line log, so Railway's viewer stays greppable.
+ *
+ * @param {string} event
+ * @param {object} [fields]
+ */
+function log(event, fields = {}) {
+  console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
+}
 
 /**
  * Crawl one batch, guarding against overlapping runs.
@@ -39,32 +44,29 @@ async function tick() {
   running = true;
 
   try {
-    const { crawled, failed } = await crawlDue(sb, batchSize);
-    if (crawled || failed) {
-      console.log(
-        JSON.stringify({ at: new Date().toISOString(), event: 'crawl', crawled, failed }),
-      );
-    }
+    const { crawled, failed } = await crawlDue(db, batchSize);
+    if (crawled || failed) log('crawl', { crawled, failed });
   } catch (err) {
-    console.error(
-      JSON.stringify({ at: new Date().toISOString(), event: 'crawl-error', message: String(err) }),
-    );
+    log('crawl-error', { message: String(err?.message ?? err) });
   } finally {
     running = false;
   }
 }
 
+// The daemon owns schema migration: it is the one service guaranteed to be
+// running, and applying on boot means there is no separate deploy step.
+try {
+  const { applied } = await migrate(db);
+  if (applied.length) log('migrated', { applied });
+} catch (err) {
+  console.error('migration failed:', err);
+  process.exit(1);
+}
+
 const timer = setInterval(tick, intervalMs);
 void tick();
 
-console.log(
-  JSON.stringify({
-    at: new Date().toISOString(),
-    event: 'started',
-    intervalSeconds: intervalMs / 1000,
-    batchSize,
-  }),
-);
+log('started', { intervalSeconds: intervalMs / 1000, batchSize });
 
 /**
  * Shut down cleanly so Railway's SIGTERM does not sever an in-flight crawl.
@@ -74,9 +76,8 @@ console.log(
 function shutdown(signal) {
   stopping = true;
   clearInterval(timer);
-  console.log(JSON.stringify({ at: new Date().toISOString(), event: 'stopping', signal }));
+  log('stopping', { signal });
 
-  // Give an in-flight batch a moment to finish before exiting.
   const deadline = Date.now() + 20_000;
   const wait = setInterval(() => {
     if (!running || Date.now() > deadline) {

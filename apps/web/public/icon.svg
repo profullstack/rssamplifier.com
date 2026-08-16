@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="RSS Amplifier">
+  <rect width="512" height="512" rx="112" fill="#16150f"/>
+  <!-- The RSS mark: a dot with two broadcast arcs, in the brand terracotta. -->
+  <g fill="none" stroke="#b4552d" stroke-width="42" stroke-linecap="round">
+    <path d="M150 362a0 0 0 0 0 0 0"/>
+    <path d="M150 264c60 0 98 38 98 98"/>
+    <path d="M150 166c108 0 196 88 196 196"/>
+  </g>
+  <circle cx="150" cy="362" r="27" fill="#b4552d"/>
+  <!-- Amplification: a third, brighter arc pushing further out. -->
+  <path d="M150 68c162 0 294 132 294 294" fill="none" stroke="#e08055" stroke-width="42"
+        stroke-linecap="round" opacity="0.55"/>
+</svg>

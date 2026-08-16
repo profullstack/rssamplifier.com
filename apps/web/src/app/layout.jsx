@@ -1,6 +1,7 @@
 import './globals.css';
 
 import { siteUrl } from '../lib/db.js';
+import ServiceWorker from './ServiceWorker.jsx';
 
 export const metadata = {
   metadataBase: new URL(siteUrl()),
@@ -9,16 +10,32 @@ export const metadata = {
     template: '%s · RSS Amplifier',
   },
   description:
-    'Submit a URL, a list of URLs or an OPML file. Every blog gets its own page, its summaries stay readable, and the whole directory is available as JSON, OPML and plain text for AI agents.',
-  alternates: {
-    types: {
-      'application/rss+xml': '/opml',
-    },
+    'Submit a URL, a list of URLs or an OPML file. Every blog gets its own page, and the whole directory is available as JSON, OPML and plain text for AI agents.',
+  applicationName: 'RSS Amplifier',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    title: 'RSS Amplifier',
+    statusBarStyle: 'default',
+  },
+  icons: {
+    icon: '/icon.svg',
+    apple: '/icon.svg',
   },
   openGraph: {
     type: 'website',
     siteName: 'RSS Amplifier',
   },
+};
+
+export const viewport = {
+  // Mobile-first: fill the notch area, and let the theme colour follow the
+  // light/dark palette rather than pinning one of them.
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#fbfaf8' },
+    { media: '(prefers-color-scheme: dark)', color: '#12110f' },
+  ],
 };
 
 /**
@@ -28,12 +45,16 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
+        <a className="skip-link" href="#main">
+          Skip to content
+        </a>
+
         <header className="masthead">
           <div className="masthead-inner">
             <a className="wordmark" href="/">
               RSS<span>Amplifier</span>
             </a>
-            <nav>
+            <nav aria-label="Primary">
               <a href="/submit">Submit</a>
               <a href="/search">Search</a>
               <a href="/opml">OPML</a>
@@ -43,14 +64,15 @@ export default function RootLayout({ children }) {
           </div>
         </header>
 
-        <main className="wrap">{children}</main>
+        <main className="wrap" id="main">
+          {children}
+        </main>
 
         <footer className="site">
           <div className="wrap">
             <p>
               An open, agent-friendly directory of independent blogs. Anyone can add a feed; no
-              account needed. Built by{' '}
-              <a href="https://profullstack.com">Profullstack, Inc.</a>
+              account needed. Built by <a href="https://profullstack.com">Profullstack, Inc.</a>
             </p>
             <p>
               Machine-readable: <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}
@@ -58,6 +80,8 @@ export default function RootLayout({ children }) {
             </p>
           </div>
         </footer>
+
+        <ServiceWorker />
       </body>
     </html>
   );

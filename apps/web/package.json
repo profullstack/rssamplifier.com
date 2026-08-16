@@ -6,14 +6,15 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
-    "start": "next start -p ${PORT:-3000}",
-    "test": "node --test test/*.test.js"
+    "start": "node .next/standalone/apps/web/server.js"
   },
   "dependencies": {
+    "@rssamplifier/db": "workspace:*",
     "@rssamplifier/feed": "workspace:*",
-    "@supabase/supabase-js": "^2.76.1",
+    "@rssamplifier/ingest": "workspace:*",
     "next": "^16.2.4",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "@swc/helpers": "^0.5.23"
   }
 }

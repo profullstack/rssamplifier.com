@@ -1,3 +1,5 @@
+import { q } from '@rssamplifier/db';
+
 import { db, siteUrl } from '../lib/db.js';
 import Toolbar from './Toolbar.jsx';
 
@@ -7,18 +9,8 @@ export const dynamic = 'force-dynamic';
  * Directory index: newest blogs first, with the submit box up top.
  */
 export default async function Home() {
-  const sb = db();
-
-  const { data: feeds } = await sb
-    .from('feeds')
-    .select('slug, title, description, site_url, item_count, last_success_at')
-    .neq('status', 'dead')
-    .order('created_at', { ascending: false })
-    .limit(60);
-
-  const { count } = await sb.from('feeds').select('id', { count: 'exact', head: true });
-
-  const rows = feeds ?? [];
+  const client = db();
+  const [rows, total] = await Promise.all([q.listFeeds(client, { limit: 60 }), q.countFeeds(client)]);
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -52,19 +44,18 @@ export default async function Home() {
         <textarea
           name="input"
           rows={3}
-          placeholder={'example.com\nanotherblog.net/feed.xml\nhttps://third.blog/atom.xml'}
+          placeholder={'example.com\nanotherblog.net/feed.xml'}
           aria-label="One or more URLs, one per line"
           required
         />
-        <p style={{ margin: '0.75rem 0 0', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+        <div className="submit-actions">
           <button type="submit">Add to the directory</button>
           <span className="pill">no account needed</span>
-        </p>
+        </div>
       </form>
 
       <h2>
-        Recently added{' '}
-        {typeof count === 'number' && <span className="pill">{count} blogs</span>}
+        Recently added <span className="pill">{total} blogs</span>
       </h2>
 
       {rows.length === 0 ? (
@@ -72,11 +63,11 @@ export default async function Home() {
       ) : (
         <div className="feed-list">
           {rows.map((f) => (
-            <a className="feed-row" key={f.slug} href={`/${f.slug}`}>
+            <a className="feed-row" key={String(f.slug)} href={`/${f.slug}`}>
               <h3>{f.title}</h3>
               {f.description && <p>{f.description}</p>}
               <div className="feed-meta">
-                {f.site_url && <span>{hostOf(f.site_url)}</span>}
+                {f.site_url && <span>{hostOf(String(f.site_url))}</span>}
                 <span>{f.item_count} posts</span>
               </div>
             </a>
@@ -84,7 +75,7 @@ export default async function Home() {
         </div>
       )}
 
-      <Toolbar next={rows[0]?.slug ?? null} />
+      <Toolbar next={rows[0]?.slug ? String(rows[0].slug) : null} />
     </>
   );
 }

@@ -1,34 +1,55 @@
+import { q } from '@rssamplifier/db';
+
 import { db, siteUrl } from '../../../lib/db.js';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * List every feed in the directory.
+ * Every feed in the directory — the agent-facing entry point.
  *
- * The agent-facing entry point: CORS-open, paginated, no key required.
+ * CORS-open, paginated, no key required.
  *
  * @param {Request} req
  */
 export async function GET(req) {
   const url = new URL(req.url);
-  const limit = Math.min(Number(url.searchParams.get('limit') ?? 100) || 100, 500);
+  const limit = clamp(url.searchParams.get('limit'), 100, 500);
   const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
 
-  const sb = db();
-  const { data, count } = await sb
-    .from('feeds')
-    .select('slug, title, description, site_url, feed_url, language, item_count, status, last_success_at', {
-      count: 'exact',
-    })
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
+  const client = db();
+  const [rows, total] = await Promise.all([
+    q.listFeeds(client, { limit, offset }),
+    q.countFeeds(client),
+  ]);
 
   return json({
-    total: count ?? 0,
+    total,
     limit,
     offset,
-    feeds: (data ?? []).map((f) => ({ ...f, page: `${siteUrl()}/${f.slug}` })),
+    feeds: rows.map((f) => ({
+      slug: f.slug,
+      title: f.title,
+      description: f.description,
+      siteUrl: f.site_url,
+      feedUrl: f.feed_url,
+      language: f.language,
+      itemCount: f.item_count,
+      status: f.status,
+      lastSuccessAt: f.last_success_at,
+      page: `${siteUrl()}/${f.slug}`,
+    })),
   });
+}
+
+/**
+ * @param {string|null} raw
+ * @param {number} fallback
+ * @param {number} max
+ * @returns {number}
+ */
+function clamp(raw, fallback, max) {
+  const n = Number(raw ?? fallback) || fallback;
+  return Math.min(Math.max(n, 1), max);
 }
 
 /**

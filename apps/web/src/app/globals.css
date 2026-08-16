@@ -380,3 +380,116 @@ footer.site a {
   padding: 3rem 0;
   text-align: center;
 }
+
+/* ---------------------------------------------------------------- mobile-first
+ *
+ * The base rules above are written for a phone; these widen the layout as room
+ * appears rather than the other way round.
+ */
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  padding: 0.6rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 0 0 6px 0;
+  z-index: 100;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+body {
+  /* Keep content clear of the notch and the home indicator. */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+}
+
+.submit-actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.75rem 0 0;
+}
+
+.feed-meta.detail {
+  margin-bottom: 1.5rem;
+}
+
+.also-search {
+  margin-top: 2rem;
+  font-size: 0.9rem;
+}
+
+.snippet {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+/* Touch targets: 44px minimum on anything tappable. */
+button,
+.toolbar a,
+input[type='file'] {
+  min-height: 44px;
+}
+
+button {
+  /* Full width on a phone, intrinsic once there is room. */
+  width: 100%;
+}
+
+input,
+textarea,
+select {
+  /* 16px stops iOS Safari zooming the viewport on focus. */
+  font-size: 16px;
+}
+
+@media (min-width: 34rem) {
+  button {
+    width: auto;
+  }
+}
+
+@media (min-width: 48rem) {
+  .masthead {
+    padding: 1.75rem 0;
+  }
+}
+
+/* The toolbar sits above the home indicator on iOS. */
+.toolbar {
+  bottom: calc(1.5rem + env(safe-area-inset-bottom));
+  max-width: calc(100vw - 2rem);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Standalone (installed) mode: no browser chrome, so give the masthead the
+   breathing room the status bar would otherwise have provided. */
+@media (display-mode: standalone) {
+  .masthead {
+    padding-top: calc(1.5rem + env(safe-area-inset-top));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

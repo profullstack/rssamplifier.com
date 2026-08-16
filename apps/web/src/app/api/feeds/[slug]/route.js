@@ -1,3 +1,5 @@
+import { q } from '@rssamplifier/db';
+
 import { db, siteUrl } from '../../../../lib/db.js';
 
 export const dynamic = 'force-dynamic';
@@ -11,24 +13,22 @@ export const dynamic = 'force-dynamic';
 export async function GET(req, { params }) {
   const { slug } = await params;
   const url = new URL(req.url);
-  const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 50) || 50, 1), 200);
 
-  const sb = db();
-  const { data: feed } = await sb.from('feeds').select('*').eq('slug', slug).maybeSingle();
+  const client = db();
+  const feed = await q.feedBySlug(client, slug);
 
   if (!feed) {
     return new Response(JSON.stringify({ error: 'not-found' }), {
       status: 404,
-      headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' },
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'access-control-allow-origin': '*',
+      },
     });
   }
 
-  const { data: items } = await sb
-    .from('feed_items')
-    .select('guid, url, title, summary, author, published_at, image_url')
-    .eq('feed_id', feed.id)
-    .order('published_at', { ascending: false, nullsFirst: false })
-    .limit(limit);
+  const items = await q.itemsForFeed(client, String(feed.id), limit);
 
   return new Response(
     JSON.stringify(
@@ -43,7 +43,15 @@ export async function GET(req, { params }) {
         itemCount: feed.item_count,
         lastSuccessAt: feed.last_success_at,
         page: `${siteUrl()}/${feed.slug}`,
-        items: items ?? [],
+        items: items.map((i) => ({
+          guid: i.guid,
+          url: i.url,
+          title: i.title,
+          summary: i.summary,
+          author: i.author,
+          imageUrl: i.image_url,
+          publishedAt: i.published_at,
+        })),
       },
       null,
       2,

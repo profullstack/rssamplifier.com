@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
 import Toolbar from '../Toolbar.jsx';
@@ -10,18 +11,12 @@ export const dynamic = 'force-dynamic';
  */
 export async function generateMetadata({ params }) {
   const { slug } = await params;
-  const sb = db();
-  const { data: feed } = await sb
-    .from('feeds')
-    .select('title, description')
-    .eq('slug', slug)
-    .maybeSingle();
-
+  const feed = await q.feedBySlug(db(), slug);
   if (!feed) return { title: 'Not found' };
 
   return {
-    title: feed.title,
-    description: feed.description ?? `Latest posts from ${feed.title}.`,
+    title: String(feed.title),
+    description: feed.description ? String(feed.description) : `Latest posts from ${feed.title}.`,
     alternates: { canonical: `${siteUrl()}/${slug}` },
   };
 }
@@ -33,37 +28,15 @@ export async function generateMetadata({ params }) {
  */
 export default async function FeedPage({ params }) {
   const { slug } = await params;
-  const sb = db();
+  const client = db();
 
-  const { data: feed } = await sb.from('feeds').select('*').eq('slug', slug).maybeSingle();
+  const feed = await q.feedBySlug(client, slug);
   if (!feed) notFound();
 
-  const { data: items } = await sb
-    .from('feed_items')
-    .select('guid, url, title, summary, author, published_at')
-    .eq('feed_id', feed.id)
-    .order('published_at', { ascending: false, nullsFirst: false })
-    .limit(50);
-
-  // Neighbours for the toolbar, ordered the same way the index is.
-  const [{ data: prevRows }, { data: nextRows }] = await Promise.all([
-    sb
-      .from('feeds')
-      .select('slug')
-      .gt('created_at', feed.created_at)
-      .neq('status', 'dead')
-      .order('created_at', { ascending: true })
-      .limit(1),
-    sb
-      .from('feeds')
-      .select('slug')
-      .lt('created_at', feed.created_at)
-      .neq('status', 'dead')
-      .order('created_at', { ascending: false })
-      .limit(1),
+  const [posts, nav] = await Promise.all([
+    q.itemsForFeed(client, String(feed.id), 50),
+    q.neighbours(client, String(feed.created_at)),
   ]);
-
-  const posts = items ?? [];
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -92,18 +65,16 @@ export default async function FeedPage({ params }) {
       <h1>{feed.title}</h1>
       {feed.description && <p className="lede">{feed.description}</p>}
 
-      <div className="feed-meta" style={{ marginBottom: '1.5rem' }}>
+      <div className="feed-meta detail">
         {feed.site_url && (
-          <a href={feed.site_url} rel="noopener">
-            {hostOf(feed.site_url)} ↗
+          <a href={String(feed.site_url)} rel="noopener">
+            {hostOf(String(feed.site_url))} ↗
           </a>
         )}
-        <a href={feed.feed_url} rel="noopener">
+        <a href={String(feed.feed_url)} rel="noopener">
           RSS feed ↗
         </a>
         <span>{feed.item_count} posts</span>
-        {feed.status === 'error' && <span>last crawl failed</span>}
-        {feed.status === 'dead' && <span>no longer updating</span>}
       </div>
 
       {feed.status === 'dead' && (
@@ -118,50 +89,46 @@ export default async function FeedPage({ params }) {
       {posts.length === 0 ? (
         <p className="empty">No posts collected yet — the crawler will pick this up shortly.</p>
       ) : (
-        <div>
-          {posts.map((p) => (
-            <article className="entry" key={p.guid}>
-              <h3>
-                {p.url ? (
-                  <a href={p.url} rel="noopener">
-                    {p.title}
-                  </a>
-                ) : (
-                  p.title
-                )}
-              </h3>
-              {p.summary && <p>{p.summary}</p>}
-              <time dateTime={p.published_at ?? undefined}>
-                {formatDate(p.published_at)}
-                {p.author ? ` · ${p.author}` : ''}
-              </time>
-            </article>
-          ))}
-        </div>
+        posts.map((p) => (
+          <article className="entry" key={String(p.guid)}>
+            <h3>
+              {p.url ? (
+                <a href={String(p.url)} rel="noopener">
+                  {p.title}
+                </a>
+              ) : (
+                p.title
+              )}
+            </h3>
+            {p.summary && <p>{p.summary}</p>}
+            <time dateTime={p.published_at ? String(p.published_at) : undefined}>
+              {formatDate(p.published_at)}
+              {p.author ? ` · ${p.author}` : ''}
+            </time>
+          </article>
+        ))
       )}
 
       <Toolbar
-        prev={prevRows?.[0]?.slug ?? null}
-        next={nextRows?.[0]?.slug ?? null}
-        current={feed.title}
-        siteUrl={feed.site_url}
-        feedUrl={feed.feed_url}
+        prev={nav.prev}
+        next={nav.next}
+        current={String(feed.title)}
+        siteUrl={feed.site_url ? String(feed.site_url) : null}
+        feedUrl={String(feed.feed_url)}
       />
     </>
   );
 }
 
 /**
- * @param {string|null} iso
+ * @param {unknown} iso
  * @returns {string}
  */
 function formatDate(iso) {
   if (!iso) return 'undated';
-  return new Date(iso).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
+  const d = new Date(String(iso));
+  if (Number.isNaN(d.getTime())) return 'undated';
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 /**

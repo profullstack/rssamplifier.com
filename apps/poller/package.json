@@ -7,8 +7,8 @@
     "start": "node src/index.js"
   },
   "dependencies": {
+    "@rssamplifier/db": "workspace:*",
     "@rssamplifier/feed": "workspace:*",
-    "@rssamplifier/ingest": "workspace:*",
-    "@supabase/supabase-js": "^2.76.1"
+    "@rssamplifier/ingest": "workspace:*"
   }
 }

@@ -1,3 +1,5 @@
+import { q } from '@rssamplifier/db';
+
 import { db, siteUrl } from '../../lib/db.js';
 
 export const dynamic = 'force-dynamic';
@@ -5,20 +7,18 @@ export const dynamic = 'force-dynamic';
 /**
  * llms.txt — the directory, described for language models.
  *
- * The format is a plain-text index an agent can read in one request instead of
- * crawling every page. This is the product thesis in a single file: most of the
- * web is closing to AI crawlers, and this directory is deliberately open.
+ * A plain-text index an agent can read in one request instead of crawling every
+ * page. This is the product thesis in a single file: most of the web is closing
+ * to AI crawlers, and this directory is deliberately open.
  */
 export async function GET() {
-  const sb = db();
+  const client = db();
   const base = siteUrl();
 
-  const { data: feeds, count } = await sb
-    .from('feeds')
-    .select('slug, title, description, site_url', { count: 'exact' })
-    .neq('status', 'dead')
-    .order('item_count', { ascending: false })
-    .limit(500);
+  const [feeds, total] = await Promise.all([
+    q.allFeedsForExport(client, 500),
+    q.countFeeds(client),
+  ]);
 
   const lines = [
     '# RSS Amplifier',
@@ -26,7 +26,7 @@ export async function GET() {
     '> An open directory of independent blogs and their RSS feeds. Anyone may submit a',
     '> feed; there are no accounts and no paywall. Crawling and reuse are welcome.',
     '',
-    `Total blogs indexed: ${count ?? 0}`,
+    `Total blogs indexed: ${total}`,
     '',
     '## Machine-readable endpoints',
     '',
@@ -40,15 +40,15 @@ export async function GET() {
     '',
     '- Every endpoint sends `access-control-allow-origin: *`. No key is required.',
     '- Summaries are plain text, already stripped of markup.',
-    '- Each blog has a stable page at /{slug} with schema.org Blog JSON-LD.',
+    '- Each blog has a stable page at /{slug} carrying schema.org Blog JSON-LD.',
     '- Please identify yourself in your user-agent. Rate limits are generous but real.',
     '',
     '## Blogs',
     '',
   ];
 
-  for (const f of feeds ?? []) {
-    const desc = f.description ? `: ${f.description.slice(0, 160)}` : '';
+  for (const f of feeds) {
+    const desc = f.description ? `: ${String(f.description).slice(0, 160)}` : '';
     lines.push(`- [${f.title}](${base}/${f.slug})${desc}`);
   }
 

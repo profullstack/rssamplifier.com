@@ -1,0 +1,55 @@
+{
+  "name": "RSS Amplifier",
+  "short_name": "RSSAmp",
+  "description": "An open, agent-friendly directory of independent blogs. Submit a URL, a list or an OPML file.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#fbfaf8",
+  "theme_color": "#b4552d",
+  "categories": ["news", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Submit a blog",
+      "short_name": "Submit",
+      "url": "/submit",
+      "description": "Add a feed to the directory"
+    },
+    {
+      "name": "Search",
+      "short_name": "Search",
+      "url": "/search",
+      "description": "Search every indexed post"
+    },
+    {
+      "name": "Random blog",
+      "short_name": "Random",
+      "url": "/random",
+      "description": "Jump to a random blog"
+    }
+  ],
+  "share_target": {
+    "action": "/submit",
+    "method": "GET",
+    "params": {
+      "url": "url",
+      "text": "input",
+      "title": "title"
+    }
+  }
+}

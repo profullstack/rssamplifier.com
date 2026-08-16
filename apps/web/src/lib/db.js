@@ -1,38 +1,31 @@
-import { createClient } from '@supabase/supabase-js';
+import { connect } from '@rssamplifier/db';
+
+/** @type {import('@libsql/client').Client | null} */
+let client = null;
 
 /**
- * Service-role Supabase client.
+ * Shared libSQL connection.
  *
- * Every write in this app goes through the server — submissions are anonymous
- * and the crawler is a daemon — so there is no browser-side client and no anon
- * key in the bundle. Reads use the same client for simplicity; RLS already
- * allows public select on feeds and items.
+ * Cached across requests: Turso is a network database, so opening a fresh
+ * connection per request would add a round trip to every page load.
  *
- * The key is read through a non-literal property access. Next inlines
- * `process.env.FOO` at build time, which would bake a build-time value into the
- * image and ignore the one Railway injects at runtime.
- *
- * @returns {import('@supabase/supabase-js').SupabaseClient}
+ * @returns {import('@libsql/client').Client}
  */
 export function db() {
-  const env = process.env;
-  const url = env['SUPABASE_URL'];
-  const key = env['SUPABASE_SERVICE_ROLE_KEY'];
-
-  if (!url || !key) {
-    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
-  }
-
-  return createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  if (!client) client = connect();
+  return client;
 }
 
 /**
  * Public origin of the site, without a trailing slash.
  *
+ * Read through a non-literal property access: Next inlines `process.env.FOO` at
+ * build time, which would bake the build-time value into the Docker image and
+ * ignore whatever Railway injects at runtime.
+ *
  * @returns {string}
  */
 export function siteUrl() {
-  return (process.env['SITE_URL'] || 'https://rssamplifier.com').replace(/\/+$/, '');
+  const env = process.env;
+  return (env['SITE_URL'] || 'https://rssamplifier.com').replace(/\/+$/, '');
 }

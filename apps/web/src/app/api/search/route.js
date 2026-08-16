@@ -1,3 +1,5 @@
+import { q } from '@rssamplifier/db';
+
 import { db, siteUrl } from '../../../lib/db.js';
 
 export const dynamic = 'force-dynamic';
@@ -9,41 +11,32 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(req) {
   const url = new URL(req.url);
-  const q = (url.searchParams.get('q') ?? '').trim();
-  const limit = Math.min(Number(url.searchParams.get('limit') ?? 30) || 30, 100);
+  const query = (url.searchParams.get('q') ?? '').trim();
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 30) || 30, 1), 100);
 
-  if (!q) {
-    return json({ query: '', posts: [], blogs: [] });
-  }
+  if (!query) return json({ query: '', blogs: [], posts: [] });
 
-  const sb = db();
-
-  // websearch_to_tsquery accepts quoted phrases and -exclusions, which is what
-  // someone typing into a search box expects.
-  const [posts, blogs] = await Promise.all([
-    sb
-      .from('feed_items')
-      .select('title, url, summary, published_at, feeds!inner(slug, title)')
-      .textSearch('search_tsv', q, { type: 'websearch', config: 'english' })
-      .order('published_at', { ascending: false, nullsFirst: false })
-      .limit(limit),
-    sb
-      .from('feeds')
-      .select('slug, title, description')
-      .textSearch('search_tsv', q, { type: 'websearch', config: 'english' })
-      .limit(limit),
+  const client = db();
+  const [blogs, posts] = await Promise.all([
+    q.searchFeeds(client, query, limit),
+    q.searchItems(client, query, limit),
   ]);
 
   return json({
-    query: q,
-    blogs: (blogs.data ?? []).map((b) => ({ ...b, page: `${siteUrl()}/${b.slug}` })),
-    posts: (posts.data ?? []).map((p) => ({
+    query,
+    blogs: blogs.map((b) => ({
+      slug: b.slug,
+      title: b.title,
+      description: b.description,
+      page: `${siteUrl()}/${b.slug}`,
+    })),
+    posts: posts.map((p) => ({
       title: p.title,
       url: p.url,
       summary: p.summary,
       publishedAt: p.published_at,
-      blog: p.feeds?.title,
-      blogPage: p.feeds?.slug ? `${siteUrl()}/${p.feeds.slug}` : null,
+      blog: p.feed_title,
+      blogPage: `${siteUrl()}/${p.feed_slug}`,
     })),
   });
 }

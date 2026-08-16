@@ -1,4 +1,6 @@
-import { db, siteUrl } from '../../lib/db.js';
+import { q } from '@rssamplifier/db';
+
+import { db } from '../../lib/db.js';
 import Toolbar from '../Toolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -12,37 +14,26 @@ export const metadata = {
  * @param {{ searchParams: Promise<{ q?: string }> }} props
  */
 export default async function SearchPage({ searchParams }) {
-  const { q = '' } = await searchParams;
-  const query = q.trim();
+  const params = await searchParams;
+  const query = (params.q ?? '').trim();
 
   let blogs = [];
   let posts = [];
 
   if (query) {
-    const sb = db();
-    const [b, p] = await Promise.all([
-      sb
-        .from('feeds')
-        .select('slug, title, description')
-        .textSearch('search_tsv', query, { type: 'websearch', config: 'english' })
-        .limit(20),
-      sb
-        .from('feed_items')
-        .select('title, url, summary, published_at, feeds!inner(slug, title)')
-        .textSearch('search_tsv', query, { type: 'websearch', config: 'english' })
-        .order('published_at', { ascending: false, nullsFirst: false })
-        .limit(40),
+    const client = db();
+    [blogs, posts] = await Promise.all([
+      q.searchFeeds(client, query, 20),
+      q.searchItems(client, query, 40),
     ]);
-    blogs = b.data ?? [];
-    posts = p.data ?? [];
   }
+
+  const kagi = `https://kagi.com/search?q=${encodeURIComponent(query)}`;
 
   return (
     <>
       <h1>Search</h1>
-      <p className="lede">
-        Across every post we have collected. Quoted &ldquo;phrases&rdquo; and -exclusions work.
-      </p>
+      <p className="lede">Across every post we have collected.</p>
 
       <form className="submit-box" method="get" action="/search">
         <input
@@ -52,15 +43,15 @@ export default async function SearchPage({ searchParams }) {
           placeholder="agentic coding, rss, self-hosting…"
           aria-label="Search query"
         />
-        <p style={{ margin: '0.75rem 0 0' }}>
+        <div className="submit-actions">
           <button type="submit">Search</button>
-        </p>
+        </div>
       </form>
 
       {query && blogs.length === 0 && posts.length === 0 && (
         <p className="empty">
           Nothing for &ldquo;{query}&rdquo;. Try{' '}
-          <a href={`https://kagi.com/search?q=${encodeURIComponent(query)}`} rel="noopener">
+          <a href={kagi} rel="noopener">
             Kagi
           </a>{' '}
           instead.
@@ -72,7 +63,7 @@ export default async function SearchPage({ searchParams }) {
           <h2>Blogs</h2>
           <div className="feed-list">
             {blogs.map((b) => (
-              <a className="feed-row" key={b.slug} href={`/${b.slug}`}>
+              <a className="feed-row" key={String(b.slug)} href={`/${b.slug}`}>
                 <h3>{b.title}</h3>
                 {b.description && <p>{b.description}</p>}
               </a>
@@ -88,7 +79,7 @@ export default async function SearchPage({ searchParams }) {
             <article className="entry" key={`${p.url ?? p.title}-${i}`}>
               <h3>
                 {p.url ? (
-                  <a href={p.url} rel="noopener">
+                  <a href={String(p.url)} rel="noopener">
                     {p.title}
                   </a>
                 ) : (
@@ -97,7 +88,7 @@ export default async function SearchPage({ searchParams }) {
               </h3>
               {p.summary && <p>{p.summary}</p>}
               <time>
-                {p.feeds?.slug ? <a href={`/${p.feeds.slug}`}>{p.feeds.title}</a> : null}
+                <a href={`/${p.feed_slug}`}>{p.feed_title}</a>
               </time>
             </article>
           ))}
@@ -105,12 +96,12 @@ export default async function SearchPage({ searchParams }) {
       )}
 
       {query && (
-        <p style={{ marginTop: '2rem', fontSize: '0.9rem' }}>
+        <p className="also-search">
           Also search{' '}
-          <a href={`https://kagi.com/search?q=${encodeURIComponent(query)}`} rel="noopener">
+          <a href={kagi} rel="noopener">
             Kagi
           </a>{' '}
-          — they index the small web too, and they may well have us.
+          — they index the small web too.
         </p>
       )}
 

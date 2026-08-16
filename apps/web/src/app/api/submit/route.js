@@ -1,4 +1,5 @@
 import { submitMany, submitOpml, hashIp } from '@rssamplifier/ingest';
+import { q } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 
@@ -9,12 +10,12 @@ export const maxDuration = 300;
 const RATE_LIMIT = 20;
 
 /**
- * Split a textarea paste into candidate URLs.
+ * Split a paste into candidate URLs.
  *
  * People separate them with newlines, commas or spaces depending on where they
  * copied from, so all three are treated as delimiters.
  *
- * @param {string} raw
+ * @param {unknown} raw
  * @returns {string[]}
  */
 function splitUrls(raw) {
@@ -27,13 +28,13 @@ function splitUrls(raw) {
 /**
  * Accept a submission: a single URL, a list, or an OPML upload.
  *
- * Open to anyone by design, so the protections are rate limiting by hashed IP
- * and the SSRF guards inside the fetch layer.
+ * Open to anyone by design, so the protections are a per-IP rate limit and the
+ * SSRF guards inside the fetch layer.
  *
  * @param {Request} req
  */
 export async function POST(req) {
-  const sb = db();
+  const client = db();
   const contentType = req.headers.get('content-type') ?? '';
 
   const ip =
@@ -42,63 +43,49 @@ export async function POST(req) {
     null;
   const ipHash = hashIp(ip, process.env['IP_HASH_SALT']);
 
-  if (ipHash) {
-    const since = new Date(Date.now() - 3_600_000).toISOString();
-    const { count } = await sb
-      .from('submissions')
-      .select('id', { count: 'exact', head: true })
-      .eq('ip_hash', ipHash)
-      .gte('created_at', since);
-
-    if ((count ?? 0) >= RATE_LIMIT) {
-      return json({ ok: false, error: 'rate-limited', retryAfterSeconds: 3600 }, 429);
-    }
+  if (ipHash && (await q.submissionCount(client, ipHash)) >= RATE_LIMIT) {
+    return json({ ok: false, error: 'rate-limited', retryAfterSeconds: 3600 }, 429);
   }
 
-  /** @type {string} */ let kind = 'url';
-  /** @type {string} */ let raw = '';
-  /** @type {{accepted: any[], rejected: any[]}} */ let result;
+  let kind = 'url';
+  let raw = '';
+  /** @type {{ accepted: any[], rejected: any[] }} */
+  let result;
 
   try {
-    if (contentType.includes('multipart/form-data')) {
-      const form = await req.formData();
-      const file = form.get('opml');
-
-      if (file && typeof file !== 'string') {
-        kind = 'opml';
-        raw = await file.text();
-        result = await submitOpml(sb, raw);
-      } else {
-        raw = String(form.get('input') ?? '');
-        const urls = splitUrls(raw);
-        kind = urls.length > 1 ? 'list' : 'url';
-        result = await submitMany(sb, urls);
-      }
-    } else if (contentType.includes('application/json')) {
+    if (contentType.includes('application/json')) {
       const body = await req.json();
 
       if (typeof body?.opml === 'string') {
         kind = 'opml';
         raw = body.opml;
-        result = await submitOpml(sb, raw);
+        result = await submitOpml(client, raw);
       } else {
-        const urls = Array.isArray(body?.urls) ? body.urls : splitUrls(body?.url ?? '');
+        const urls = Array.isArray(body?.urls) ? body.urls : splitUrls(body?.url);
         raw = urls.join('\n');
         kind = urls.length > 1 ? 'list' : 'url';
-        result = await submitMany(sb, urls);
+        result = await submitMany(client, urls);
       }
     } else {
       const form = await req.formData();
-      raw = String(form.get('input') ?? '');
-      const urls = splitUrls(raw);
-      kind = urls.length > 1 ? 'list' : 'url';
-      result = await submitMany(sb, urls);
+      const file = form.get('opml');
+
+      if (file && typeof file !== 'string' && file.size > 0) {
+        kind = 'opml';
+        raw = await file.text();
+        result = await submitOpml(client, raw);
+      } else {
+        raw = String(form.get('input') ?? '');
+        const urls = splitUrls(raw);
+        kind = urls.length > 1 ? 'list' : 'url';
+        result = await submitMany(client, urls);
+      }
     }
   } catch {
     return json({ ok: false, error: 'bad-request' }, 400);
   }
 
-  await sb.from('submissions').insert({
+  await q.insertSubmission(client, {
     kind,
     raw_input: raw.slice(0, 10_000),
     accepted_count: result.accepted.length,
@@ -109,11 +96,12 @@ export async function POST(req) {
   });
 
   // A browser form post gets a redirect; an agent or curl gets JSON.
-  const wantsHtml = (req.headers.get('accept') ?? '').includes('text/html');
-  if (wantsHtml) {
+  if ((req.headers.get('accept') ?? '').includes('text/html')) {
     const first = result.accepted[0];
-    const to = first ? `/${first.slug}` : '/submit?error=1';
-    return new Response(null, { status: 303, headers: { location: to } });
+    return new Response(null, {
+      status: 303,
+      headers: { location: first ? `/${first.slug}` : '/submit?error=1' },
+    });
   }
 
   return json({

@@ -1,3 +1,5 @@
+import { q } from '@rssamplifier/db';
+
 import { db, siteUrl } from '../../lib/db.js';
 
 export const dynamic = 'force-dynamic';
@@ -6,22 +8,18 @@ export const dynamic = 'force-dynamic';
  * Sitemap covering the static pages and every blog page.
  */
 export async function GET() {
-  const sb = db();
   const base = siteUrl();
-
-  const { data } = await sb
-    .from('feeds')
-    .select('slug, updated_at')
-    .neq('status', 'dead')
-    .order('updated_at', { ascending: false })
-    .limit(20000);
+  const rows = await q.allFeedsForExport(db(), 20000);
 
   const urls = [
     { loc: base, lastmod: null },
     { loc: `${base}/submit`, lastmod: null },
     { loc: `${base}/search`, lastmod: null },
     { loc: `${base}/about`, lastmod: null },
-    ...(data ?? []).map((f) => ({ loc: `${base}/${f.slug}`, lastmod: f.updated_at })),
+    ...rows.map((f) => ({
+      loc: `${base}/${f.slug}`,
+      lastmod: f.updated_at ? String(f.updated_at) : null,
+    })),
   ];
 
   const body = `<?xml version="1.0" encoding="UTF-8"?>
@@ -45,5 +43,8 @@ ${urls
  * @returns {string}
  */
 function esc(v) {
-  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
