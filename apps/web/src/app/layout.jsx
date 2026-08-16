@@ -72,6 +72,9 @@ export default function RootLayout({ children }) {
                   only reachable from a page called "Sign in" reads, to somebody
                   who has never been here, like no account at all. */}
               <a href="/signup">Sign up</a>
+              {/* Like /account, unconditional: a signed-out visitor is sent to
+                  sign in rather than being shown an empty shelf. */}
+              <a href="/favorites">Favorites</a>
               <a href="/account">Account</a>
             </nav>
           </div>
@@ -89,7 +92,7 @@ export default function RootLayout({ children }) {
             </p>
             <p>
               Machine-readable: <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}
-              <a href="/llms.txt">llms.txt</a>
+              <a href="/llms.txt">llms.txt</a> · <a href="/crawlstats">Crawler status</a>
             </p>
           </div>
         </footer>
