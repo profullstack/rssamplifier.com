@@ -25,9 +25,13 @@ function walk(node, out) {
 
     const url = item['@xmlUrl'] || item['@xmlurl'];
     if (typeof url === 'string' && url.trim()) {
+      const siteUrl = item['@htmlUrl'] || item['@htmlurl'];
       out.push({
         url: url.trim(),
         title: (item['@title'] || item['@text'] || '').toString().trim(),
+        // Carried through for bulk imports, which trust the catalogue instead
+        // of fetching every feed to discover its site.
+        siteUrl: typeof siteUrl === 'string' && siteUrl.trim() ? siteUrl.trim() : null,
       });
     }
 
@@ -43,7 +47,7 @@ function walk(node, out) {
  * not take down the submit endpoint.
  *
  * @param {string} xml raw OPML
- * @returns {Array<{ url: string, title: string }>} deduped by URL, order preserved
+ * @returns {Array<{ url: string, title: string, siteUrl: string|null }>} deduped by URL, order preserved
  */
 export function parseOpml(xml) {
   if (typeof xml !== 'string' || !xml.trim()) return [];

@@ -6,7 +6,17 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@rssamplifier/db':
+        specifier: workspace:*
+        version: link:packages/db
+      '@rssamplifier/feed':
+        specifier: workspace:*
+        version: link:packages/feed
+      '@rssamplifier/ingest':
+        specifier: workspace:*
+        version: link:packages/ingest
 
   apps/cli: {}
 

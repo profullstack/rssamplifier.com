@@ -8,7 +8,13 @@
     "test": "pnpm -r test",
     "dev": "pnpm --filter @rssamplifier/web dev",
     "build": "pnpm --filter @rssamplifier/web build",
-    "poll": "pnpm --filter @rssamplifier/poller start"
+    "poll": "pnpm --filter @rssamplifier/poller start",
+    "import:catalogue": "node --env-file=.env scripts/import-catalogue.js"
+  },
+  "devDependencies": {
+    "@rssamplifier/db": "workspace:*",
+    "@rssamplifier/feed": "workspace:*",
+    "@rssamplifier/ingest": "workspace:*"
   },
   "engines": {
     "node": ">=22"

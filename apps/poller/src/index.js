@@ -1,4 +1,4 @@
-import { connect, migrate } from '@rssamplifier/db';
+import { connect, migrate, q } from '@rssamplifier/db';
 import { crawlDue } from '@rssamplifier/ingest';
 
 /**
@@ -19,6 +19,10 @@ const db = connect();
 
 const intervalMs = (Number(env['POLL_INTERVAL_SECONDS']) || 60) * 1000;
 const batchSize = Number(env['POLL_BATCH_SIZE']) || 25;
+// Hosts fetched at once. The batch spans thousands of distinct domains, so this
+// is throughput, not pressure on any one server — crawlDue keeps a single host's
+// feeds strictly sequential regardless of this number.
+const concurrency = Number(env['POLL_CONCURRENCY']) || 8;
 
 let running = false;
 let stopping = false;
@@ -44,8 +48,13 @@ async function tick() {
   running = true;
 
   try {
-    const { crawled, failed } = await crawlDue(db, batchSize);
-    if (crawled || failed) log('crawl', { crawled, failed });
+    const started = Date.now();
+    const { crawled, failed } = await crawlDue(db, batchSize, concurrency);
+    if (crawled || failed) {
+      // The backlog is the number worth watching: crawled/failed only say the
+      // tick did something, `due` says whether the crawler is keeping up.
+      log('crawl', { crawled, failed, ms: Date.now() - started, due: await q.countDueFeeds(db) });
+    }
   } catch (err) {
     log('crawl-error', { message: String(err?.message ?? err) });
   } finally {
@@ -66,7 +75,7 @@ try {
 const timer = setInterval(tick, intervalMs);
 void tick();
 
-log('started', { intervalSeconds: intervalMs / 1000, batchSize });
+log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency });
 
 /**
  * Shut down cleanly so Railway's SIGTERM does not sever an in-flight crawl.
