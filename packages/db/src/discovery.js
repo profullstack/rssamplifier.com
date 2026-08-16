@@ -27,16 +27,18 @@ export async function insertRun(db, row) {
 
   await db.execute({
     sql: `insert into discovery_runs
-      (id, keywords, keyword_count, status, provider, error, searched_count,
-       candidate_count, accepted_count, rejected_count, queued_count,
+      (id, keywords, keyword_count, status, provider, category, curated, error,
+       searched_count, candidate_count, accepted_count, rejected_count, queued_count,
        notify_email, ip_hash, user_agent, created_at, updated_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       JSON.stringify(row.keywords ?? []),
       (row.keywords ?? []).length,
       row.status ?? 'running',
       row.provider ?? 'valueserp',
+      row.category ?? null,
+      row.curated ? 1 : 0,
       row.error ?? null,
       row.searched_count ?? 0,
       row.candidate_count ?? 0,
@@ -282,23 +284,48 @@ export async function queuedCandidates(db, limit = 20, runId = null) {
   const { rows } = await db.execute(
     runId
       ? {
-          sql: `select id, run_id, keyword, site_url, host
-                from discovery_candidates
-                where status = 'queued' and run_id = ?
-                order by created_at asc
+          sql: `select c.id, c.run_id, c.keyword, c.site_url, c.host,
+                       r.category, r.curated, r.provider
+                from discovery_candidates c
+                join discovery_runs r on r.id = c.run_id
+                where c.status = 'queued' and c.run_id = ?
+                order by c.created_at asc
                 limit ?`,
           args: [runId, limit],
         }
       : {
-          sql: `select id, run_id, keyword, site_url, host
-                from discovery_candidates
-                where status = 'queued'
-                order by created_at asc
+          sql: `select c.id, c.run_id, c.keyword, c.site_url, c.host,
+                       r.category, r.curated, r.provider
+                from discovery_candidates c
+                join discovery_runs r on r.id = c.run_id
+                where c.status = 'queued'
+                order by c.created_at asc
                 limit ?`,
           args: [limit],
         },
   );
   return rows;
+}
+
+/**
+ * When a source last started a run.
+ *
+ * Sources are read on a schedule rather than every tick: a hand-maintained
+ * list changes when somebody sends a pull request, and re-reading it every
+ * minute is a request to somebody else's server for an answer that has not
+ * changed.
+ *
+ * @param {Client} db
+ * @param {string} provider
+ * @returns {Promise<string|null>}
+ */
+export async function lastRunAt(db, provider) {
+  const { rows } = await db.execute({
+    sql: `select created_at from discovery_runs
+          where provider = ? order by created_at desc limit 1`,
+    args: [provider],
+  });
+  return rows[0]?.created_at ? String(rows[0].created_at) : null;
 }
 
 /**

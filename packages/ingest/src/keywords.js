@@ -73,7 +73,18 @@ export async function checkCandidate(db, candidate, opts = {}) {
     return { status: 'rejected' };
   }
 
-  const verdict = assessFeed({ feedUrl, feed, rules: opts.rules });
+  // A curated candidate skips the worthiness check, because the check and the
+  // list disagree by design. Worthiness exists to throw out what a search
+  // engine hands back for "siberian huskies"; a maintained list of webcomics
+  // or PeerTube instances is somebody vouching for exactly the feeds a
+  // heuristic tuned for blogs would score badly — a comic with no prose, an
+  // instance feed with a machine-generated title.
+  const vouched = Number(candidate.curated ?? 0) === 1;
+
+  const verdict = vouched
+    ? { worthy: true, score: null, reasons: ['curated'] }
+    : assessFeed({ feedUrl, feed, rules: opts.rules });
+
   if (!verdict.worthy) {
     await discovery.markCandidate(db, String(candidate.id), {
       status: 'rejected',
@@ -130,6 +141,14 @@ export async function checkCandidate(db, candidate, opts = {}) {
   }
 
   await q.upsertItems(db, inserted.id, feed.items);
+
+  // A source that knows what its finds are says so, and says it in a way the
+  // crawler will not undo. Only for categories a parser cannot reach on its
+  // own — a comic, a livestream — so a curated run never overrides what the
+  // feed itself plainly is.
+  if (candidate.category) {
+    await q.curateCategory(db, [feedUrl], String(candidate.category));
+  }
 
   await discovery.markCandidate(db, String(candidate.id), {
     status: 'accepted',

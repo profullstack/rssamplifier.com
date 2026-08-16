@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@rssamplifier/db": "workspace:*",
+    "@rssamplifier/discover": "workspace:*",
     "@rssamplifier/feed": "workspace:*",
     "@rssamplifier/ingest": "workspace:*"
   }

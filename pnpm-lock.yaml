@@ -25,6 +25,9 @@ importers:
       '@rssamplifier/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@rssamplifier/discover':
+        specifier: workspace:*
+        version: link:../../packages/discover
       '@rssamplifier/feed':
         specifier: workspace:*
         version: link:../../packages/feed
@@ -88,6 +91,15 @@ importers:
       '@libsql/client':
         specifier: ^0.15.9
         version: 0.15.15
+
+  packages/discover:
+    dependencies:
+      '@rssamplifier/db':
+        specifier: workspace:*
+        version: link:../db
+      '@rssamplifier/feed':
+        specifier: workspace:*
+        version: link:../feed
 
   packages/feed:
     dependencies:

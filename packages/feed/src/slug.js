@@ -45,9 +45,20 @@ export function slugify(input) {
     .normalize('NFKD')
     // strip combining marks so "Café" becomes "cafe" rather than "caf"
     .replace(/[\u0300-\u036f]/g, '')
+    // Put every other mark back on the character it belongs to. NFKD also splits
+    // the Japanese dakuten off its kana — ブ decomposes to フ + U+3099 — and that
+    // mark is not a letter, so leaving it separated turns ブログ into フ-ク.
+    .normalize('NFC')
     .toLowerCase()
     .replace(/['’]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
+    // Unicode letters and digits are kept, not stripped to a-z. A directory of
+    // the small web is not all Latin script: an a-z filter turns every Cyrillic,
+    // Greek, Hebrew, Arabic or CJK title into an empty slug, and the hostname
+    // fallback then names them all after their host — which for a list of 258
+    // YouTube channels means youtube-com, youtube-com-2, youtube-com-3.
+    // Combining marks were already folded away above, so Latin titles are
+    // unchanged: "Café" is still "cafe".
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80)
     .replace(/-+$/g, '');
