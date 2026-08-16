@@ -137,6 +137,42 @@ test('ftsQuery neutralises FTS5 syntax so odd queries do not throw', async () =>
   }
 });
 
+test('any-mode search unions the terms instead of intersecting them', async () => {
+  // No single post mentions both, so the default must find nothing and
+  // any-mode must find both. Anything else and the two modes are the same.
+  assert.equal(q.ftsQuery('frogs kites', 'any'), '"frogs" OR "kites"');
+  assert.equal(q.ftsQuery('frogs kites'), '"frogs" "kites"', 'default stays AND');
+
+  assert.equal((await q.searchItems(db, 'frogs kites')).length, 0);
+
+  const either = await q.searchItems(db, 'frogs kites', 40, 'any');
+  assert.deepEqual(
+    either.map((r) => String(r.title)).sort(),
+    ['Alpha post', 'Beta post'],
+    'any-mode returns the union of both terms',
+  );
+
+  // A ticker paired with the name it is usually written under: the point of
+  // the mode. The unmatched term must not drag the matched one down with it.
+  const paired = await q.searchItems(db, 'zzzznotaticker frogs', 40, 'any');
+  assert.equal(paired.length, 1);
+  assert.equal(String(paired[0].title), 'Alpha post');
+
+  // Escaping still applies, so operators stay literal in either mode.
+  assert.equal(q.ftsQuery('a OR b', 'any'), '"a" OR "OR" OR "b"');
+  for (const bad of ['C++', 'a OR b', '*', 'NEAR(a b)']) {
+    await q.searchItems(db, bad, 40, 'any');
+  }
+});
+
+test('any-mode blog search behaves the same way', async () => {
+  const blogs = await q.searchFeeds(db, 'testing zzzznotablog', 20, 'any');
+  assert.equal(blogs.length, 1);
+  assert.equal(String(blogs[0].slug), 'test-blog');
+
+  assert.equal((await q.searchFeeds(db, 'testing zzzznotablog')).length, 0, 'default still AND');
+});
+
 test('slug collision helper returns the existing family', async () => {
   const taken = await q.takenSlugs(db, 'test-blog');
   assert.ok(taken.has('test-blog'));

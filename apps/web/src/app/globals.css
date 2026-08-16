@@ -947,6 +947,71 @@ select {
   font-size: 0.82rem;
 }
 
+/* ------------------------------------------------------------ languages */
+
+/* Deliberately quieter than .post-actions: voting is the thing most readers
+   came to do, changing language is the thing a few readers need. Same pill
+   shape so it reads as the same family of control. */
+.language-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-top: 0.7rem;
+}
+
+.language-bar .label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-right: 0.15rem;
+}
+
+/* Buttons and links both appear here — signed out, each choice is a link to
+   sign in — so the two are styled as one selector rather than two. */
+.language-bar .lang {
+  display: inline-block;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  text-decoration: none;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.language-bar .lang:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.language-bar .lang.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Machine translation is worth admitting to: a reader deciding whether an
+   odd sentence is the author's or the model's needs to know which. */
+.translated-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* The same left rule as a quotation, for the same reason — the words are
+   reported rather than written here. */
+.lede.translated {
+  border-left: 2px solid var(--line);
+  padding-left: 0.9rem;
+  /* Above a frame this paragraph is not inside .reader-fallback, so it has to
+     hold its own reading measure rather than run the full width. */
+  max-width: var(--measure);
+}
+
 /* -------------------------------------------------------------- comments */
 
 .comments {

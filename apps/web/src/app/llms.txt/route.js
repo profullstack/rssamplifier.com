@@ -57,7 +57,7 @@ export async function GET() {
     '',
     `- [All feeds, JSON](${base}/api/feeds): paginated with ?limit= and ?offset=, filter with ?kind=blog|podcast`,
     `- [One feed, JSON](${base}/api/feeds/{slug}): metadata plus recent items`,
-    `- [Search, JSON](${base}/api/search?q=): full-text over posts and blogs`,
+    `- [Search, JSON](${base}/api/search?q=): full-text over posts and blogs; add &mode=any to match any term rather than all of them`,
     `- [Topics, JSON](${base}/api/topics): shared topics; ?min=10 for the well-covered ones`,
     `- [One topic, JSON](${base}/api/topics/{keyword}): the feeds filed under it`,
     `- [OPML export](${base}/opml): the whole directory as a subscription list, or one category with ?kind=`,

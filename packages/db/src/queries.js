@@ -874,16 +874,22 @@ export async function randomSlug(db) {
  * double quotes makes every token a literal phrase; embedded quotes are doubled
  * per FTS5's own escaping rule.
  *
+ * Quoting is also why a caller cannot smuggle its own operators in: `foo OR bar`
+ * searches for the literal word "OR". Somebody who wants either term therefore
+ * has no way to say so, which is what `mode` is for. It stays 'all' by default,
+ * because a human typing several words into the box means all of them.
+ *
  * @param {string} query
+ * @param {'all'|'any'} [mode] 'all' requires every term, 'any' requires one
  * @returns {string}
  */
-export function ftsQuery(query) {
+export function ftsQuery(query, mode = 'all') {
   const terms = String(query ?? '')
     .split(/\s+/)
     .map((t) => t.replace(/"/g, '""').trim())
     .filter(Boolean)
     .map((t) => `"${t}"`);
-  return terms.join(' ');
+  return terms.join(mode === 'any' ? ' OR ' : ' ');
 }
 
 /**
@@ -892,10 +898,11 @@ export function ftsQuery(query) {
  * @param {Client} db
  * @param {string} query
  * @param {number} [limit]
+ * @param {'all'|'any'} [mode]
  * @returns {Promise<object[]>}
  */
-export async function searchItems(db, query, limit = 40) {
-  const match = ftsQuery(query);
+export async function searchItems(db, query, limit = 40, mode = 'all') {
+  const match = ftsQuery(query, mode);
   if (!match) return [];
 
   const { rows } = await db.execute({
@@ -917,10 +924,11 @@ export async function searchItems(db, query, limit = 40) {
  * @param {Client} db
  * @param {string} query
  * @param {number} [limit]
+ * @param {'all'|'any'} [mode]
  * @returns {Promise<object[]>}
  */
-export async function searchFeeds(db, query, limit = 20) {
-  const match = ftsQuery(query);
+export async function searchFeeds(db, query, limit = 20, mode = 'all') {
+  const match = ftsQuery(query, mode);
   if (!match) return [];
 
   const { rows } = await db.execute({
