@@ -32,7 +32,7 @@ export async function GET() {
     '',
     `- [All feeds, JSON](${base}/api/feeds): paginated with ?limit= and ?offset=`,
     `- [One feed, JSON](${base}/api/feeds/{slug}): metadata plus recent items`,
-    `- [Search, JSON](${base}/api/search?q=): full-text over posts and blogs`,
+    `- [Search, JSON](${base}/api/search?q=): full-text over posts and blogs; add &mode=any to match any term rather than all of them`,
     `- [OPML export](${base}/opml): the whole directory as a subscription list`,
     `- [Submit](${base}/api/submit): POST {"url":"..."} or {"urls":[...]} or {"opml":"..."}`,
     '',

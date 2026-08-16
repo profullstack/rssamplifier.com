@@ -7,23 +7,30 @@ export const dynamic = 'force-dynamic';
 /**
  * Full-text search across posts and blogs.
  *
+ * `mode=any` matches posts carrying any one of the terms rather than all of
+ * them. That exists for callers that know a thing by several names and want
+ * the union — a ticker and its company, say, where the blogosphere writes
+ * "NVIDIA" far more often than "NVDA". Default stays `all`.
+ *
  * @param {Request} req
  */
 export async function GET(req) {
   const url = new URL(req.url);
   const query = (url.searchParams.get('q') ?? '').trim();
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 30) || 30, 1), 100);
+  const mode = url.searchParams.get('mode') === 'any' ? 'any' : 'all';
 
-  if (!query) return json({ query: '', blogs: [], posts: [] });
+  if (!query) return json({ query: '', mode, blogs: [], posts: [] });
 
   const client = db();
   const [blogs, posts] = await Promise.all([
-    q.searchFeeds(client, query, limit),
-    q.searchItems(client, query, limit),
+    q.searchFeeds(client, query, limit, mode),
+    q.searchItems(client, query, limit, mode),
   ]);
 
   return json({
     query,
+    mode,
     blogs: blogs.map((b) => ({
       slug: b.slug,
       title: b.title,
