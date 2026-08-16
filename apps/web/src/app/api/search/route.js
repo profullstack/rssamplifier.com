@@ -39,7 +39,13 @@ export async function GET(req) {
     })),
     posts: posts.map((p) => ({
       title: p.title,
+      // `url` is the post where it lives; `readUrl` is the same post in our
+      // reader, framed with a way out to the original in the footer. A caller
+      // rendering a list of results should link the second one.
       url: p.url,
+      readUrl: p.guid
+        ? `${siteUrl()}/${p.feed_slug}/read?p=${encodeURIComponent(String(p.guid))}`
+        : null,
       summary: p.summary,
       publishedAt: p.published_at,
       blog: p.feed_title,

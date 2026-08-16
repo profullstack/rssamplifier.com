@@ -97,17 +97,17 @@ export default async function SearchPage({ searchParams }) {
         <>
           <h2>Posts</h2>
           {posts.flatMap((p, i) => {
+            // A result goes to our reader, not straight off the site: the post
+            // is framed with the toolbar still on screen, and the way out to
+            // the original lives down there rather than being the only option.
+            // Needs a guid to address; without one there is nothing to link to.
+            const href = p.guid
+              ? `/${p.feed_slug}/read?p=${encodeURIComponent(String(p.guid))}`
+              : null;
+
             const entry = (
-              <article className="entry" key={`${p.url ?? p.title}-${i}`}>
-                <h3>
-                  {p.url ? (
-                    <a href={String(p.url)} rel="noopener">
-                      {p.title}
-                    </a>
-                  ) : (
-                    p.title
-                  )}
-                </h3>
+              <article className="entry" key={`${p.guid ?? p.url ?? p.title}-${i}`}>
+                <h3>{href ? <a href={href}>{p.title}</a> : p.title}</h3>
                 {p.summary && <p>{p.summary}</p>}
                 <time>
                   <a href={`/${p.feed_slug}`}>{p.feed_title}</a>
