@@ -16,6 +16,11 @@ export async function GET() {
     { loc: `${base}/submit`, lastmod: null },
     { loc: `${base}/search`, lastmod: null },
     { loc: `${base}/about`, lastmod: null },
+    // Worth crawling: it is the page that answers "can I have an account here".
+    // /login is deliberately left out — it is the same form for somebody who
+    // already knows the answer, and two entries for one mechanism is the sort
+    // of near-duplicate a sitemap should not be volunteering.
+    { loc: `${base}/signup`, lastmod: null },
     ...rows.map((f) => ({
       loc: `${base}/${f.slug}`,
       lastmod: f.updated_at ? String(f.updated_at) : null,

@@ -61,11 +61,17 @@ export default function RootLayout({ children }) {
               <a href="/opml">OPML</a>
               <a href="/llms.txt">llms.txt</a>
               <a href="/about">About</a>
-              {/* Always "Account", never "Sign in" or the reader's address:
-                  telling them apart means reading the session cookie here,
-                  which would make every page in the site dynamic. /account
-                  sends a signed-out visitor to /login, which costs one redirect
-                  and keeps the static pages static. */}
+              {/* Both of these are unconditional, and neither reflects whether
+                  anybody is signed in: telling those apart means reading the
+                  session cookie here, which would make every page in the site
+                  dynamic. /account sends a signed-out visitor to /login and
+                  /signup sends a signed-in one back to /account, so each costs
+                  at most one redirect and the static pages stay static.
+
+                  "Sign up" is carried in the nav because an account that is
+                  only reachable from a page called "Sign in" reads, to somebody
+                  who has never been here, like no account at all. */}
+              <a href="/signup">Sign up</a>
               <a href="/account">Account</a>
             </nav>
           </div>
