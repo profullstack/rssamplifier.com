@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Built from the repo root:
+# Build from the repo root:
 #   docker build -f apps/poller/Dockerfile .
 FROM node:22-alpine
 ENV PNPM_HOME=/pnpm
@@ -7,14 +7,10 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
 WORKDIR /repo
-COPY pnpm-workspace.yaml package.json ./
-COPY packages/feed/package.json    packages/feed/
-COPY packages/ingest/package.json  packages/ingest/
-COPY apps/poller/package.json      apps/poller/
-RUN pnpm install --prod
-
-COPY packages ./packages
-COPY apps/poller ./apps/poller
+COPY . .
+# The poller and its packages are plain ESM with no build step, so a production
+# install is all this needs.
+RUN pnpm install --frozen-lockfile --prod
 
 ENV NODE_ENV=production
 CMD ["node", "apps/poller/src/index.js"]
