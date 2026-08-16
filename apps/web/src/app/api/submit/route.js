@@ -1,7 +1,7 @@
-import { submitMany, submitOpml, hashIp } from '@rssamplifier/ingest';
-import { q } from '@rssamplifier/db';
+import { submitCatalogue, submitOpml, hashIp } from '@rssamplifier/ingest';
+import { q, newId } from '@rssamplifier/db';
 
-import { db } from '../../../lib/db.js';
+import { db, siteUrl } from '../../../lib/db.js';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -49,36 +49,51 @@ export async function POST(req) {
 
   let kind = 'url';
   let raw = '';
-  /** @type {{ accepted: any[], rejected: any[] }} */
+  let email = null;
+  /** @type {{ accepted: any[], rejected: any[], queued: number, total: number }} */
   let result;
+
+  // The id is minted before the work so the queued feeds can be stamped with
+  // it; the submission row is written afterwards, once the counts are known.
+  const submissionId = newId();
 
   try {
     if (contentType.includes('application/json')) {
       const body = await req.json();
+      email = normalizeEmail(body?.email);
 
       if (typeof body?.opml === 'string') {
         kind = 'opml';
         raw = body.opml;
-        result = await submitOpml(client, raw);
+        result = await submitOpml(client, raw, { submissionId });
       } else {
         const urls = Array.isArray(body?.urls) ? body.urls : splitUrls(body?.url);
         raw = urls.join('\n');
         kind = urls.length > 1 ? 'list' : 'url';
-        result = await submitMany(client, urls);
+        result = await submitCatalogue(
+          client,
+          urls.map((url) => ({ url })),
+          { submissionId },
+        );
       }
     } else {
       const form = await req.formData();
       const file = form.get('opml');
+      email = normalizeEmail(form.get('email'));
 
       if (file && typeof file !== 'string' && file.size > 0) {
         kind = 'opml';
         raw = await file.text();
-        result = await submitOpml(client, raw);
+        result = await submitOpml(client, raw, { submissionId });
       } else {
         raw = String(form.get('input') ?? '');
         const urls = splitUrls(raw);
         kind = urls.length > 1 ? 'list' : 'url';
-        result = await submitMany(client, urls);
+        result = await submitCatalogue(
+          client,
+          urls.map((url) => ({ url })),
+          { submissionId },
+        );
       }
     }
   } catch {
@@ -86,29 +101,63 @@ export async function POST(req) {
   }
 
   await q.insertSubmission(client, {
+    id: submissionId,
     kind,
     raw_input: raw.slice(0, 10_000),
     accepted_count: result.accepted.length,
     rejected_count: result.rejected.length,
+    queued_count: result.queued,
+    // Only stored when there is actually a queue to report on; a submission
+    // that finished inline has nothing left to notify anyone about.
+    notify_email: result.queued > 0 ? email : null,
     errors: result.rejected,
     ip_hash: ipHash,
     user_agent: req.headers.get('user-agent')?.slice(0, 300) ?? null,
   });
 
+  const statusUrl = `${siteUrl()}/submissions/${submissionId}`;
+
   // A browser form post gets a redirect; an agent or curl gets JSON.
   if ((req.headers.get('accept') ?? '').includes('text/html')) {
     const first = result.accepted[0];
-    return new Response(null, {
-      status: 303,
-      headers: { location: first ? `/${first.slug}` : '/submit?error=1' },
-    });
+    // A queued upload goes to its status page — that is where the rest of the
+    // work is visible. A single blog goes straight to the blog.
+    const location =
+      result.queued > 0
+        ? `/submissions/${submissionId}`
+        : first
+          ? `/${first.slug}`
+          : '/submit?error=1';
+
+    return new Response(null, { status: 303, headers: { location } });
   }
 
   return json({
-    ok: result.accepted.length > 0,
+    ok: result.accepted.length > 0 || result.queued > 0,
     accepted: result.accepted,
     rejected: result.rejected,
+    queued: result.queued,
+    total: result.total,
+    submissionId,
+    statusUrl,
   });
+}
+
+/**
+ * Accept an email address only if it plausibly is one.
+ *
+ * Deliberately loose — the only consequence of a bad address here is one
+ * undeliverable notification — but it must reject the empty string a form
+ * sends for an untouched field.
+ *
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function normalizeEmail(value) {
+  const email = String(value ?? '')
+    .trim()
+    .slice(0, 254);
+  return /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email) ? email : null;
 }
 
 /**

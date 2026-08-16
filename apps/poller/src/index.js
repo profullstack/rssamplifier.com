@@ -1,5 +1,5 @@
 import { connect, migrate, q } from '@rssamplifier/db';
-import { crawlDue } from '@rssamplifier/ingest';
+import { crawlDue, notifyFinishedSubmissions } from '@rssamplifier/ingest';
 
 /**
  * Feed crawler daemon.
@@ -55,6 +55,12 @@ async function tick() {
       // tick did something, `due` says whether the crawler is keeping up.
       log('crawl', { crawled, failed, ms: Date.now() - started, due: await q.countDueFeeds(db) });
     }
+
+    // Queued submissions finish long after the upload, so the daemon that
+    // drains the queue is also what tells the submitter it drained. A no-op
+    // when no mail provider is configured.
+    const notified = await notifyFinishedSubmissions(db);
+    if (notified.sent || notified.failed) log('notified', notified);
   } catch (err) {
     log('crawl-error', { message: String(err?.message ?? err) });
   } finally {

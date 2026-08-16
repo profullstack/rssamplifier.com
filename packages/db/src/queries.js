@@ -282,7 +282,7 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
  * catalogue is a no-op rather than an error.
  *
  * @param {Client} db
- * @param {Array<{ slug: string, feed_url: string, site_url?: string|null, title: string, next_fetch_at: string }>} feeds
+ * @param {Array<{ slug: string, feed_url: string, site_url?: string|null, title: string, next_fetch_at: string, submission_id?: string|null }>} feeds
  * @returns {Promise<number>} rows actually inserted
  */
 export async function insertFeedsBulk(db, feeds) {
@@ -293,11 +293,21 @@ export async function insertFeedsBulk(db, feeds) {
     sql: `insert into feeds
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
        categories, status, last_fetched_at, last_success_at, last_error, error_count,
-       fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at)
+       fetch_interval_minutes, next_fetch_at, item_count, submission_id, created_at, updated_at)
       values (?, ?, ?, ?, ?, null, null, null, null, '[]', 'pending', null, null, null, 0,
-              60, ?, 0, ?, ?)
+              60, ?, 0, ?, ?, ?)
       on conflict do nothing`,
-    args: [newId(), f.slug, f.feed_url, f.site_url ?? null, f.title, f.next_fetch_at, now, now],
+    args: [
+      newId(),
+      f.slug,
+      f.feed_url,
+      f.site_url ?? null,
+      f.title,
+      f.next_fetch_at,
+      f.submission_id ?? null,
+      now,
+      now,
+    ],
   }));
 
   const results = await db.batch(statements, 'write');
@@ -481,14 +491,20 @@ export async function searchFeeds(db, query, limit = 20) {
 /**
  * @param {Client} db
  * @param {object} row
+ * @returns {Promise<string>} the submission id, which is also its status URL
  */
 export async function insertSubmission(db, row) {
+  // The caller may supply the id: a queued submission has to stamp its feeds
+  // with it before the submission row itself is written.
+  const id = row.id ?? newId();
+
   await db.execute({
     sql: `insert into submissions
-      (id, kind, raw_input, accepted_count, rejected_count, errors, ip_hash, user_agent, created_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, kind, raw_input, accepted_count, rejected_count, errors, ip_hash, user_agent,
+       queued_count, notify_email, created_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
-      newId(),
+      id,
       row.kind,
       row.raw_input ?? null,
       row.accepted_count ?? 0,
@@ -496,8 +512,91 @@ export async function insertSubmission(db, row) {
       JSON.stringify(row.errors ?? []),
       row.ip_hash ?? null,
       row.user_agent ?? null,
+      row.queued_count ?? 0,
+      row.notify_email ?? null,
       nowIso(),
     ],
+  });
+
+  return id;
+}
+
+/**
+ * @param {Client} db
+ * @param {string} id
+ * @returns {Promise<object|null>}
+ */
+export async function submissionById(db, id) {
+  const { rows } = await db.execute({
+    sql: `select id, kind, accepted_count, rejected_count, queued_count, errors,
+                 notify_email, notified_at, created_at
+          from submissions where id = ? limit 1`,
+    args: [id],
+  });
+  return rows[0] ?? null;
+}
+
+/**
+ * How far through its queue one submission is.
+ *
+ * Counted from the feeds themselves rather than a stored counter: the poller
+ * already updates each row as it crawls it, and a second tally kept in step
+ * with that would be one more thing to drift.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @returns {Promise<{ queued: number, crawled: number, failed: number, waiting: number }>}
+ */
+export async function submissionProgress(db, id) {
+  const { rows } = await db.execute({
+    sql: `select status, count(*) as n from feeds where submission_id = ? group by status`,
+    args: [id],
+  });
+
+  const by = Object.fromEntries(rows.map((r) => [String(r.status), Number(r.n)]));
+  const crawled = by.active ?? 0;
+  const failed = (by.error ?? 0) + (by.dead ?? 0);
+  const waiting = by.pending ?? 0;
+
+  return { queued: crawled + failed + waiting, crawled, failed, waiting };
+}
+
+/**
+ * Submissions that asked for an email and whose queue has fully drained.
+ *
+ * The `not exists` clause is the whole point: a submission is only finished
+ * when none of its feeds are still pending, and asking that per candidate is
+ * cheaper than counting every feed of every open submission.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function submissionsAwaitingNotice(db, limit = 5) {
+  const { rows } = await db.execute({
+    sql: `select id, kind, notify_email, accepted_count, queued_count, created_at
+          from submissions s
+          where s.notify_email is not null
+            and s.notified_at is null
+            and not exists (
+              select 1 from feeds f
+              where f.submission_id = s.id and f.status = 'pending'
+            )
+          order by s.created_at asc
+          limit ?`,
+    args: [limit],
+  });
+  return rows;
+}
+
+/**
+ * @param {Client} db
+ * @param {string} id
+ */
+export async function markSubmissionNotified(db, id) {
+  await db.execute({
+    sql: 'update submissions set notified_at = ? where id = ?',
+    args: [nowIso(), id],
   });
 }
 
