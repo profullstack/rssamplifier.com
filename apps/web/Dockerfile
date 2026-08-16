@@ -21,7 +21,10 @@ ENV NODE_ENV=production
 # apps/web/next.config.mjs.
 COPY --from=build /repo ./
 WORKDIR /repo/apps/web
+
+# No -p flag and no PORT default: the platform injects PORT and `next start`
+# reads it. Passing -p would override that and leave the router talking to a
+# port nothing is listening on.
 EXPOSE 3000
-ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-CMD ["node_modules/.bin/next", "start", "-p", "3000"]
+CMD ["node_modules/.bin/next", "start"]
