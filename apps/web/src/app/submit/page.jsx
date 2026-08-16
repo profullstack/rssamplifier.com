@@ -47,6 +47,16 @@ export default async function SubmitPage({ searchParams }) {
       <form className="submit-box" action="/api/submit" method="post" encType="multipart/form-data">
         <p className="eyebrow">Or upload an OPML file</p>
         <input type="file" name="opml" accept=".opml,.xml,text/xml" aria-label="OPML file" />
+        <p className="hint">
+          Any size. The first 100 are added while you wait and the rest are queued for the crawler,
+          so a catalogue of tens of thousands is fine — you will get a status page to watch.
+        </p>
+        <input
+          type="email"
+          name="email"
+          placeholder="you@example.com — optional, we will email you when it finishes"
+          aria-label="Email me when the import finishes"
+        />
         <div className="submit-actions">
           <button type="submit">Import subscriptions</button>
         </div>

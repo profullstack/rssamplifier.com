@@ -25,11 +25,12 @@ const SPREAD_MINUTES = 240;
  *
  * @param {import('@libsql/client').Client} db
  * @param {Array<{ url: string, title?: string, siteUrl?: string }>} entries
- * @param {{ spreadMinutes?: number, onProgress?: (p: { inserted: number, seen: number, total: number }) => void }} [opts]
+ * @param {{ spreadMinutes?: number, submissionId?: string|null, onProgress?: (p: { inserted: number, seen: number, total: number }) => void }} [opts]
  * @returns {Promise<{ inserted: number, skipped: number, invalid: number, total: number }>}
  */
 export async function importFeeds(db, entries, opts = {}) {
   const spreadMinutes = opts.spreadMinutes ?? SPREAD_MINUTES;
+  const submissionId = opts.submissionId ?? null;
   const onProgress = opts.onProgress;
 
   // One read of the whole table beats a per-row existence check: at this size
@@ -75,6 +76,7 @@ export async function importFeeds(db, entries, opts = {}) {
       site_url: entry.siteUrl ?? null,
       title: entry.title?.trim() || hostnameOf(url),
       next_fetch_at: nowIso(offsetMs),
+      submission_id: submissionId,
     });
     queued += 1;
 

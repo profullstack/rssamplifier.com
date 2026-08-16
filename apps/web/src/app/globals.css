@@ -363,6 +363,46 @@ button:hover {
   margin-bottom: 1.5rem;
 }
 
+/* Explanatory line inside a form, below the control it describes. */
+.hint {
+  font-size: 0.86rem;
+  color: var(--muted);
+  margin: 0.6rem 0 0.9rem;
+}
+
+/* Counters on the submission status page. Auto-fit rather than a fixed column
+   count so four figures sit in a row on a desktop and stack on a phone. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+}
+
+.stats > div {
+  background: var(--surface);
+  padding: 1rem 1.1rem;
+}
+
+.stats dt {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.stats dd {
+  font-family: var(--serif);
+  font-size: 1.6rem;
+  margin: 0;
+}
+
 footer.site {
   margin-top: 4rem;
   border-top: 1px solid var(--line);

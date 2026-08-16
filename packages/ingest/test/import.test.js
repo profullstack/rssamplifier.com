@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { connect, migrate, q } from '@rssamplifier/db';
 
 import { importFeeds, importOpml } from '../src/import.js';
+import { submitCatalogue } from '../src/submit.js';
 import { nextIntervalMinutes, groupByHost } from '../src/crawl.js';
 
 let dir;
@@ -124,6 +125,70 @@ test('nextIntervalMinutes backs off quiet feeds and rushes active ones', () => {
   // …up to a day, and no further.
   assert.equal(nextIntervalMinutes(0, 1440), 1440);
   assert.equal(nextIntervalMinutes(0, undefined), 120);
+});
+
+test('submitCatalogue queues everything past the inline limit', async () => {
+  const entries = Array.from({ length: 5 }, (_, i) => ({
+    url: `https://queued-${i}.example/feed.xml`,
+    title: `Queued ${i}`,
+  }));
+
+  // inlineLimit 0 keeps the test off the network entirely: nothing is resolved,
+  // everything is queued, which is the half of the behaviour under test.
+  const res = await submitCatalogue(db, entries, {
+    inlineLimit: 0,
+    submissionId: 'submission-under-test',
+  });
+
+  assert.equal(res.accepted.length, 0);
+  assert.equal(res.queued, 5);
+  assert.equal(res.total, 5);
+
+  const progress = await q.submissionProgress(db, 'submission-under-test');
+  assert.equal(progress.queued, 5);
+  assert.equal(progress.waiting, 5);
+  assert.equal(progress.crawled, 0);
+});
+
+test('a submission is only owed an email once nothing is still pending', async () => {
+  await q.insertSubmission(db, {
+    id: 'submission-awaiting',
+    kind: 'opml',
+    accepted_count: 0,
+    queued_count: 2,
+    notify_email: 'someone@example.com',
+  });
+
+  await submitCatalogue(
+    db,
+    [
+      { url: 'https://notify-a.example/feed.xml', title: 'Notify A' },
+      { url: 'https://notify-b.example/feed.xml', title: 'Notify B' },
+    ],
+    { inlineLimit: 0, submissionId: 'submission-awaiting' },
+  );
+
+  // Both feeds are still pending, so there is nothing to announce yet.
+  let due = await q.submissionsAwaitingNotice(db);
+  assert.equal(
+    due.find((r) => r.id === 'submission-awaiting'),
+    undefined,
+  );
+
+  await db.execute(
+    "update feeds set status = 'active' where submission_id = 'submission-awaiting'",
+  );
+
+  due = await q.submissionsAwaitingNotice(db);
+  assert.ok(due.some((r) => r.id === 'submission-awaiting'), 'drained queue should be notifiable');
+
+  // And once told, never again.
+  await q.markSubmissionNotified(db, 'submission-awaiting');
+  due = await q.submissionsAwaitingNotice(db);
+  assert.equal(
+    due.find((r) => r.id === 'submission-awaiting'),
+    undefined,
+  );
 });
 
 test('groupByHost keeps one queue per host so a host is never hit in parallel', () => {

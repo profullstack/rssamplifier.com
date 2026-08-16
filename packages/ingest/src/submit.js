@@ -1,8 +1,18 @@
 import { resolveFeed, normalizeUrl, parseOpml, uniqueSlug } from '@rssamplifier/feed';
 import { q } from '@rssamplifier/db';
 
+import { importFeeds } from './import.js';
+
 /** Cap on a single bulk submission, so one paste can't queue thousands of fetches. */
 const MAX_BATCH = 200;
+
+/**
+ * How many entries of a catalogue are resolved while the submitter waits.
+ *
+ * Each one is an outbound fetch, so this is the request's time budget. The
+ * rest is queued for the poller rather than dropped.
+ */
+const INLINE_LIMIT = 100;
 
 /**
  * Claim a free slug, consulting the database for collisions.
@@ -101,19 +111,64 @@ export async function submitMany(db, urls) {
 }
 
 /**
- * Accept an OPML document.
+ * Accept a catalogue of any size: resolve the head of it, queue the tail.
+ *
+ * A submission used to be capped at MAX_BATCH and everything past it was
+ * dropped without a word — uploading a 47,000-feed OPML added a couple of
+ * hundred blogs and silently discarded the rest. Resolving all of them inline
+ * is not the fix either: that is 47,000 outbound requests held open by one HTTP
+ * request.
+ *
+ * So the first `inlineLimit` are fetched while the submitter waits, which is
+ * what makes the response feel like something happened, and the remainder is
+ * written straight to the queue for the poller to crawl. The submitter gets a
+ * status URL instead of a spinner.
+ *
+ * @param {import('@libsql/client').Client} db
+ * @param {Array<{ url: string, title?: string, siteUrl?: string|null }>} entries
+ * @param {{ inlineLimit?: number, submissionId?: string|null, spreadMinutes?: number }} [opts]
+ * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}
+ */
+export async function submitCatalogue(db, entries, opts = {}) {
+  const inlineLimit = opts.inlineLimit ?? INLINE_LIMIT;
+
+  const head = entries.slice(0, inlineLimit);
+  const tail = entries.slice(inlineLimit);
+
+  const { accepted, rejected } = await submitMany(
+    db,
+    head.map((e) => e.url),
+  );
+
+  let queued = 0;
+  if (tail.length > 0) {
+    const imported = await importFeeds(db, tail, {
+      submissionId: opts.submissionId ?? null,
+      spreadMinutes: opts.spreadMinutes,
+    });
+    queued = imported.inserted;
+  }
+
+  return { accepted, rejected, queued, total: entries.length };
+}
+
+/**
+ * Accept an OPML document of any size.
  *
  * @param {import('@libsql/client').Client} db
  * @param {string} xml
- * @returns {Promise<{ accepted: object[], rejected: object[] }>}
+ * @param {object} [opts] forwarded to submitCatalogue
+ * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}
  */
-export async function submitOpml(db, xml) {
+export async function submitOpml(db, xml, opts = {}) {
   const feeds = parseOpml(xml);
   if (feeds.length === 0) {
-    return { accepted: [], rejected: [{ url: '', error: 'no-feeds-in-opml' }] };
+    return {
+      accepted: [],
+      rejected: [{ url: '', error: 'no-feeds-in-opml' }],
+      queued: 0,
+      total: 0,
+    };
   }
-  return submitMany(
-    db,
-    feeds.map((f) => f.url),
-  );
+  return submitCatalogue(db, feeds, opts);
 }
