@@ -1,4 +1,4 @@
-import { connect, migrate, q } from '@rssamplifier/db';
+import { connect, migrate, q, accounts } from '@rssamplifier/db';
 import { crawlDue, notifyFinishedSubmissions } from '@rssamplifier/ingest';
 
 /**
@@ -26,6 +26,7 @@ const concurrency = Number(env['POLL_CONCURRENCY']) || 8;
 
 let running = false;
 let stopping = false;
+let lastPurge = 0;
 
 /**
  * Structured one-line log, so Railway's viewer stays greppable.
@@ -61,6 +62,16 @@ async function tick() {
     // when no mail provider is configured.
     const notified = await notifyFinishedSubmissions(db);
     if (notified.sent || notified.failed) log('notified', notified);
+
+    // Expired sessions and spent challenges are already refused on read, so
+    // clearing them is housekeeping — and this is the process that runs anyway.
+    // Hourly rather than every tick: it is three deletes over indexed columns
+    // and there is nothing to gain from doing them sixty times an hour.
+    if (Date.now() - lastPurge > 3_600_000) {
+      lastPurge = Date.now();
+      const purged = await accounts.purgeExpired(db);
+      if (purged) log('purged', { rows: purged });
+    }
   } catch (err) {
     log('crawl-error', { message: String(err?.message ?? err) });
   } finally {

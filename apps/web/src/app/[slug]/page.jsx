@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation';
-import { q } from '@rssamplifier/db';
+import { q, accounts } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
+import { currentUser } from '../../lib/auth.js';
 import { adPlan } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
@@ -36,10 +37,16 @@ export default async function FeedPage({ params }) {
   const feed = await q.feedBySlug(client, slug);
   if (!feed) notFound();
 
-  const [posts, nav] = await Promise.all([
+  const [posts, nav, user] = await Promise.all([
     q.itemsForFeed(client, String(feed.id), 50),
     q.neighbours(client, String(feed.created_at)),
+    currentUser(),
   ]);
+
+  // Only asked once we know there is someone to ask about.
+  const following = user
+    ? await accounts.isFollowing(client, String(user.id), String(feed.id))
+    : false;
 
   // A blog page is the longest read on the site — up to fifty summaries — so it
   // is the one place a rectangle earns its keep, sat in the flow where somebody
@@ -86,6 +93,20 @@ export default async function FeedPage({ params }) {
         </a>
         <span>{feed.item_count} posts</span>
       </div>
+
+      {/* A plain form, so following works with JavaScript off. A signed-out
+          reader is not shown a dead button: the endpoint sends them to sign in
+          and back here afterwards. */}
+      <form className="follow-form" action="/api/follows" method="post">
+        <input type="hidden" name="slug" value={String(feed.slug)} />
+        <input type="hidden" name="action" value={following ? 'unfollow' : 'follow'} />
+        {/* Following is the quiet state: it is a thing already done, and
+            styling it as loudly as the call to action would make every followed
+            blog shout. */}
+        <button type="submit" className={following ? 'secondary-button' : ''}>
+          {following ? 'Following ✓' : 'Follow'}
+        </button>
+      </form>
 
       {feed.status === 'dead' && (
         <p className="notice">
