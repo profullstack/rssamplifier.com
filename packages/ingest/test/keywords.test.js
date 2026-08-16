@@ -206,3 +206,92 @@ test('a run only checks its own candidates, and reports its own counts', async (
   assert.equal(res.accepted, progress.accepted);
   assert.equal(res.rejected, progress.rejected + progress.errored);
 });
+
+test('a discovered feed keeps the category the parser gave it', async () => {
+  // The bug: checkCandidate built its insertFeed call without `kind`, and
+  // insertFeed defaults an absent kind to 'blog'. Every discovered feed was
+  // therefore a blog — a PeerTube instance whose every item carries a
+  // video/mp4 enclosure included. Curated sources masked it by overwriting the
+  // category straight afterwards.
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { connect, migrate, q, discovery } = await import('@rssamplifier/db');
+
+  const dir = await mkdtemp(join(tmpdir(), 'rssamp-kind-'));
+  const db = connect({ url: `file:${join(dir, 'k.db')}` });
+  await migrate(db);
+
+  const runId = await discovery.insertRun(db, { provider: 'peertube', keywords: [] });
+  await discovery.insertCandidates(db, runId, [
+    { url: 'https://tube.example/feeds/videos.xml', host: 'tube.example/feeds/videos.xml' },
+  ]);
+  const [candidate] = await discovery.queuedCandidates(db, 1);
+
+  // A video feed in the shape PeerTube serves: real items, recent dates, and
+  // a video/mp4 enclosure on every one. Realistic enough to pass worthiness,
+  // because an uncurated run checks it — which is the path the bug was on.
+  const feedXml = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <title>Tube Example</title><link>https://tube.example/</link>
+  <description>Federated video from a small instance</description>
+    <item>
+      <title>Episode 1</title>
+      <link>https://tube.example/w/1</link>
+      <guid>https://tube.example/w/1</guid>
+      <description>A recorded talk about federated video, part 1.</description>
+      <pubDate>Thu, 13 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/1.mp4"/>
+    </item>
+    <item>
+      <title>Episode 2</title>
+      <link>https://tube.example/w/2</link>
+      <guid>https://tube.example/w/2</guid>
+      <description>A recorded talk about federated video, part 2.</description>
+      <pubDate>Mon, 10 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/2.mp4"/>
+    </item>
+    <item>
+      <title>Episode 3</title>
+      <link>https://tube.example/w/3</link>
+      <guid>https://tube.example/w/3</guid>
+      <description>A recorded talk about federated video, part 3.</description>
+      <pubDate>Fri, 07 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/3.mp4"/>
+    </item>
+    <item>
+      <title>Episode 4</title>
+      <link>https://tube.example/w/4</link>
+      <guid>https://tube.example/w/4</guid>
+      <description>A recorded talk about federated video, part 4.</description>
+      <pubDate>Tue, 04 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/4.mp4"/>
+    </item>
+    <item>
+      <title>Episode 5</title>
+      <link>https://tube.example/w/5</link>
+      <guid>https://tube.example/w/5</guid>
+      <description>A recorded talk about federated video, part 5.</description>
+      <pubDate>Sat, 01 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/5.mp4"/>
+    </item>
+</channel></rss>`;
+
+  const { checkCandidate } = await import('../src/keywords.js');
+  const { parseFeed } = await import('@rssamplifier/feed');
+
+  const result = await checkCandidate(db, candidate, {
+    // Resolved without a network round trip; the parsing under test is real.
+    resolveImpl: async () => ({
+      ok: true,
+      feedUrl: 'https://tube.example/feeds/videos.xml',
+      feed: parseFeed(feedXml),
+    }),
+  });
+
+  assert.equal(result.status, 'accepted');
+  const stored = await q.feedBySlug(db, result.slug);
+  assert.equal(String(stored.category), 'video', 'stored as what it is, not as a blog');
+
+  await rm(dir, { recursive: true, force: true });
+});
