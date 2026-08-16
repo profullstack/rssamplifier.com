@@ -13,11 +13,17 @@ const MAX_BATCH = 200;
  * @returns {Promise<string>}
  */
 async function claimSlug(db, title, feedUrl) {
+  // parseFeed substitutes '(untitled)' for a missing title, which would
+  // slugify to a perfectly valid "untitled" and defeat uniqueSlug's hostname
+  // fallback — every untitled feed would land on untitled, untitled-2, …
+  // Blanking it here routes them to their own domain name instead.
+  const usable = title === '(untitled)' ? '' : title;
+
   // uniqueSlug only ever probes base, base-2, base-3 … so fetching that narrow
   // prefix is enough; no need to read the whole table.
-  const base = uniqueSlug(title, feedUrl);
+  const base = uniqueSlug(usable, feedUrl);
   const taken = await q.takenSlugs(db, base);
-  return uniqueSlug(title, feedUrl, (s) => taken.has(s));
+  return uniqueSlug(usable, feedUrl, (s) => taken.has(s));
 }
 
 /**
