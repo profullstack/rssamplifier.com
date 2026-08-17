@@ -119,6 +119,53 @@ export function tokenize(text) {
 }
 
 /**
+ * Words that end in s without being plural.
+ *
+ * A suffix rule cannot tell "news" from "keys", so the exceptions are listed.
+ * Short and deliberately unambitious: the cost of missing one is two topic
+ * pages where there should be one, and the cost of over-stripping is a page
+ * called "new" that nobody searches for.
+ */
+const NEVER_PLURAL = new Set([
+  'news', 'physics', 'mathematics', 'economics', 'politics', 'ethics', 'linguistics',
+  'series', 'species', 'analysis', 'basis', 'crisis', 'thesis', 'chaos',
+  'lens', 'bus', 'gas', 'plus', 'virus', 'status', 'focus', 'bonus', 'campus', 'census',
+  'css', 'js', 'aws', 'ios', 'macos', 'linux', 'unix', 'sass', 'redis', 'kubernetes',
+]);
+
+/**
+ * The singular of a word, for the purpose of naming a topic.
+ *
+ * "fountain pen" and "fountain pens" are one subject, and the directory had
+ * them as two pages with sixteen and thirteen feeds. Folding the plural onto
+ * the singular merges them.
+ *
+ * Deliberately not the stemmer in relevance.js, which is tuned for matching
+ * rather than naming: it strips "es" from anything long enough, so "notes"
+ * becomes "not" and "series" becomes "seri". That is fine when the output is
+ * compared and discarded, and wrong when the output is a URL somebody reads.
+ *
+ * @param {string} word
+ * @returns {string}
+ */
+export function singularize(word) {
+  const w = String(word ?? '');
+  if (NEVER_PLURAL.has(w) || w.length < 4) return w;
+
+  // stories -> story, but not ties -> ty
+  if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
+
+  // boxes -> box, dishes -> dish, glasses -> glass. Only after the sounds that
+  // actually take -es; "notes" is not "not".
+  if (w.length > 4 && /(?:ss|sh|ch|x|z|o)es$/.test(w)) return w.slice(0, -2);
+
+  // The ordinary plural, minus the endings that are not one.
+  if (w.endsWith('s') && !/(?:ss|us|is|os)$/.test(w)) return w.slice(0, -1);
+
+  return w;
+}
+
+/**
  * The URL form of a keyword: /topics/agentic-coding.
  *
  * Unicode letters are kept rather than transliterated away — a directory of the
@@ -131,7 +178,7 @@ export function tokenize(text) {
  * @returns {string} slug, or '' when nothing addressable is left
  */
 export function topicSlug(keyword) {
-  return String(keyword ?? '')
+  const slug = String(keyword ?? '')
     .normalize('NFKC')
     .toLowerCase()
     .replace(/\+/g, ' plus ')
@@ -141,6 +188,15 @@ export function topicSlug(keyword) {
     .replace(/^-+|-+$/g, '')
     .slice(0, 60)
     .replace(/-+$/g, '');
+
+  // Singularised word by word, so "fountain pens" and "fountain pen" are one
+  // page rather than two. Because every lookup runs through this same function,
+  // the plural URL keeps working and resolves to the merged topic — there is
+  // nothing to redirect.
+  return slug
+    .split('-')
+    .map((word) => singularize(word))
+    .join('-');
 }
 
 /**

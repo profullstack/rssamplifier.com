@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { extractKeywords, feedTopics, tokenize, topicSlug } from '../src/keywords.js';
+import { extractKeywords, feedTopics, singularize, tokenize, topicSlug } from '../src/keywords.js';
 
 test('tokenize drops stopwords, bare numbers and one-letter fragments', () => {
   assert.deepEqual(tokenize('The quick brown fox is 42 a'), ['quick', 'brown', 'fox']);
@@ -146,4 +146,46 @@ test('feedTopics caps what it stores per feed', () => {
 
   assert.ok(feedTopics({ blocks }, { max: 100 }).length > 5, 'the fixture has topics to spare');
   assert.equal(feedTopics({ blocks }, { max: 5 }).length, 5);
+});
+
+test('a plural and its singular are one topic, not two pages', () => {
+  // The directory had "fountain pen" (16 feeds) and "fountain pens" (13) as
+  // separate pages for one subject.
+  assert.equal(topicSlug('fountain pens'), topicSlug('fountain pen'));
+  assert.equal(topicSlug('fountain pens'), 'fountain-pen');
+
+  assert.equal(topicSlug('ai agents'), 'ai-agent');
+  assert.equal(topicSlug('book reviews'), 'book-review');
+  assert.equal(topicSlug('home labs'), topicSlug('home lab'));
+});
+
+test('words that merely end in s keep their s', () => {
+  // A suffix rule cannot tell these from plurals, so they are listed. Getting
+  // one wrong means a topic page called "new" or "seri".
+  for (const word of ['news', 'series', 'analysis', 'physics', 'css', 'ios', 'linux', 'kubernetes']) {
+    assert.equal(singularize(word), word, `${word} was mangled`);
+  }
+});
+
+test('the plural rules cover the shapes English actually uses', () => {
+  assert.equal(singularize('stories'), 'story');
+  assert.equal(singularize('boxes'), 'box');
+  assert.equal(singularize('dishes'), 'dish');
+  assert.equal(singularize('glasses'), 'glass');
+  assert.equal(singularize('toys'), 'toy');
+
+  // Not every -es is a plural marker: "notes" is "note", never "not".
+  assert.equal(singularize('notes'), 'note');
+  assert.equal(singularize('names'), 'name');
+
+  // Too short to be worth guessing about.
+  assert.equal(singularize('ies'), 'ies');
+  assert.equal(singularize('js'), 'js');
+});
+
+test('an existing plural URL still resolves, because lookups normalise too', () => {
+  // Nothing needs redirecting: /topics/fountain-pens is put through the same
+  // function as the stored slug, so it lands on the merged page.
+  assert.equal(topicSlug('fountain-pens'), 'fountain-pen');
+  assert.equal(topicSlug('Fountain%20Pens'.replace('%20', ' ')), 'fountain-pen');
 });
