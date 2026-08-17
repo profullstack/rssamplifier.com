@@ -8,8 +8,13 @@ import { parseOpml } from '@rssamplifier/feed';
  * submission, not to hold a second copy of it. Exported so the status page can
  * tell "this is all of it" from "this is the first part of it" by the same
  * number the writer used, rather than by a literal that drifts.
+ *
+ * Ten thousand was too tight to be useful: a pasted list of a few hundred URLs
+ * is already past it, so the "what you submitted" preview reported a truncated
+ * upload for submissions that were nowhere near large. Fifty thousand covers an
+ * ordinary paste whole and still refuses to hold a catalogue.
  */
-export const RAW_INPUT_LIMIT = 10_000;
+export const RAW_INPUT_LIMIT = 50_000;
 
 /** Entries listed on the status page before it starts summarising. */
 export const PREVIEW_LIMIT = 30;
@@ -71,9 +76,9 @@ export function describeSubmittedInput(submission) {
  * The outlines an OPML document lists, however complete the document is.
  *
  * The strict parser first, because it is the one that understands nesting and
- * entities. It cannot help here in the common case, though: what is stored is
- * the first ten thousand characters of an upload, which for any real catalogue
- * ends mid-tag, and a document cut mid-tag is malformed — the parser returns
+ * entities. It cannot help here in the common case, though: only the
+ * first RAW_INPUT_LIMIT characters of an upload are stored, which for any real
+ * catalogue ends mid-tag, and a document cut mid-tag is malformed — the parser returns
  * nothing at all for a file whose first sixty entries are perfectly readable.
  *
  * So a lenient scan stands behind it. Wrong shape for parsing OPML in general,
