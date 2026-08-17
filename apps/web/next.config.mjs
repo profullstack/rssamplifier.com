@@ -83,6 +83,23 @@ const nextConfig = {
           source: '/topics/:slug.:format(rss|atom|json|xml|m3u|pls)',
           destination: '/api/topics/:slug/feed/:format',
         },
+
+        // The same, for one category of a topic: /topics/physics/podcasts.rss.
+        //
+        // The group is a path segment in the destination and not `?group=`,
+        // which is what this was written as first and what does not work: a
+        // rewrite's destination query string never reaches an App Router route
+        // handler, because `req.url` there is the URL the client asked for
+        // rather than the one the rewrite produced. The parameter arrives as
+        // nothing and every sub-group feed quietly serves the whole topic — a
+        // failure with no error in it, which is the kind worth a comment.
+        //
+        // Listed after the one-segment rule for readability only; the two
+        // cannot both match, because a rewrite parameter never spans a slash.
+        {
+          source: '/topics/:slug/:group.:format(rss|atom|json|xml|m3u|pls)',
+          destination: '/api/topics/:slug/:group/feed/:format',
+        },
       ],
     };
   },
