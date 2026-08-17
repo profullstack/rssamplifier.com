@@ -9,7 +9,7 @@ The point of difference is the machine-readable half: most of the web now blocks
 this directory deliberately does the opposite. Everything is also published as JSON, OPML and plain
 text so an agent can read the whole thing in one request.
 
-**Live:** <https://rssamplifier.up.railway.app>
+**Live:** <https://rssamplifier.com>
 
 ## Layout
 
