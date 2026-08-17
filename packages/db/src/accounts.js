@@ -409,6 +409,11 @@ export async function followedFeeds(db, userId, limit = 200) {
 /**
  * Recent posts from everything someone follows — the reason to have an account.
  *
+ * Carries the same columns a topic river does, because the two are merged into
+ * one list on the following page and in the personal feed: a row that arrived by
+ * a followed blog and a row that arrived by a followed topic have to be
+ * renderable, playable and de-duplicable by the same code.
+ *
  * @param {Client} db
  * @param {string} userId
  * @param {number} [limit]
@@ -416,8 +421,9 @@ export async function followedFeeds(db, userId, limit = 200) {
  */
 export async function followedItems(db, userId, limit = 60) {
   const { rows } = await db.execute({
-    sql: `select i.guid, i.url, i.title, i.summary, i.published_at,
-                 f.slug as feed_slug, f.title as feed_title
+    sql: `select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
+                 i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds, i.cluster_key,
+                 f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
           from follows fo
           join feeds f on f.id = fo.feed_id
           join feed_items i on i.feed_id = f.id
@@ -427,4 +433,171 @@ export async function followedItems(db, userId, limit = 60) {
     args: [userId, limit],
   });
   return rows;
+}
+
+/* ------------------------------------------------------------ topic follows */
+
+/**
+ * Normalise the sub-group half of a topic follow.
+ *
+ * '' is the whole topic. Everything else is a segment from the topic pages, and
+ * it is lowercased for the same reason the slug is: the URLs are
+ * case-insensitive, so two spellings of one page must not become two follows.
+ *
+ * @param {unknown} segment
+ * @returns {string}
+ */
+export function normalizeSegment(segment) {
+  return String(segment ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Follow a topic, or one category of it.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} slug the normalised topic slug
+ * @param {string} [segment] '' for the whole topic
+ */
+export async function followTopic(db, userId, slug, segment = '') {
+  await db.execute({
+    sql: `insert into topic_follows (user_id, slug, segment, created_at) values (?, ?, ?, ?)
+          on conflict do nothing`,
+    args: [userId, slug, normalizeSegment(segment), nowIso()],
+  });
+}
+
+/**
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} slug
+ * @param {string} [segment]
+ */
+export async function unfollowTopic(db, userId, slug, segment = '') {
+  await db.execute({
+    sql: 'delete from topic_follows where user_id = ? and slug = ? and segment = ?',
+    args: [userId, slug, normalizeSegment(segment)],
+  });
+}
+
+/**
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} slug
+ * @param {string} [segment]
+ * @returns {Promise<boolean>}
+ */
+export async function isFollowingTopic(db, userId, slug, segment = '') {
+  const { rows } = await db.execute({
+    sql: 'select 1 as n from topic_follows where user_id = ? and slug = ? and segment = ? limit 1',
+    args: [userId, slug, normalizeSegment(segment)],
+  });
+  return rows.length > 0;
+}
+
+/**
+ * The topics someone follows, newest first.
+ *
+ * Rows carry the slug and segment only. The display name is not stored: a topic
+ * has one canonical spelling and it lives in feed_keywords, so copying it here
+ * would be a second copy to keep in step for no gain — the page joins it back on
+ * when it needs a heading.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function followedTopics(db, userId, limit = 200) {
+  const { rows } = await db.execute({
+    sql: `select tf.slug, tf.segment, tf.created_at as followed_at,
+                 -- The topic's own spelling, so a page can say "AI" rather than
+                 -- "ai". Left join: a topic whose feeds have all died still has
+                 -- a follow, and the slug is a serviceable fallback.
+                 (select min(k.keyword) from feed_keywords k where k.slug = tf.slug) as keyword
+          from topic_follows tf
+          where tf.user_id = ?
+          order by tf.created_at desc
+          limit ?`,
+    args: [userId, limit],
+  });
+  return rows;
+}
+
+/**
+ * How many readers follow a topic, or one category of it.
+ *
+ * @param {Client} db
+ * @param {string} slug
+ * @param {string} [segment]
+ * @returns {Promise<number>}
+ */
+export async function topicFollowerCount(db, slug, segment = '') {
+  const { rows } = await db.execute({
+    sql: 'select count(*) as n from topic_follows where slug = ? and segment = ?',
+    args: [slug, normalizeSegment(segment)],
+  });
+  return Number(rows[0]?.n ?? 0);
+}
+
+/* -------------------------------------------------------------- feed tokens */
+
+/**
+ * The capability token in an account's personal feed URL, or null.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @returns {Promise<string|null>}
+ */
+export async function feedToken(db, userId) {
+  const { rows } = await db.execute({
+    sql: 'select feed_token from users where id = ? limit 1',
+    args: [userId],
+  });
+  const token = rows[0]?.feed_token;
+  return token ? String(token) : null;
+}
+
+/**
+ * Set — or rotate — an account's feed token.
+ *
+ * The value is minted by the caller, the way session tokens are: randomness
+ * belongs with the module that owns the credential's format, and this one only
+ * stores what it is handed. Writing a new token retires the old one in the same
+ * statement, so a rotation takes effect on the next request rather than leaving
+ * two live URLs.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} token
+ */
+export async function setFeedToken(db, userId, token) {
+  await db.execute({
+    sql: 'update users set feed_token = ? where id = ?',
+    args: [token, userId],
+  });
+}
+
+/**
+ * The account a feed token belongs to, or null.
+ *
+ * An empty token is refused before it reaches the database: `feed_token` is null
+ * for every account that has never asked for a URL, and a query for '' must not
+ * be allowed to match one of them by accident.
+ *
+ * @param {Client} db
+ * @param {string} token
+ * @returns {Promise<object|null>}
+ */
+export async function userByFeedToken(db, token) {
+  const value = String(token ?? '');
+  if (!value) return null;
+
+  const { rows } = await db.execute({
+    sql: 'select id, email from users where feed_token = ? limit 1',
+    args: [value],
+  });
+  return rows[0] ?? null;
 }

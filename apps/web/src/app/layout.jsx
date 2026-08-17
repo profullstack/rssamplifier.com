@@ -137,6 +137,7 @@ export default function RootLayout({ children }) {
               <a href="/signup">Sign up</a>
               {/* Like /account, unconditional: a signed-out visitor is sent to
                   sign in rather than being shown an empty shelf. */}
+              <a href="/following">Following</a>
               <a href="/favorites">Favorites</a>
               {/* Same argument as Favorites: unconditional, so the nav stays
                   the same on every page and none of them has to read a cookie
