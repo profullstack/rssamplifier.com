@@ -1895,3 +1895,58 @@ select {
 .live-log .is-bad span {
   color: var(--muted);
 }
+
+/*
+ * A topic's categories, as a row of chips.
+ *
+ * Not the .categories grid the home page uses: that is seven full-width rows,
+ * which on a topic page would push the listing the visitor came for below the
+ * fold to show them eight links they may not need. A chip row costs one line,
+ * wraps on a narrow screen, and reads as a filter — which is what it is.
+ */
+
+.topic-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1.5rem;
+}
+
+.topic-groups a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.85rem;
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.topic-groups a:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.topic-groups a span {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* The page you are on. Kept as a link rather than a span so the row stays one
+ * shape while you move along it, and so reloading the current filter still
+ * works from the keyboard. */
+.topic-groups a.is-current {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.topic-groups a.is-current span {
+  color: var(--ink);
+}
