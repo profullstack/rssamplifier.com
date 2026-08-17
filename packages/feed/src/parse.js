@@ -354,12 +354,24 @@ export function summarize(html, max = 400) {
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
+    // The named entities WordPress and friends emit constantly. Undecoded,
+    // their names survive tokenizing as words: "rsquo" was the seventh most
+    // common topic in the whole directory, ahead of "code" and "software",
+    // because every "I&rsquo;ve" contributed one.
+    .replace(/&(?:rsquo|lsquo|apos|#39);/gi, "'")
+    .replace(/&(?:rdquo|ldquo|bdquo);/gi, '"')
+    .replace(/&(?:mdash|ndash|minus);/gi, '-')
+    .replace(/&(?:hellip);/gi, '…')
     // Numeric entities, decimal and hex. The hex form is what most CMSs emit
     // for a curly apostrophe, and leaving it undecoded does not merely look
     // wrong — the leftover "#x27" survives tokenizing as a word and turns up in
     // the feed's topics.
     .replace(/&#x([\da-f]+);/gi, (_, hex) => entity(Number.parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec) => entity(Number(dec)))
+    // Anything still shaped like an entity is one this list does not know.
+    // Dropped rather than left as text, because its name is not a word and the
+    // list above will always be missing something.
+    .replace(/&[a-z][a-z0-9]{1,10};/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 

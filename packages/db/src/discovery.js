@@ -137,29 +137,59 @@ export async function recentRuns(db, limit = 20) {
  * connecting them was a person typing into a form, so the directory could know
  * it had forty blogs about home labs and never go looking for the forty-first.
  *
- * Ordered by how many feeds share the topic, so the phrases tried first are the
- * ones the directory is demonstrably about rather than one blog's vocabulary.
- * Anything already queued as a keyword — by a person or by an earlier pass — is
+ * Picking the *most* shared topic is exactly wrong, and the first live run
+ * proved it: it searched for "one", "time" and "post". The topics every feed
+ * shares are the words every feed uses, so popularity alone selects for
+ * generic. What makes a good search term is a phrase specific enough to have
+ * a subject and shared widely enough to be a subject at all.
+ *
+ * Hence the band and the shape:
+ *
+ *   - **Multi-word only.** "social media", "software engineering", "book
+ *     review" are subjects; "one", "post", "blog" are not. A single word can
+ *     be a subject, but the ones that reach the top of this table by count
+ *     never are.
+ *   - **A ceiling as well as a floor.** Above a few hundred feeds a phrase is
+ *     furniture the extractor failed to filter — "continue reading", "years
+ *     ago" — not something to go looking for more of.
+ *   - **No entity residue.** Feeds are full of half-decoded markup, and
+ *     "rsquo ve" and "#xa #xa" reach this table. summarize() now decodes them
+ *     at the source, but rows written before that stay, and searching one
+ *     wastes a credit on a string no publisher ever wrote.
+ *
+ * Anything already queued as a keyword — by a person or an earlier pass — is
  * excluded, because searching it again spends a credit to rediscover the same
  * results.
  *
  * @param {Client} db
- * @param {{ limit?: number, minFeeds?: number }} [opts]
+ * @param {{ limit?: number, minFeeds?: number, maxFeeds?: number }} [opts]
  * @returns {Promise<string[]>}
  */
 export async function unsearchedTopics(db, opts = {}) {
-  const { limit = 3, minFeeds = 3 } = opts;
+  const { limit = 3, minFeeds = 5, maxFeeds = 400 } = opts;
 
   const { rows } = await db.execute({
     sql: `select t.keyword
           from topics t
-          where t.feed_count >= ?
+          where t.feed_count between ? and ?
+            -- Multi-word: the space is what separates a subject from a word.
+            and t.keyword like '% %'
+            -- Entity residue and URL fragments, which are not phrases anybody
+            -- searched for and never will be.
+            and t.keyword not like '%#x%'
+            and t.keyword not like '%#a%'
+            and t.keyword not like 'rsquo%'
+            and t.keyword not like '%rsquo%'
+            and t.keyword not like '%apos%'
+            and t.keyword not like '%nbsp%'
+            and t.keyword not like 'https %'
+            and t.keyword not like '% www%'
             and not exists (
               select 1 from discovery_keywords k where k.keyword = t.keyword
             )
           order by t.feed_count desc, t.slug asc
           limit ?`,
-    args: [minFeeds, limit],
+    args: [minFeeds, maxFeeds, limit],
   });
 
   return rows.map((row) => String(row.keyword));
