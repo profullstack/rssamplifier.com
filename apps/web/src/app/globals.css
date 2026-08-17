@@ -740,6 +740,261 @@ body:has(.episode-player:not(.is-inline)) {
   padding-bottom: 9rem;
 }
 
+/* ------------------------------------------------------ the roaming player */
+
+/* The dock is the page player one level up: same fixed strip, same class, so
+   everything above about docking, video corners and the toolbar's offset
+   applies to it unchanged. What it adds is what a player that outlives the post
+   needs — a way back to what is playing, and the queue's controls. */
+.dock-player .episode-meta strong a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.dock-player .episode-meta strong a:hover {
+  color: var(--accent);
+}
+
+.dock-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.dock-controls button,
+.dock-controls a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dock-controls button:hover:not(:disabled),
+.dock-controls a:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.dock-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* One player, not two. While the roaming one is running, the page's own docked
+   transport stands down — it is the same file, and a reader who hits play on
+   the wrong one gets the episode twice, half a second apart.
+
+   Keyed on an attribute the player sets from script, so a reader with
+   JavaScript off is left with exactly the player they have always had rather
+   than losing it to a component that never ran. */
+html[data-dock] .episode-player.page-docked {
+  display: none;
+}
+
+/* ...and the room reserved for it goes back when it does. A hidden element
+   still matches :has(), so without these two the toolbar would float above a
+   gap on any post whose player has stood down and whose dock is empty — which
+   is precisely the state a reader is in the moment they close the dock. */
+html[data-dock] body:has(.episode-player.page-docked):not(:has(.dock-player)) .toolbar {
+  bottom: calc(1.5rem + env(safe-area-inset-bottom));
+}
+
+html[data-dock] body:has(.episode-player.page-docked):not(:has(.dock-player)) {
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+}
+
+/* An inline player whose media has been handed to the dock, and the offer to
+   hand it over — both gone once it is gone, since the post is now playing at
+   the foot of the window. */
+.episode-player[data-handed-over],
+.episode-player[data-handed-over] + .dock-handoff {
+  display: none;
+}
+
+.dock-handoff {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 1.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.dock-handoff:hover {
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------- queue */
+
+/* The controls that put a post in a lane. Same pill as the reaction buttons in
+   the reader — they sit next to them, and they are the same kind of thing. */
+.queue-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.queue-button,
+.entry-actions .play-button,
+.queue-controls button,
+.queue-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.queue-button:hover,
+.entry-actions .play-button:hover,
+.queue-controls button:hover:not(:disabled),
+.queue-play:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.queue-button.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.queue-controls button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Under each post in a blog's archive: play it, or line it up. Quiet enough
+   that fifty of them down a page do not read as fifty calls to action. */
+.entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.lane-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0 0 1.5rem;
+}
+
+.lane-tabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.9rem;
+  text-decoration: none;
+  color: var(--muted);
+}
+
+.lane-tabs a.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.lane-tabs .count {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.queue-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The position, shown rather than left implicit in the layout: order is the
+   entire point of a queue. */
+.queue-index {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  padding-top: 0.25rem;
+  min-width: 1.4rem;
+}
+
+.queue-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.queue-title {
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.queue-title:hover {
+  color: var(--accent);
+}
+
+.queue-body .meta {
+  margin: 0.2rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.queue-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.queue-clear {
+  margin-top: 1.2rem;
+}
+
+@media (max-width: 40rem) {
+  /* On a phone the controls go under the post rather than beside it: four pills
+     and a title in one row leaves the title two words wide. */
+  .queue-entry {
+    flex-wrap: wrap;
+  }
+
+  .queue-controls {
+    width: 100%;
+    padding-left: 2.2rem;
+  }
+}
+
 /* ----------------------------------------------------------------- topics */
 
 /* The topics index. A wrapped row of links rather than a list: three hundred
