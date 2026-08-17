@@ -106,8 +106,9 @@ export default function RootLayout({ children }) {
               <a href="/reels">Reels</a> · <a href="/topics">Topics</a>
             </p>
             <p>
-              Machine-readable: <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}
-              <a href="/llms.txt">llms.txt</a> · <a href="/crawlstats">Crawler status</a>
+              Machine-readable: <a href="/mcp">MCP server</a> · <a href="/api/feeds">JSON API</a> ·{' '}
+              <a href="/opml">OPML</a> · <a href="/llms.txt">llms.txt</a> ·{' '}
+              <a href="/crawlstats">Crawler status</a>
             </p>
           </div>
         </footer>
