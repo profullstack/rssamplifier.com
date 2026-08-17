@@ -134,8 +134,10 @@ test('every source declares a schedule and a sane category', () => {
 });
 
 test('the categories no parser can reach each have a source', () => {
-  // The point of the whole module: /comics and /lives cannot fill themselves.
-  for (const category of ['comic', 'live']) {
+  // The point of the whole module: /comics, /lives and /music cannot fill
+  // themselves. Music is here because it stopped being inferred from an audio
+  // enclosure — that rule filed 198 blogs as music and found no music at all.
+  for (const category of ['comic', 'live', 'music']) {
     assert.ok(
       SOURCES.some((s) => s.category === category && s.curated),
       `nothing fills /${category}`,
@@ -224,4 +226,43 @@ test('a source that cannot be reached records a failed run rather than throwing'
   assert.equal(String(runs[0].status), 'failed', 'the outage is visible, not swallowed');
 
   await rm(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------------------------------- music
+
+test('every hand-kept music feed is a distinct absolute URL', async () => {
+  const { MUSIC_FEEDS } = await import('../src/music.js');
+
+  assert.ok(MUSIC_FEEDS.length > 100, 'the list is the whole category, so it should not be thin');
+  assert.equal(new Set(MUSIC_FEEDS).size, MUSIC_FEEDS.length, 'a URL is listed twice');
+
+  for (const url of MUSIC_FEEDS) {
+    // A relative URL would be queued and then fail to resolve, one candidate at
+    // a time, with nothing saying the list was the problem.
+    assert.doesNotThrow(() => new URL(url), `${url} is not a URL`);
+    assert.match(url, /^https?:\/\//, `${url} is not http`);
+  }
+});
+
+test('the music source hands back its list, capped', async () => {
+  const source = sourceById('music');
+  const { MUSIC_FEEDS } = await import('../src/music.js');
+
+  assert.equal(source.category, 'music');
+  assert.ok(source.curated, 'the half that declares nothing needs vouching for');
+
+  assert.deepEqual(await source.run({ limit: 3 }), MUSIC_FEEDS.slice(0, 3));
+  assert.equal((await source.run({ limit: source.limit })).length, MUSIC_FEEDS.length);
+});
+
+test('why a service is missing from the music list is written down', async () => {
+  const { MUSIC_UNAVAILABLE } = await import('../src/music.js');
+
+  // The same reasoning as UNAVAILABLE above: "why is Bandcamp not in here" is
+  // a question with a factual answer, and it belongs next to the list.
+  for (const entry of MUSIC_UNAVAILABLE) {
+    assert.ok(entry.id, 'an entry with no id');
+    assert.ok(entry.reason.length > 40, `${entry.id} gives no reason worth reading`);
+  }
+  assert.ok(MUSIC_UNAVAILABLE.some((e) => e.id === 'bandcamp'));
 });
