@@ -36,4 +36,10 @@ export { isFrameable, framingVerdict, probePage } from './src/frameable.js';
 export { readableArticle, figures, MAX_HTML_BYTES } from './src/extract.js';
 export { reframePage } from './src/reframe.js';
 export { assessFeed, DEFAULT_RULES } from './src/worthiness.js';
+export {
+  assessSeries,
+  isSeriesFeed,
+  seriesAuthors,
+  DEFAULT_SERIES_RULES,
+} from './src/series.js';
 export { assessRelevance, keywordStems, feedText, stem } from './src/relevance.js';

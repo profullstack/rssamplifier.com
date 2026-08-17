@@ -1,6 +1,9 @@
+import { q, discovery } from '@rssamplifier/db';
+
 import { candidatesFromList } from './list.js';
 import { musicCandidates } from './music.js';
 import { peertubeCandidates } from './peertube.js';
+import { youtubePlaylistCandidates } from './youtube.js';
 
 /**
  * Where feeds come from when nobody submits them.
@@ -34,7 +37,16 @@ const KAGI = 'https://raw.githubusercontent.com/kagisearch/smallweb/main';
  *   everyHours: number,
  *   limit: number,
  *   run: (opts?: object) => Promise<string[]>,
+ *   context?: (db: import('@libsql/client').Client) => Promise<object>,
  * }} Source
+ */
+
+/**
+ * `context` is for the one source that starts from the directory rather than
+ * from somebody else's list. Everything else here reads a URL and needs to know
+ * nothing; the playlist source needs the channels we already hold and how many
+ * times it has run. Kept as a hook on the source rather than a special case in
+ * run.js, so the runner stays a runner.
  */
 
 /** @type {Source[]} */
@@ -50,6 +62,28 @@ export const SOURCES = [
     everyHours: 24,
     limit: 400,
     run: (opts) => candidatesFromList(`${KAGI}/smallyt.txt`, opts),
+  },
+  {
+    id: 'youtube-playlists',
+    label: 'YouTube — playlists on channels we already index',
+    // A playlist feed is YouTube Atom and parses as video on its own, exactly
+    // as the channel feeds do, so there is nothing to stamp.
+    category: null,
+    // Not curated, and this is the one source where that word would be actively
+    // misleading: nobody vouched for these playlists. A person vouched for the
+    // *channel*, which is a weaker claim, and the series check downstream is
+    // what turns it into a decision. Curated would skip that check.
+    curated: false,
+    // Twice a day, forty channels a pass — the whole set comes round in about
+    // four days. Playlists appear when somebody finishes a course, which is not
+    // a thing that happens hourly.
+    everyHours: 12,
+    limit: 200,
+    context: async (db) => ({
+      channels: await q.youtubeChannelIds(db),
+      runNumber: await discovery.countRuns(db, 'youtube-playlists'),
+    }),
+    run: (opts) => youtubePlaylistCandidates(opts),
   },
   {
     id: 'kagi-comics',
