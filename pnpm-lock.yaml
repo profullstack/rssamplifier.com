@@ -91,6 +91,9 @@ importers:
       '@libsql/client':
         specifier: ^0.15.9
         version: 0.15.15
+      '@rssamplifier/feed':
+        specifier: workspace:*
+        version: link:../feed
 
   packages/discover:
     dependencies:
