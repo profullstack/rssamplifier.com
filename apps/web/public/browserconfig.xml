@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The pinned-tile art for Windows. At the site root rather than under /icons,
+  because the <meta name="msapplication-config"> that points here is the only
+  thing that reads it, and the root is where every generator and every crawler
+  expects to find it.
+
+  The three logos are the opaque, padded apple-touch cuts rather than the
+  edge-to-edge favicon cuts: a tile is rounded and cropped by the shell much as
+  an iOS home screen is, so the mark needs the same margin to survive it. The
+  tile colour is therefore the icons' own #fbfaf8 ground rather than the
+  generator's white or the brand orange — anything else draws a visible square
+  seam around an opaque icon.
+-->
+<browserconfig>
+  <msapplication>
+    <tile>
+      <square70x70logo src="/icons/apple-touch-icon-76x76.png"/>
+      <square150x150logo src="/icons/apple-touch-icon-152x152.png"/>
+      <TileColor>#fbfaf8</TileColor>
+    </tile>
+  </msapplication>
+</browserconfig>
