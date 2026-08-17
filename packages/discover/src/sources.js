@@ -1,4 +1,5 @@
 import { candidatesFromList } from './list.js';
+import { musicCandidates } from './music.js';
 import { peertubeCandidates } from './peertube.js';
 
 /**
@@ -59,6 +60,23 @@ export const SOURCES = [
     everyHours: 24,
     limit: 400,
     run: (opts) => candidatesFromList(`${KAGI}/smallcomic.txt`, opts),
+  },
+  {
+    id: 'music',
+    label: 'Albums, netlabels and mixes — kept by hand',
+    // The only way /music is ever filled. Half of these declare themselves with
+    // podcast:medium and would be filed correctly on their own; the other half
+    // — Funkwhale channels, netlabel collections, freeform radio — are
+    // indistinguishable from a blog with an mp3 in it, which is what the
+    // category used to be full of.
+    category: 'music',
+    curated: true,
+    // The list is in this repo rather than on somebody's server, so re-reading
+    // it costs nothing and finds nothing new until it is edited. Daily is here
+    // to pick up the additions, not to poll.
+    everyHours: 24,
+    limit: 400,
+    run: (opts) => musicCandidates(opts),
   },
   {
     id: 'peertube-live',
