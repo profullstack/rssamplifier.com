@@ -10,6 +10,27 @@ import { CATEGORIES } from './CategoryIndex.jsx';
 export const dynamic = 'force-dynamic';
 
 /**
+ * The homepage had neither a canonical URL nor an og:url, so every way of
+ * arriving at the directory — with a tracking parameter, on the bare apex, from
+ * a shared link — looked to a crawler like a page in its own right.
+ *
+ * Declared here rather than in the layout on purpose: metadata is inherited, so
+ * a canonical of '/' in the layout would tell every page in the site that it is
+ * really the homepage. openGraph is restated in full because a child replaces
+ * the parent's block rather than merging into it, and dropping type and
+ * siteName to add url would be a poor trade. og:title, og:description and the
+ * card from opengraph-image.jsx still come from the layout and the file.
+ */
+export const metadata = {
+  alternates: { canonical: '/' },
+  openGraph: {
+    type: 'website',
+    siteName: 'RSS Amplifier',
+    url: '/',
+  },
+};
+
+/**
  * Directory index: newest blogs first, with the submit box up top.
  */
 export default async function Home() {
