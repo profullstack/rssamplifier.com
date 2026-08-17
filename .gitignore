@@ -5,3 +5,8 @@ node_modules/
 *.log
 .DS_Store
 dist/
+
+# Scratch checkouts an agent works in. Each is a git worktree with its own .git
+# file, so `git add -A` from the root records one as a gitlink — a submodule
+# pointer to a path that exists on nobody else's machine.
+.claude/worktrees/
