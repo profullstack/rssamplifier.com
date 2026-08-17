@@ -7,3 +7,4 @@ export * as queue from './src/queue.js';
 export * as translations from './src/translations.js';
 export * as discovery from './src/discovery.js';
 export * as extracts from './src/extracts.js';
+export * as apikeys from './src/apikeys.js';

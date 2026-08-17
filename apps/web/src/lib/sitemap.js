@@ -29,6 +29,7 @@ export const STATIC_PAGES = [
   // sitemap that enumerated every page of a paginated list would be listing the
   // same blogs a second time under a different URL.
   { path: '/blogs', changefreq: 'hourly', priority: '0.9' },
+  { path: '/news', changefreq: 'hourly', priority: '0.9' },
   { path: '/podcasts', changefreq: 'hourly', priority: '0.9' },
   { path: '/music', changefreq: 'hourly', priority: '0.9' },
   { path: '/videos', changefreq: 'hourly', priority: '0.9' },
@@ -44,6 +45,7 @@ export const STATIC_PAGES = [
   // anywhere a crawler weights heavily.
   { path: '/mcp', changefreq: 'monthly', priority: '0.6' },
   { path: '/about', changefreq: 'monthly', priority: '0.5' },
+  { path: '/privacy', changefreq: 'yearly', priority: '0.3' },
 ];
 
 /**

@@ -1461,6 +1461,12 @@ select {
   border-color: var(--muted);
 }
 
+/* The buttons are disabled for the moment a vote is in flight, which is short
+   enough that fading them would read as a flicker. Only the cursor says so. */
+.post-actions button:disabled {
+  cursor: default;
+}
+
 /* A cast vote and a saved like both read as "on": same treatment, so the state
    is legible at a glance without reading the label. */
 .post-actions button.on {
@@ -1495,6 +1501,146 @@ select {
 .post-actions .hint {
   margin: 0;
   font-size: 0.82rem;
+}
+
+/* ---------------------------------------------------------------- share
+ *
+ * A <details> wearing the same pill as everything else in the reactions row,
+ * with the panel floated out of the flow so opening it never pushes the post
+ * down the page. On a narrow screen it stops floating and simply takes the
+ * width it needs — a 20rem panel anchored to a button near the right edge is
+ * how you end up with a field nobody can read.
+ */
+
+.share {
+  position: relative;
+  display: inline-block;
+}
+
+.share > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  line-height: 1;
+  list-style: none;
+  user-select: none;
+}
+
+/* Safari draws its own triangle unless told twice. */
+.share > summary::-webkit-details-marker {
+  display: none;
+}
+
+.share > summary:hover,
+.share[open] > summary {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.share-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  width: 20rem;
+  max-width: min(20rem, calc(100vw - 2.5rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 12%);
+}
+
+.share-url {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+}
+
+.share-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.share-buttons button {
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.share-buttons button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Holds its line whether or not it is saying anything, so confirming a copy
+   does not make the panel grow under the cursor. */
+.share-said {
+  margin: 0;
+  min-height: 1.1rem;
+  font-size: 0.78rem;
+  line-height: 1.1;
+  color: var(--accent);
+}
+
+/* Follow and share on one line, on a feed page and a topic page alike. */
+.detail-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 0 1.75rem;
+}
+
+.detail-actions .follow-form {
+  margin: 0;
+}
+
+/* The topic page's row follows the subscribe links, which carry their own
+   generous bottom margin already. */
+.detail-actions.topic {
+  margin: -1.2rem 0 1.6rem;
+}
+
+@media (max-width: 34rem) {
+  /* Anchored to the left of a button that may itself sit near the right edge,
+     a floating panel runs off screen. Below this width it stops floating: the
+     open control claims the whole row — both rows it appears in wrap — and the
+     panel spans the column, where nothing can push it out of view. */
+  .share[open] {
+    display: block;
+    width: 100%;
+  }
+
+  .share-panel {
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin-top: 0.5rem;
+  }
 }
 
 /* ------------------------------------------------------------ languages */
@@ -2149,6 +2295,61 @@ select {
 
 .live-log .is-bad span {
   color: var(--muted);
+}
+
+/*
+ * A topic's categories, as a row of chips.
+ *
+ * Not the .categories grid the home page uses: that is seven full-width rows,
+ * which on a topic page would push the listing the visitor came for below the
+ * fold to show them eight links they may not need. A chip row costs one line,
+ * wraps on a narrow screen, and reads as a filter — which is what it is.
+ */
+
+.topic-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1.5rem;
+}
+
+.topic-groups a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.85rem;
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.topic-groups a:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.topic-groups a span {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* The page you are on. Kept as a link rather than a span so the row stays one
+ * shape while you move along it, and so reloading the current filter still
+ * works from the keyboard. */
+.topic-groups a.is-current {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.topic-groups a.is-current span {
+  color: var(--ink);
 }
 
 /*

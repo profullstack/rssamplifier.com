@@ -1,6 +1,7 @@
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { guard } from '../../../lib/apiguard.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,12 +16,15 @@ export const dynamic = 'force-dynamic';
  * @param {Request} req
  */
 export async function GET(req) {
+  const allowed = await guard(req);
+  if (!allowed.ok) return allowed.response;
+
   const url = new URL(req.url);
   const query = (url.searchParams.get('q') ?? '').trim();
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 30) || 30, 1), 100);
   const mode = url.searchParams.get('mode') === 'any' ? 'any' : 'all';
 
-  if (!query) return json({ query: '', mode, blogs: [], posts: [] });
+  if (!query) return json({ query: '', mode, blogs: [], posts: [] }, allowed.headers);
 
   const client = db();
   const [blogs, posts] = await Promise.all([
@@ -51,18 +55,20 @@ export async function GET(req) {
       blog: p.feed_title,
       blogPage: `${siteUrl()}/${p.feed_slug}`,
     })),
-  });
+  }, allowed.headers);
 }
 
 /**
  * @param {unknown} body
+ * @param {Record<string, string>} [extra] rate-limit headers from the guard
  * @returns {Response}
  */
-function json(body) {
+function json(body, extra = {}) {
   return new Response(JSON.stringify(body, null, 2), {
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'access-control-allow-origin': '*',
+      ...extra,
     },
   });
 }
