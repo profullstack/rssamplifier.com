@@ -45,10 +45,12 @@ const USER_AGENT = 'rssamplifier.com reader (+https://rssamplifier.com)';
  */
 export function framingVerdict(headers, origin = 'https://rssamplifier.com') {
   const csp = String(headers.contentSecurityPolicy ?? '');
-  const ancestors = readFrameAncestors(csp);
+  const policies = readFrameAncestors(csp);
 
-  if (ancestors !== null) {
-    return ancestors.some((source) => sourceAllows(source, origin))
+  if (policies.length > 0) {
+    // Every policy is enforced independently, so one that refuses refuses,
+    // however permissive the others are.
+    return policies.every((sources) => sources.some((source) => sourceAllows(source, origin)))
       ? { frameable: true, reason: 'csp-allows' }
       : { frameable: false, reason: 'csp-frame-ancestors' };
   }
@@ -58,29 +60,59 @@ export function framingVerdict(headers, origin = 'https://rssamplifier.com') {
     .toLowerCase();
 
   if (!xfo) return { frameable: true, reason: 'no-policy' };
-  if (xfo === 'deny') return { frameable: false, reason: 'x-frame-options-deny' };
+
+  // Read as a list, because it arrives as one. A server with the header set in
+  // two places sends it twice — open.audio answers with both DENY and
+  // SAMEORIGIN — and fetch joins duplicates into "deny, sameorigin". Compared
+  // whole against each keyword that matched none of them, so a page refusing
+  // framing twice over was called an unrecognised policy and framed anyway.
+  // Browsers resolve a conflict by blocking; so does this.
+  const tokens = xfo
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (tokens.includes('deny')) return { frameable: false, reason: 'x-frame-options-deny' };
   // SAMEORIGIN blocks us by definition: we are never the same origin as the blog.
-  if (xfo === 'sameorigin') return { frameable: false, reason: 'x-frame-options-sameorigin' };
+  if (tokens.includes('sameorigin')) {
+    return { frameable: false, reason: 'x-frame-options-sameorigin' };
+  }
   // ALLOW-FROM is obsolete and unsupported by current browsers, which fall back
   // to blocking. Treat it as a refusal rather than guessing.
-  if (xfo.startsWith('allow-from')) return { frameable: false, reason: 'x-frame-options-allow-from' };
+  if (tokens.some((token) => token.startsWith('allow-from'))) {
+    return { frameable: false, reason: 'x-frame-options-allow-from' };
+  }
 
   return { frameable: true, reason: 'unrecognised-policy' };
 }
 
 /**
- * Pull the frame-ancestors source list out of a CSP header.
+ * Pull every frame-ancestors source list out of a CSP header.
+ *
+ * A comma separates whole policies, and a header set in two places arrives as
+ * both joined by one — the same duplication that defeats X-Frame-Options above.
+ * Split on it first, or a second policy's sources are read as extra sources of
+ * the first, and `frame-ancestors 'none', frame-ancestors *` reads as allowing
+ * anyone.
  *
  * @param {string} csp
- * @returns {string[]|null} sources, or null when the directive is absent
+ * @returns {string[][]} one source list per policy that declares the directive
  */
 function readFrameAncestors(csp) {
-  for (const directive of csp.split(';')) {
-    const parts = directive.trim().split(/\s+/);
-    const name = (parts[0] ?? '').toLowerCase();
-    if (name === 'frame-ancestors') return parts.slice(1).map((p) => p.toLowerCase());
+  const found = [];
+
+  for (const policy of csp.split(',')) {
+    for (const directive of policy.split(';')) {
+      const parts = directive.trim().split(/\s+/);
+      const name = (parts[0] ?? '').toLowerCase();
+      if (name === 'frame-ancestors') {
+        found.push(parts.slice(1).map((p) => p.toLowerCase()));
+        break;
+      }
+    }
   }
-  return null;
+
+  return found;
 }
 
 /**
