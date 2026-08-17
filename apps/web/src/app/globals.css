@@ -637,6 +637,13 @@ button:disabled {
 .episode-player.is-video {
   flex-direction: column;
   align-items: stretch;
+  /* Inherited `flex-wrap: wrap` is wrong once the direction is a column, and
+     wrong in a way that is invisible until it bites: a wrapping column with a
+     height cap does not overflow, it starts a *second column*. The transport
+     went into it — off the right-hand edge of the window on a wide screen,
+     above the picture instead of below it on a phone — so « » and the close
+     button were sitting somewhere nothing could click them. */
+  flex-wrap: nowrap;
   gap: 0.5rem;
   max-height: 42vh;
 }
@@ -645,6 +652,9 @@ button:disabled {
   width: 100%;
   aspect-ratio: 16 / 9;
   max-height: 34vh;
+  /* So the picture is what gives way when the box is tight — a long title
+     wrapping onto a second line must not push the transport out of the dock. */
+  min-height: 0;
   border: 0;
   border-radius: 8px;
   background: #000;
@@ -788,6 +798,35 @@ body:has(.episode-player:not(.is-inline)) {
 .dock-controls button:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* What is left of a running order the page handed over, where the link to the
+   reader's own queue sits when the queue is what is playing. Not a link,
+   because a topic's playlist is the page behind the dock rather than somewhere
+   else to go — so it is drawn as a label and not as a control. */
+.dock-count {
+  font-size: 0.82rem;
+  line-height: 1;
+  color: var(--muted);
+  padding: 0.35rem 0.2rem;
+  white-space: nowrap;
+}
+
+/* A watch playlist ships no transport of its own — the dock is the player, and
+   the list is the queue behind it. So there is nothing sticky to leave room
+   for, and the rows start where the lede ends. */
+.watch-playlist .playlist-tracks {
+  border-top: 1px solid var(--line);
+}
+
+/* The row the dock is on. Set from script, since the list is server rendered:
+   see the marking effect in DockPlayer. */
+.watch-playlist .playlist-tracks li.is-current .playlist-title {
+  font-weight: 600;
+}
+
+.watch-playlist .hint {
+  margin-top: 0.9rem;
 }
 
 /* One player, not two. While the roaming one is running, the page's own docked

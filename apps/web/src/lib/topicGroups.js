@@ -54,6 +54,8 @@ const AUDIO = {
   schemaType: 'PodcastSeries',
   lede: 'Everything on this topic you can listen to — shows and music together.',
   playlists: true,
+  player: true,
+  watch: false,
 };
 
 /**
@@ -65,6 +67,22 @@ const AUDIO = {
  * mean advertising a download that turns out to be empty.
  */
 export const PLAYABLE_KINDS = new Set(['podcast', 'music', 'live']);
+
+/**
+ * Categories the site's own player can play, here, in the browser.
+ *
+ * Wider than PLAYABLE_KINDS, and the gap is the point. A topic's videos are
+ * mostly YouTube and PeerTube — nine in ten under /topics/ai — which the docked
+ * player carries as embeds and which no `.m3u` can carry at all: the enclosure
+ * behind one is an embed page, and behind the other a download endpoint that
+ * 404s once the instance re-encodes. So videos get the ▶ Play link, which
+ * works, and not the playlist files, which would be a download advertised as a
+ * playlist and delivered as a list of broken URLs.
+ */
+export const IN_BROWSER_KINDS = new Set([...PLAYABLE_KINDS, 'video', 'reel']);
+
+/** The categories whose playlist is something to watch rather than to hear. */
+export const WATCH_KINDS = new Set(['video', 'reel']);
 
 /**
  * Every sub-group a topic can be cut into, in the order they are offered.
@@ -82,6 +100,8 @@ export const PLAYABLE_KINDS = new Set(['podcast', 'music', 'live']);
  *   schemaType: string,
  *   lede: string,
  *   playlists: boolean,
+ *   player: boolean,
+ *   watch: boolean,
  * }>}
  */
 export const TOPIC_GROUPS = q.KINDS.flatMap((kind) => {
@@ -100,6 +120,8 @@ export const TOPIC_GROUPS = q.KINDS.flatMap((kind) => {
     schemaType: category.schemaType,
     lede: category.lede,
     playlists: PLAYABLE_KINDS.has(kind),
+    player: IN_BROWSER_KINDS.has(kind),
+    watch: WATCH_KINDS.has(kind),
   };
 
   return kind === 'music' ? [group, AUDIO] : [group];

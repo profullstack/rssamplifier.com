@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { dockable, embedded } from '../lib/queue.js';
+
 /**
  * The player that follows you around the directory.
  *
@@ -35,10 +37,13 @@ import { useRouter } from 'next/navigation';
  * tabs do not fight over one running order, and closing the tab ends the
  * session rather than ambushing the next one with audio.
  *
- * What it will not do is claim to play things it cannot. A YouTube or PeerTube
- * post lives in somebody else's iframe: it cannot be started from out here,
- * cannot be seeked, and cannot tell us it finished. Those never reach the dock
- * — the queue keeps them, and the play control on them opens the post.
+ * A YouTube or PeerTube post lives in somebody else's iframe, and the dock
+ * carries those too — see `dockCarries` in lib/queue.js for why, and for the
+ * line between carrying one and driving one. Everything below that reaches into
+ * a media element asks `dockable` first, so an embed simply skips it: no
+ * resume-to-position after a reload, and no automatic advance when it ends,
+ * because neither is knowable from outside the frame. What it does get is the
+ * one thing the dock exists for, which is to still be there on the next page.
  */
 
 /** Where the tab's player state lives across a reload. */
@@ -55,6 +60,18 @@ export default function DockPlayer() {
   /** The lane being played, and what is left of it. */
   const [lane, setLane] = useState('listen');
   const [upNext, setUpNext] = useState(/** @type {any[]} */ ([]));
+  // Whether the running order came from a page — a topic's watch playlist —
+  // rather than from the reader's own queue. The two must not be confused: a
+  // page list has no entries to mark done, and re-asking the queue for it would
+  // replace fifty videos on a topic with whatever the reader saved last week.
+  const [pageList, setPageList] = useState(false);
+  // Whether the embed should start itself. Only ever set by a click on a play
+  // control, which is both what the reader asked for and the user gesture the
+  // browser requires before it will let a frame make noise. A restore after a
+  // reload never sets it: the reader pressed play on the last page, not this
+  // one, and a video that starts talking on its own is the thing this whole
+  // directory is a reaction to.
+  const [autoplay, setAutoplay] = useState(false);
 
   const mediaRef = useRef(/** @type {HTMLMediaElement|null} */ (null));
   // Where to drop the needle once the element has metadata — a resume after a
@@ -68,10 +85,12 @@ export default function DockPlayer() {
   const trackRef = useRef(/** @type {any} */ (null));
   const laneRef = useRef('listen');
   const nextRef = useRef(/** @type {any[]} */ ([]));
+  const pageListRef = useRef(false);
 
   trackRef.current = track;
   laneRef.current = lane;
   nextRef.current = upNext;
+  pageListRef.current = pageList;
 
   /* ------------------------------------------------------------- persistence */
 
@@ -84,7 +103,9 @@ export default function DockPlayer() {
       return;
     }
 
-    const el = mediaRef.current;
+    // An embed has no element to ask, and guessing would be worse than not
+    // asking: an iframe answers `paused` with undefined, which reads as playing.
+    const el = dockable(current.kind) ? mediaRef.current : null;
     try {
       window.sessionStorage.setItem(
         STORE,
@@ -92,6 +113,7 @@ export default function DockPlayer() {
           track: current,
           lane: laneRef.current,
           upNext: nextRef.current,
+          pageList: pageListRef.current,
           time: el ? el.currentTime : 0,
           playing: el ? !el.paused && !el.ended : false,
         }),
@@ -107,14 +129,19 @@ export default function DockPlayer() {
   const load = useCallback(
     /**
      * @param {any} next the track to play
-     * @param {{ lane?: string, at?: number, play?: boolean, list?: any[] }} [opts]
+     * @param {{ lane?: string, at?: number, play?: boolean, list?: any[], fromPage?: boolean }} [opts]
      */
     (next, opts = {}) => {
       if (!next?.src) return;
       resumeAt.current = Number(opts.at ?? 0);
       wantPlay.current = opts.play !== false;
+      setAutoplay(opts.play !== false && embedded(next.kind));
       if (opts.lane) setLane(opts.lane);
-      if (opts.list) setUpNext(opts.list);
+      if (opts.list) {
+        setUpNext(opts.list);
+        setPageList(Boolean(opts.fromPage));
+        pageListRef.current = Boolean(opts.fromPage);
+      }
       // Written straight to the ref as well as to state: state lands on the
       // next render, and until it does every "is the dock busy" check — the
       // page offer scan being the one that matters — would answer no and load
@@ -140,6 +167,8 @@ export default function DockPlayer() {
       if (!res.ok) return;
       const data = await res.json();
       setUpNext((data.entries ?? []).filter((entry) => entry.track));
+      setPageList(false);
+      pageListRef.current = false;
     } catch {
       // Offline, or signed out mid-session. The current track keeps playing;
       // it just has nothing queued after it.
@@ -167,7 +196,7 @@ export default function DockPlayer() {
       offered.current = raw;
       // Loaded but not started. Nothing on this site autoplays; the reader
       // opened a page, which is not the same as asking to hear it.
-      load(candidate, { play: false });
+      load(candidate, { play: false, ...listOn(node) });
     } catch {
       // A malformed offer is a bug in a page, not a reason to break the dock.
     }
@@ -187,6 +216,8 @@ export default function DockPlayer() {
       if (saved?.track?.src) {
         setLane(saved.lane ?? 'listen');
         setUpNext(saved.upNext ?? []);
+        setPageList(Boolean(saved.pageList));
+        pageListRef.current = Boolean(saved.pageList);
         resumeAt.current = Number(saved.time ?? 0);
         wantPlay.current = Boolean(saved.playing);
         trackRef.current = saved.track;
@@ -197,8 +228,9 @@ export default function DockPlayer() {
         // queue changed in another tab — or in the moment before this page
         // navigated — leaves "up next" counting things that are no longer
         // there. Only for a reader who is actually working through a queue:
-        // somebody who simply pressed play on a post has nothing to re-ask.
-        if (saved.track.entryId || (saved.upNext ?? []).length > 0) {
+        // somebody who simply pressed play on a post has nothing to re-ask,
+        // and somebody playing a topic's own list is not in a queue at all.
+        if (!saved.pageList && (saved.track.entryId || (saved.upNext ?? []).length > 0)) {
           loadLane(saved.lane ?? 'listen');
         }
       }
@@ -237,7 +269,9 @@ export default function DockPlayer() {
 
   useEffect(() => {
     const el = mediaRef.current;
-    if (!el || !track) return;
+    // Nothing to seek and nothing to start: an embed governs its own transport
+    // from inside the frame, and the reader presses its play button, not ours.
+    if (!el || !track || !dockable(track.kind)) return;
 
     const at = resumeAt.current;
     resumeAt.current = 0;
@@ -272,6 +306,10 @@ export default function DockPlayer() {
   // and not a hand-built transport.
   useEffect(() => {
     if (!track || typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    // An embed publishes its own metadata to the OS from inside the frame.
+    // Ours would overwrite it with the same title and a play button that
+    // controls nothing.
+    if (!dockable(track.kind)) return;
 
     try {
       navigator.mediaSession.metadata = new window.MediaMetadata({
@@ -327,12 +365,14 @@ export default function DockPlayer() {
 
   const stop = useCallback(() => {
     const el = mediaRef.current;
-    if (el) el.pause();
+    if (el && typeof el.pause === 'function') el.pause();
     const src = trackRef.current?.src;
     if (src) dismissed.current.add(src);
     trackRef.current = null;
     setTrack(null);
     setUpNext([]);
+    setPageList(false);
+    pageListRef.current = false;
     try {
       window.sessionStorage.removeItem(STORE);
     } catch {
@@ -389,14 +429,26 @@ export default function DockPlayer() {
               if (inline) {
                 at = inline.currentTime;
                 inline.pause();
-                // Two transports showing the same thing is one too many, and
-                // the one that just stopped is the one to lose.
-                inline.closest('.episode-player')?.setAttribute('data-handed-over', '');
               }
+              // Two players showing the same thing is one too many, and the one
+              // being handed over is the one to lose. Done off the player
+              // rather than off the media element, because an embed has no
+              // media element to find — and an embed left running behind the
+              // dock is not merely redundant, it is the same video playing
+              // twice, out of sync, out loud.
+              (inline?.closest('.episode-player') ??
+                document.querySelector('.episode-player.is-inline'))?.setAttribute(
+                'data-handed-over',
+                '',
+              );
             }
 
-            load(next, { play: true, lane: which, at });
-            loadLane(which);
+            // A page can hand over its whole running order — a topic's watch
+            // playlist does — and when it has, that is what « and » step
+            // through. Otherwise the lane is the queue, as before.
+            const list = listOn(play);
+            load(next, { play: true, lane: which, at, ...list });
+            if (!list.list) loadLane(which);
           }
         } catch {
           /* fall through to whatever the button would have done */
@@ -470,6 +522,26 @@ export default function DockPlayer() {
     };
   }, [load, loadLane, router]);
 
+  // Which row of a page's running order is the one playing. The list is server
+  // rendered — fifty anchors and no component — so there is no state up here to
+  // mark it with, and a fifty-row list with nothing showing where you are in it
+  // is a list you have to remember your own place in. Written to the DOM rather
+  // than rendered, for the same reason the list is not a component.
+  useEffect(() => {
+    const rows = document.querySelectorAll('[data-dock-list] [data-dock-play]');
+    for (const row of rows) {
+      let src = '';
+      try {
+        src = JSON.parse(row.getAttribute('data-dock-play') ?? '')?.src ?? '';
+      } catch {
+        /* a malformed row is simply never the current one */
+      }
+      const li = row.closest('li');
+      if (!li) continue;
+      li.classList.toggle('is-current', Boolean(track) && src === track.src);
+    }
+  }, [track]);
+
   // The position is written on the way out of the page as well as periodically:
   // pagehide is the one event that fires for a reload, a form post and the back
   // button alike, and without it a reload lands a minute behind where it left.
@@ -486,7 +558,8 @@ export default function DockPlayer() {
 
   if (!track) return null;
 
-  const video = track.kind === 'video';
+  const embed = embedded(track.kind);
+  const video = track.kind === 'video' || embed;
   const list = upNext;
   const here = list.findIndex((entry) => entry.track?.src === track.src);
   const remaining = here === -1 ? list.length : list.length - here - 1;
@@ -504,7 +577,25 @@ export default function DockPlayer() {
         {track.show && <span className="show">{track.show}</span>}
       </div>
 
-      {video ? (
+      {embed ? (
+        // Keyed on the source so stepping through a playlist replaces the frame
+        // rather than re-pointing it: a cross-origin iframe whose src changes
+        // pushes an entry onto the browser's history, and after three videos
+        // the back button walks back through them instead of leaving the page.
+        <iframe
+          key={track.src}
+          className="episode-video"
+          src={embedSrc(track.src, autoplay)}
+          title={track.title}
+          loading="eager"
+          // No referrerPolicy, deliberately — YouTube authorizes an embed by
+          // its Referer and `no-referrer` makes every video fail with Error
+          // 153. The same attribute list the in-page player uses, plus
+          // autoplay, which is what makes pressing play out here start it.
+          allow="accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"
+        />
+      ) : video ? (
         <video
           key="video"
           ref={/** @type {any} */ (mediaRef)}
@@ -555,9 +646,16 @@ export default function DockPlayer() {
           <span aria-hidden="true">»</span>
         </button>
 
-        <a href={`/queue?lane=${lane}`} title="Your queue">
-          Queue{remaining > 0 ? ` · ${remaining}` : ''}
-        </a>
+        {/* Where the running order came from. Calling a topic's playlist "your
+            queue" and linking somewhere that does not contain it would be a
+            lie about both. */}
+        {pageList ? (
+          <span className="dock-count">{remaining > 0 ? `${remaining} to go` : 'Last one'}</span>
+        ) : (
+          <a href={`/queue?lane=${lane}`} title="Your queue">
+            Queue{remaining > 0 ? ` · ${remaining}` : ''}
+          </a>
+        )}
 
         <button type="button" onClick={stop} title="Close the player" aria-label="Close the player">
           <span aria-hidden="true">✕</span>
@@ -565,6 +663,66 @@ export default function DockPlayer() {
       </div>
     </aside>
   );
+}
+
+/**
+ * The running order a page has offered, if the control that was pressed is in one.
+ *
+ * A topic's watch playlist marks its list with `data-dock-list`, and pressing
+ * play on the fourth video makes the other forty-nine the queue behind it.
+ *
+ * Read back off the rows rather than from a list written out a second time in
+ * the marker attribute. Fifty tracks is a few tens of kilobytes and the rows
+ * already carry every one of them — a second copy would be the same bytes
+ * again, and two copies of a list are two chances for them to disagree. The
+ * marker is therefore empty, and says only "these rows are a running order".
+ *
+ * Returned as the options `load` takes, or as nothing at all — the caller
+ * spreads it, and an absent list means "use the reader's own queue", which is
+ * what every other play control on the site wants.
+ *
+ * @param {Element|null} node the play control, or the element carrying the offer
+ * @returns {{ list?: any[], fromPage?: boolean }}
+ */
+function listOn(node) {
+  const holder = node?.closest?.('[data-dock-list]');
+  if (!holder) return {};
+
+  const list = [...holder.querySelectorAll('[data-dock-play]')]
+    .map((el) => {
+      try {
+        return { track: JSON.parse(el.getAttribute('data-dock-play') ?? '') };
+      } catch {
+        // A malformed row is a bug in a page, not a reason to lose the list.
+        return null;
+      }
+    })
+    .filter((entry) => entry?.track?.src);
+
+  return list.length > 0 ? { list, fromPage: true } : {};
+}
+
+/**
+ * An embed's URL, told whether to start itself.
+ *
+ * YouTube and PeerTube both read `autoplay` off the query, which is the only
+ * instruction either of them will take from out here. Built by URL rather than
+ * by string so an embed that already carries a query keeps it.
+ *
+ * @param {string} src
+ * @param {boolean} start
+ * @returns {string}
+ */
+function embedSrc(src, start) {
+  if (!start) return src;
+
+  try {
+    const url = new URL(src);
+    url.searchParams.set('autoplay', '1');
+    return url.toString();
+  } catch {
+    return src;
+  }
 }
 
 /**

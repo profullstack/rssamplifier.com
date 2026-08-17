@@ -4,6 +4,7 @@ import { db } from '../../../lib/db.js';
 import { PLAYLIST_LIMIT } from '../../../lib/topicFeed.js';
 import { queueRuntime, rawPlaylistPath, trackFrom } from '../../../lib/player.js';
 import PlaylistPlayer from '../../PlaylistPlayer.jsx';
+import WatchPlaylist from './WatchPlaylist.jsx';
 
 /**
  * A topic's playlist, as a page you can press play on.
@@ -27,9 +28,17 @@ export default async function TopicPlayer({ topic, group = null }) {
     kinds: group?.kinds ?? null,
   });
 
+  // A video queue is counted off the rows themselves, because the two players
+  // below do not agree on what is playable. `trackFrom` shapes an entry for a
+  // media element and an `.m3u`, which is most of a video topic's rows thrown
+  // away — under /topics/ai nine in ten are YouTube or PeerTube embeds. The
+  // dock carries those; the count has to say so or the page announces ten
+  // videos and lists a hundred.
+  const watch = Boolean(group?.watch);
   const tracks = rows.map(trackFrom).filter(Boolean);
+  const count = watch ? rows.length : tracks.length;
   const listing = group ? `/topics/${slug}/${group.segment}` : `/topics/${slug}`;
-  const hours = queueRuntime(tracks);
+  const hours = watch ? null : queueRuntime(tracks);
   const what = group ? group.item : 'episodes and tracks';
 
   return (
@@ -51,7 +60,7 @@ export default async function TopicPlayer({ topic, group = null }) {
           linked — but none of their recent posts carries a file, and a reader
           told that plainly can go and read them instead. A 404 would say the
           topic does not exist, which is false. */}
-      {tracks.length === 0 ? (
+      {count === 0 ? (
         <p className="lede">
           Nothing on this topic has a file attached to it right now. The writing is all
           still there — <a href={listing}>read the feeds</a> instead.
@@ -59,15 +68,23 @@ export default async function TopicPlayer({ topic, group = null }) {
       ) : (
         <>
           <p className="lede">
-            {tracks.length === 1
-              ? 'One thing to play on this topic.'
-              : `The ${tracks.length} most recent ${what} on this topic${hours ? `, about ${hours} of it` : ''}.`}
+            {count === 1
+              ? `One thing to ${watch ? 'watch' : 'play'} on this topic.`
+              : `The ${count} most recent ${what} on this topic${hours ? `, about ${hours} of it` : ''}.`}
+            {watch && ' Press play and it docks at the foot of the window, so it keeps going while you carry on reading.'}
           </p>
 
-          <PlaylistPlayer
-            tracks={tracks}
-            label={group ? `${topic.keyword} — ${group.heading}` : topic.keyword}
-          />
+          {watch ? (
+            <WatchPlaylist
+              rows={rows}
+              label={group ? `${topic.keyword} — ${group.heading}` : topic.keyword}
+            />
+          ) : (
+            <PlaylistPlayer
+              tracks={tracks}
+              label={group ? `${topic.keyword} — ${group.heading}` : topic.keyword}
+            />
+          )}
         </>
       )}
 
@@ -76,13 +93,28 @@ export default async function TopicPlayer({ topic, group = null }) {
           drawn from. The `.m3u` carries `?dl=1` because the bare address now
           answers a browser with this page, which is the whole point of it. */}
       <p className="format-links">
-        <span>This playlist:</span>
-        <a href={rawPlaylistPath(`${listing}.m3u`)} title="M3U playlist — for VLC, mpv or a podcast app">
-          .m3u
-        </a>
-        <a href={rawPlaylistPath(`${listing}.pls`)} title="PLS playlist — for VLC, mpv or a podcast app">
-          .pls
-        </a>
+        {/* Not offered on a video queue. An `.m3u` of it is not a smaller
+            playlist, it is a broken one: YouTube's enclosure is an embed page
+            and PeerTube's is a download endpoint that stops resolving once the
+            instance re-encodes, so most of the file would be URLs that open
+            an error in VLC. See IN_BROWSER_KINDS. */}
+        {!watch && (
+          <>
+            <span>This playlist:</span>
+            <a
+              href={rawPlaylistPath(`${listing}.m3u`)}
+              title="M3U playlist — for VLC, mpv or a podcast app"
+            >
+              .m3u
+            </a>
+            <a
+              href={rawPlaylistPath(`${listing}.pls`)}
+              title="PLS playlist — for VLC, mpv or a podcast app"
+            >
+              .pls
+            </a>
+          </>
+        )}
         <a href={listing}>All the feeds behind it</a>
       </p>
     </>
