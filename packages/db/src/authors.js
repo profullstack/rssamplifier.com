@@ -183,12 +183,9 @@ export async function upsertAuthor(db, author) {
  * @returns {Promise<number>} rows written, not rows offered
  */
 export async function addAuthorLinks(db, authorId, links) {
-  let written = 0;
-
-  for (const link of links) {
-    if (!link?.url || !link?.network) continue;
-
-    const { rowsAffected } = await db.execute({
+  const statements = (links ?? [])
+    .filter((link) => link?.url && link?.network)
+    .map((link) => ({
       sql: `insert into author_links
               (id, author_id, network, url, handle, source, verified, created_at)
             values (?, ?, ?, ?, ?, ?, ?, ?)
@@ -207,11 +204,32 @@ export async function addAuthorLinks(db, authorId, links) {
         link.verified ? 1 : 0,
         nowIso(),
       ],
-    });
-    written += Number(rowsAffected ?? 0);
-  }
+    }));
 
-  return written;
+  return writeLinks(db, statements);
+}
+
+/**
+ * Run a set of link inserts as one round trip, and count what they wrote.
+ *
+ * The loop these replaced spent a round trip per link, which against a network
+ * database is the whole cost: an author with an email and a website was two,
+ * and a feed with five accounts in its footer was five. Same statements, same
+ * conflict clauses, one trip.
+ *
+ * An empty set makes no call at all. That is the common case on the crawl path —
+ * `storeCredits` passes no site links, because finding them costs requests and
+ * belongs to the slower enrichment pass — and it was previously still a call.
+ *
+ * @param {Client} db
+ * @param {Array<{ sql: string, args: unknown[] }>} statements
+ * @returns {Promise<number>} rows written, not rows offered
+ */
+async function writeLinks(db, statements) {
+  if (statements.length === 0) return 0;
+
+  const results = await db.batch(statements, 'write');
+  return results.reduce((n, r) => n + Number(r?.rowsAffected ?? 0), 0);
 }
 
 /**
@@ -228,12 +246,9 @@ export async function addAuthorLinks(db, authorId, links) {
  * @returns {Promise<number>} rows written, not rows offered
  */
 export async function addFeedLinks(db, feedId, links) {
-  let written = 0;
-
-  for (const link of links) {
-    if (!link?.url || !link?.network) continue;
-
-    const { rowsAffected } = await db.execute({
+  const statements = (links ?? [])
+    .filter((link) => link?.url && link?.network)
+    .map((link) => ({
       sql: `insert into feed_links
               (id, feed_id, network, url, handle, source, verified, created_at)
             values (?, ?, ?, ?, ?, ?, ?, ?)
@@ -250,11 +265,9 @@ export async function addFeedLinks(db, feedId, links) {
         link.verified ? 1 : 0,
         nowIso(),
       ],
-    });
-    written += Number(rowsAffected ?? 0);
-  }
+    }));
 
-  return written;
+  return writeLinks(db, statements);
 }
 
 /**
