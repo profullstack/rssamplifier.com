@@ -37,6 +37,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@profullstack/rssamplifier':
+        specifier: workspace:*
+        version: link:../cli
       '@rssamplifier/auth':
         specifier: workspace:*
         version: link:../../packages/auth

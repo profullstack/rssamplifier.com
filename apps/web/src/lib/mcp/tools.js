@@ -184,10 +184,15 @@ export const TOOLS = [
     name: 'list_topics',
     title: 'List topics',
     description:
-      'What the directory covers, by how many feeds cover it. Only subjects at least two feeds share are indexed — a topic one blog uses is that blog\'s own vocabulary, and lives on its page instead. Raise min to find the well-covered subjects.',
+      'What the directory covers, by how many feeds cover it. Pass query to search the index instead of paging it. Only subjects at least two feeds share are indexed — a topic one blog uses is that blog\'s own vocabulary, and lives on its page instead. Raise min to find the well-covered subjects.',
     inputSchema: {
       type: 'object',
       properties: {
+        query: {
+          type: 'string',
+          description:
+            'Search the topic index. Matches are ranked: the exact topic, then topics starting with the term, then topics containing it.',
+        },
         min: {
           type: 'integer',
           minimum: 2,
@@ -203,15 +208,17 @@ export const TOOLS = [
       const minFeeds = bounded(args?.min, 2, 2, 100);
       const limit = bounded(args?.limit, 100, 1, 500);
       const offset = Math.max(Number(args?.offset ?? 0) || 0, 0);
+      const query = typeof args?.query === 'string' ? args.query.trim() || null : null;
       const client = db();
 
       const [rows, total] = await Promise.all([
-        q.listTopics(client, { limit, offset, minFeeds }),
-        q.countTopics(client, minFeeds),
+        q.listTopics(client, { limit, offset, minFeeds, query }),
+        q.countTopics(client, minFeeds, query),
       ]);
 
       return {
         total,
+        query,
         limit,
         offset,
         min: minFeeds,
@@ -220,6 +227,9 @@ export const TOOLS = [
           keyword: t.keyword,
           feedCount: Number(t.feed_count ?? 0),
           page: `${siteUrl()}/topics/${encodeURIComponent(String(t.slug))}`,
+          // The subscription list, so an agent that found a subject can hand
+          // the feeds to a reader without a second round trip.
+          opml: `${siteUrl()}/opml?topic=${encodeURIComponent(String(t.slug))}`,
         })),
       };
     },

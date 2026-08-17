@@ -2930,3 +2930,65 @@ html:not([data-dock]) .playlist-hint {
     border-color: var(--line);
   }
 }
+
+/* ---------------------------------------------------------------- cli install
+
+   The homepage strip and the footer line that carry the install command. Both
+   exist to make one line of shell copyable from where somebody already is,
+   rather than from a page they have to go and find. */
+
+.install-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 1.5rem;
+  align-items: center;
+  margin: 2.5rem 0 1rem;
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.install-strip p {
+  margin: 0;
+}
+
+.install-strip .code-block {
+  /* Already inside a bordered surface, so the block's own frame would read as
+     a box drawn inside a box. */
+  border: 0;
+  padding: 0;
+  background: none;
+}
+
+/* Scoped under .install-strip so it outranks the `.install-strip p` reset
+   above, which is more specific than a bare class and would otherwise flatten
+   this margin. */
+.install-strip .install-links {
+  margin-top: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.install-links a {
+  color: var(--muted);
+}
+
+.footer-install code {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  /* The command must not rewrap: a shell line broken across two is a line
+     somebody pastes wrong. It scrolls instead. */
+  white-space: nowrap;
+  overflow-x: auto;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+@media (max-width: 40rem) {
+  .install-strip {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.9rem;
+  }
+}
