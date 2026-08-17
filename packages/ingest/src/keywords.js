@@ -15,7 +15,13 @@
  * to `feeds`, where it becomes a public page at /<slug>.
  */
 
-import { resolveFeed, assessFeed, assessRelevance } from '@rssamplifier/feed';
+import {
+  resolveFeed,
+  assessFeed,
+  assessRelevance,
+  assessSeries,
+  isSeriesFeed,
+} from '@rssamplifier/feed';
 import { searchKeyword, candidateSites, FATAL_ERRORS } from '@rssamplifier/search';
 import { q, discovery, newId } from '@rssamplifier/db';
 
@@ -42,7 +48,7 @@ export const CHECK_BUDGET_MS = 60_000;
  *
  * @param {import('@libsql/client').Client} db
  * @param {{ id: string, run_id?: string, site_url: string }} candidate
- * @param {{ rules?: object, resolveImpl?: typeof resolveFeed }} [opts]
+ * @param {{ rules?: object, seriesRules?: object, resolveImpl?: typeof resolveFeed }} [opts]
  * @returns {Promise<{ status: 'accepted'|'rejected'|'error', slug?: string, score?: number }>}
  */
 export async function checkCandidate(db, candidate, opts = {}) {
@@ -83,9 +89,16 @@ export async function checkCandidate(db, candidate, opts = {}) {
   // instance feed with a machine-generated title.
   const vouched = Number(candidate.curated ?? 0) === 1;
 
+  // A finished work is judged on coherence, not recency. Worthiness asks
+  // whether anybody is still publishing here, and a lecture series answers no
+  // by definition — a course recorded in 2021 is complete, not abandoned, and
+  // the check as written scores both of the real course playlists this was
+  // tested against at zero. `assessSeries` asks the question that fits.
   const verdict = vouched
     ? { worthy: true, score: null, reasons: ['curated'] }
-    : assessFeed({ feedUrl, feed, rules: opts.rules });
+    : isSeriesFeed(feedUrl)
+      ? assessSeries({ feedUrl, feed, rules: opts.seriesRules })
+      : assessFeed({ feedUrl, feed, rules: opts.rules });
 
   if (!verdict.worthy) {
     await discovery.markCandidate(db, String(candidate.id), {

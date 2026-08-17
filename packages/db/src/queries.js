@@ -1543,6 +1543,37 @@ export async function existingFeedKeys(db, pageSize = 5000) {
 }
 
 /**
+ * The YouTube channels the directory already indexes.
+ *
+ * Discovery normally starts from a list somebody else maintains. This one
+ * starts from the directory itself: every channel here was already judged worth
+ * a page, and the playlists on it — a course, a conference track, an album —
+ * are the ordered works the channel feed flattens into "newest upload first".
+ *
+ * Ordered by rowid so the slice a run takes is stable between passes, which is
+ * what lets the caller rotate through the whole set by run number instead of
+ * storing a cursor.
+ *
+ * @param {Client} db
+ * @returns {Promise<string[]>} channel ids
+ */
+export async function youtubeChannelIds(db) {
+  const { rows } = await db.execute(
+    `select feed_url from feeds
+     where feed_url like '%youtube.com/feeds/videos.xml?channel_id=%'
+     order by rowid`,
+  );
+
+  const ids = [];
+  for (const row of rows) {
+    const match = String(row.feed_url).match(/[?&]channel_id=(UC[\w-]{10,})/);
+    if (match) ids.push(match[1]);
+  }
+
+  return ids;
+}
+
+/**
  * Record a failed crawl and push the next attempt out.
  *
  * @param {Client} db
