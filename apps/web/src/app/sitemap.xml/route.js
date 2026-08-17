@@ -1,4 +1,4 @@
-import { q } from '@rssamplifier/db';
+import { q, authors } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { CHUNK_SIZE, chunkFilename, esc } from '../../lib/sitemap.js';
@@ -22,9 +22,10 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const base = siteUrl();
   const client = db();
-  const [chunks, topics] = await Promise.all([
+  const [chunks, topics, people] = await Promise.all([
     q.sitemapChunks(client, CHUNK_SIZE),
     q.countTopics(client),
+    authors.countAuthors(client, { minConfidence: 0.6 }),
   ]);
 
   const entries = [
@@ -33,6 +34,9 @@ export async function GET() {
     // topics file, and an index pointing at a 404 is an error in every
     // crawler's report of the site.
     ...(topics > 0 ? [`  <sitemap><loc>${esc(`${base}/sitemaps/topics.xml`)}</loc></sitemap>`] : []),
+    // Same rule for the same reason: until the enrichment pass has found
+    // somebody, /sitemaps/authors.xml 404s and must not be advertised.
+    ...(people > 0 ? [`  <sitemap><loc>${esc(`${base}/sitemaps/authors.xml`)}</loc></sitemap>`] : []),
     ...chunks.map((chunk) => {
       const loc = `${base}/sitemaps/${chunkFilename(chunk)}`;
       const lastmod = chunk.lastmod ? `<lastmod>${esc(chunk.lastmod)}</lastmod>` : '';

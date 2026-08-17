@@ -1406,6 +1406,110 @@ html[data-dock] body:has(.episode-player.page-docked):not(:has(.dock-player)) {
   color: var(--ink);
 }
 
+/* Where an author can be found. Chips like the topics above, because they are
+   the same kind of thing — a small row of ways out of this page — and a reader
+   who has learned one has learned the other. */
+.author-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0;
+}
+
+.author-links a {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.author-links a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* A link the account itself confirmed by pointing back, which is a stronger
+   claim than one we merely read. Filled, matching the tagged topic chip: the
+   site already uses solid-for-asserted, outline-for-inferred. */
+.author-links a.verified {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+/* The people index. Cards rather than a list: a name, a line about them and a
+   row of links is too tall to read as a list and too short to deserve a page
+   each on the way past. */
+.author-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 2rem;
+}
+
+.author-grid li {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem;
+  background: var(--surface);
+}
+
+.author-grid h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.author-grid p {
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* The filter row under the search box. Wraps to its own line on a phone
+   rather than squeezing the select into a column two words wide. */
+.author-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.author-filters label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Who writes this feed, on the feed's own page. */
+.feed-authors {
+  margin: 0 0 1.5rem;
+}
+
+.feed-authors h2 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 0.4rem;
+}
+
+.feed-authors ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+}
+
 /* Paging through a category. Ends are pinned and the counter sits between
    them, so the two controls stay where the thumb left them from page to
    page. */

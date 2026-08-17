@@ -24,3 +24,9 @@ export {
   INLINE_LIMIT,
 } from './src/keywords.js';
 export { hashIp } from './src/hash.js';
+export {
+  claimAuthorSlug,
+  enrichDue,
+  enrichFeedAuthors,
+  storeCredits,
+} from './src/enrich.js';

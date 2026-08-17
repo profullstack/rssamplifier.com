@@ -37,6 +37,7 @@ export const STATIC_PAGES = [
   { path: '/lives', changefreq: 'daily', priority: '0.7' },
   { path: '/reels', changefreq: 'daily', priority: '0.7' },
   { path: '/topics', changefreq: 'daily', priority: '0.8' },
+  { path: '/authors', changefreq: 'daily', priority: '0.8' },
   { path: '/search', changefreq: 'daily', priority: '0.8' },
   { path: '/submit', changefreq: 'weekly', priority: '0.7' },
   { path: '/signup', changefreq: 'monthly', priority: '0.6' },

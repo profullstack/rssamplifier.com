@@ -53,3 +53,21 @@ export {
   DEFAULT_SERIES_RULES,
 } from './src/series.js';
 export { assessRelevance, keywordStems, feedText, stem } from './src/relevance.js';
+export {
+  BIO_HOSTS,
+  classifyLink,
+  cleanName,
+  credit,
+  feedCredits,
+  identityFromHtml,
+  identityKey,
+  isRoleEmail,
+  linksBackTo,
+  linksFromBioPage,
+  looksLikePersonName,
+  mergeCredits,
+  normalizeIdentityUrl,
+  normalizeName,
+  personalEmail,
+  splitBylines,
+} from './src/identity.js';

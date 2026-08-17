@@ -1,6 +1,8 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q } from '@rssamplifier/db';
 
+import { storeCredits } from './enrich.js';
+
 /** Backoff ladder in minutes, indexed by consecutive error count. */
 const BACKOFF = [60, 180, 360, 720, 1440];
 const MAX_INTERVAL = 10_080; // one week
@@ -140,7 +142,22 @@ export async function crawlFeed(db, feed) {
     return { ok: true, newItems: sent, topics: 0, topicError: String(err?.message ?? err) };
   }
 
-  return { ok: true, newItems: sent, topics };
+  // Whoever the document names, stored for free: the feed is already parsed
+  // and the credits came out of it with it. The links half of enrichment costs
+  // requests and lives in enrichDue instead.
+  //
+  // Guarded for the same reason topics are. A byline that fails to store is a
+  // missing name; a byline that fails the *crawl* backs the feed off and
+  // eventually marks a healthy blog dead, which is a far worse trade.
+  let people = 0;
+  try {
+    const stored = await storeCredits(db, { id, feed_url: String(feed.feed_url) }, resolved.feed.credits ?? []);
+    people = stored.people;
+  } catch (err) {
+    return { ok: true, newItems: sent, topics, authorError: String(err?.message ?? err) };
+  }
+
+  return { ok: true, newItems: sent, topics, people };
 }
 
 /**
