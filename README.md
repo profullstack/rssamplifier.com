@@ -110,13 +110,24 @@ Configuration:
 | Variable | Default | What |
 | --- | --- | --- |
 | `VALUESERP_API_KEY` | — | Required. Without it `/api/discover` answers 503 and the form says so. |
-| `DISCOVERY_KEYWORD_BATCH_SIZE` | 5 | Keyword searches the poller runs per tick |
+| `DISCOVERY_KEYWORD_BATCH_SIZE` | 5 | Keyword searches the poller runs per tick, and a ceiling rather than a count: a tick stops starting keywords after two minutes, so a slow provider delays the crawl by that much and no more. |
 | `DISCOVERY_BATCH_SIZE` | 10 | Candidate sites the poller checks per tick |
 
 Credits are the thing to watch: each keyword costs one credit **per result
-page**, and three pages are fetched by default. Google stopped honouring
-`&num=100`, so a single request returns eight to ten organic results however
-large `num` is — paging is the only way to see more.
+page**, and a keyword now pages until it has a hundred results — up to twelve
+credits, where it used to spend three.
+
+That is what buys the hundred. `&num=` is not the page size the engine serves,
+it is the stride `page` walks in: the offset upstream is `(page - 1) * num`.
+Asking for `num=100` put page two at result 101, past the end of a result set
+Google truncates well before then, so it came back empty and every keyword
+stopped after one page. Measured on the live API, same account, same day:
+"prepping" returned 9 unique results at `num=100` and 87 at `num=10`.
+
+Pages come back in eight to ten results each and overlap slightly, so a hundred
+unique results takes eleven or twelve pages. They are fetched four at a time —
+a page takes anywhere from 3s to 34s, and sequential paging would put a single
+keyword over the request's own budget.
 
 Blog pages carry schema.org `Blog` / `BlogPosting` JSON-LD, and `robots.txt` names the AI crawlers
 explicitly to allow them rather than merely not blocking them.

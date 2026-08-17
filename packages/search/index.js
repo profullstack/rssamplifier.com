@@ -1,4 +1,4 @@
-export { searchKeyword, apiKey, FATAL_ERRORS } from './src/valueserp.js';
+export { searchKeyword, apiKey, FATAL_ERRORS, TARGET_RESULTS } from './src/valueserp.js';
 export {
   parseKeywords,
   candidateSites,

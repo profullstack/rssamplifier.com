@@ -331,11 +331,26 @@ export async function discoverFromKeywords(db, keywords, opts = {}) {
 }
 
 /**
+ * Wall-clock a poller tick may spend searching, in milliseconds.
+ *
+ * A keyword is a hundred results now, which is a dozen requests and up to a
+ * couple of minutes of somebody else's latency. Five of those in a row is a
+ * tick that runs for ten minutes, and the crawl — which shares the tick and
+ * matters more, because a blog already in the directory going stale is worse
+ * than a new one being found late — would only get a turn that often.
+ *
+ * Checked before a keyword starts, never during: a keyword half-searched is a
+ * keyword whose credits bought nothing. Whatever is not started stays queued
+ * for the next tick.
+ */
+export const DRAIN_BUDGET_MS = 120_000;
+
+/**
  * Search queued keywords — the poller's half of the search phase.
  *
  * @param {import('@libsql/client').Client} db
  * @param {number} [limit]
- * @param {{ searchOpts?: object }} [opts]
+ * @param {{ searchOpts?: object, budgetMs?: number, now?: () => number }} [opts]
  * @returns {Promise<{ searched: number, failed: number, queued: number, fatal: string|null }>}
  */
 export async function drainDiscoveryKeywords(db, limit = 5, opts = {}) {
@@ -344,6 +359,8 @@ export async function drainDiscoveryKeywords(db, limit = 5, opts = {}) {
 
   const known = await discovery.knownHosts(db);
   const runIds = new Set();
+  const clock = opts.now ?? Date.now;
+  const deadline = clock() + (opts.budgetMs ?? DRAIN_BUDGET_MS);
 
   let searched = 0;
   let failed = 0;
@@ -351,6 +368,8 @@ export async function drainDiscoveryKeywords(db, limit = 5, opts = {}) {
   let fatal = null;
 
   for (const row of rows) {
+    if (clock() > deadline) break;
+
     runIds.add(String(row.run_id));
 
     const res = await searchOneKeyword(db, row, { known, searchOpts: opts.searchOpts });
