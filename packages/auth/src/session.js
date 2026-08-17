@@ -1,15 +1,17 @@
 import { accounts, nowIso } from '@rssamplifier/db';
 
 import { newToken, hashToken } from './tokens.js';
+import { SESSION_COOKIE, SESSION_MS, sessionCookieOptions } from './cookie.js';
 
 /**
  * Sessions: the cookie, and what it is worth.
+ *
+ * The cookie's name and attributes live in cookie.js and are re-exported here,
+ * so that every caller still reads them from one place while the request proxy can
+ * import them without dragging the database in behind them.
  */
 
-export const SESSION_COOKIE = 'rsa_session';
-
-/** Thirty days. Long enough that a reader is not asked to prove themselves weekly. */
-const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+export { SESSION_COOKIE, sessionCookieOptions };
 
 /**
  * Start a session and return the value to put in the cookie.
@@ -63,27 +65,4 @@ export async function resolveSession(db, token) {
 export async function endSession(db, token) {
   if (!token) return;
   await accounts.deleteSession(db, hashToken(token));
-}
-
-/**
- * Cookie attributes for the session.
- *
- * `secure` follows the site URL rather than being hardcoded, so a local http
- * development server can still hold a session — a Secure cookie is simply
- * dropped over plain http, which would make sign-in appear to do nothing.
- *
- * @param {string} siteUrl
- * @returns {{ httpOnly: boolean, sameSite: 'lax', secure: boolean, path: string, maxAge: number }}
- */
-export function sessionCookieOptions(siteUrl) {
-  return {
-    httpOnly: true,
-    // Lax, not Strict: the sign-in link arrives from a mail client, and a Strict
-    // cookie would not be sent on that first cross-site navigation — the reader
-    // would land signed out immediately after signing in.
-    sameSite: 'lax',
-    secure: String(siteUrl).startsWith('https://'),
-    path: '/',
-    maxAge: Math.floor(SESSION_MS / 1000),
-  };
 }
