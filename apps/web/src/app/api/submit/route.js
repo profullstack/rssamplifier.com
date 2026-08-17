@@ -14,11 +14,11 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-// An upload is now bounded by how long it takes to arrive rather than by how
-// much of it fits in memory, so the time budget is the one that has to give. At
-// the ceiling this is still not enough — ten gibibytes needs a very fast client
-// — but self-hosted Next treats this as advisory anyway, and the number should
-// say what the endpoint is for.
+// An upload is bounded by how long it takes to arrive rather than by how much
+// of it fits in memory, so the time budget is what has to give. This export is
+// advisory on a self-hosted Next and is here to say what the endpoint is for;
+// the limit that actually bites is Node's `requestTimeout`, lifted by the
+// `server-timeouts.mjs` preload. Changing this number alone changes nothing.
 export const maxDuration = 3600;
 
 /** Submissions allowed per IP per hour. */

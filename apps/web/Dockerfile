@@ -27,4 +27,11 @@ WORKDIR /repo/apps/web
 # port nothing is listening on.
 EXPOSE 3000
 ENV HOSTNAME=0.0.0.0
+
+# Preloaded rather than imported by the app: it patches http.createServer to
+# lift Node's 300-second cap on receiving a request, and that has to be in place
+# before Next builds its server. `instrumentation.js` runs too late to do it —
+# see the file itself, and docs/uploads.md. Relative to the WORKDIR above.
+ENV NODE_OPTIONS="--import ./server-timeouts.mjs"
+
 CMD ["node_modules/.bin/next", "start"]
