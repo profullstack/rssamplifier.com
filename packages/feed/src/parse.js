@@ -585,6 +585,38 @@ function jsonAudio(item) {
 }
 
 /**
+ * The picture on a JSON Feed item.
+ *
+ * The format names its own fields rather than borrowing Media RSS, so this is
+ * the JSON half of `itemImage` and shares only the beacon filter and the
+ * absolute-URL rule with it.
+ *
+ * @param {any} item
+ * @param {string} contentHtml
+ * @param {string} base
+ * @returns {string}
+ */
+function jsonImage(item, contentHtml, base) {
+  const attachments = Array.isArray(item?.attachments) ? item.attachments : [];
+  const attached = attachments.find((a) => IMAGE_TYPE.test(String(a?.mime_type ?? '')));
+
+  const candidates = [
+    item?.image,
+    item?.banner_image,
+    attached?.url,
+    htmlImage(contentHtml),
+  ].map((c) => String(c ?? ''));
+
+  for (const candidate of candidates) {
+    if (!candidate || NOT_A_PICTURE.test(candidate)) continue;
+    const url = absoluteImage(candidate, base);
+    if (url) return url;
+  }
+
+  return '';
+}
+
+/**
  * Read a duration in any of the three spellings podcast feeds use.
  *
  * @param {unknown} value
@@ -610,6 +642,9 @@ function duration(value) {
   return seconds !== null && seconds > 0 ? Math.floor(seconds) : null;
 }
 
+/** An attachment that carries a picture. */
+const IMAGE_TYPE = /^image\//i;
+
 /**
  * The URL of an enclosure that is actually an image.
  *
@@ -617,12 +652,227 @@ function duration(value) {
  * the item's image — which this used to do unconditionally — put an mp3 in the
  * image slot of every episode of every podcast in the directory.
  *
+ * Atom has no `<enclosure>`; the same attachment arrives as a link relation, so
+ * both spellings are read here rather than only in the RSS branch.
+ *
  * @param {any} item
  * @returns {string}
  */
 function enclosureImage(item) {
-  const image = arr(item?.enclosure).find((e) => /^image\//i.test(String(e?.['@type'] ?? '')));
-  return text(image?.['@url'] ?? '');
+  const image = arr(item?.enclosure).find((e) => IMAGE_TYPE.test(String(e?.['@type'] ?? '')));
+  if (image) return text(image['@url'] ?? '');
+
+  const link = arr(item?.link).find(
+    (l) => l?.['@rel'] === 'enclosure' && IMAGE_TYPE.test(String(l?.['@type'] ?? '')),
+  );
+  return text(link?.['@href'] ?? '');
+}
+
+/**
+ * The picture a publisher attached with Media RSS.
+ *
+ * Two elements, and the order between them matters. `media:thumbnail` is by
+ * definition a still of the item, so it is what a thumbnail wants; YouTube puts
+ * its poster frame there and nowhere else. `media:content` is the media itself,
+ * which is only a picture when it says so — a feed of videos has a
+ * `media:content` per video, and treating that as the image would put an mp4 in
+ * the image slot.
+ *
+ * Both may sit directly on the item or inside a `media:group`, which is the
+ * wrapper for "several renditions of one thing" and is how every YouTube feed is
+ * shaped. Looking in only one of the two places is the reason 289 YouTube
+ * channels were indexed here without a single thumbnail between them.
+ *
+ * @param {any} item
+ * @returns {string}
+ */
+function mediaImage(item) {
+  // The group first, because an item that has one keeps its media in it.
+  const nodes = [item?.['media:group'], item].filter(Boolean);
+
+  for (const node of nodes) {
+    // A publisher may offer several sizes. Widest wins, because this is scaled
+    // down to a thumbnail either way and the small one is often a 16px favicon.
+    const thumbs = arr(node['media:thumbnail'])
+      .map((t) => ({ url: text(t?.['@url'] ?? ''), width: Number(t?.['@width'] ?? 0) }))
+      .filter((t) => t.url)
+      .sort((a, b) => (b.width || 0) - (a.width || 0));
+    if (thumbs[0]) return thumbs[0].url;
+  }
+
+  for (const node of nodes) {
+    const content = arr(node['media:content']).find(
+      (c) =>
+        IMAGE_TYPE.test(String(c?.['@type'] ?? '')) ||
+        String(c?.['@medium'] ?? '').toLowerCase() === 'image',
+    );
+    if (content) return text(content['@url'] ?? '');
+  }
+
+  return '';
+}
+
+/**
+ * An `<img>` in the feed's own markup that is not a picture of anything.
+ *
+ * Three kinds, all of them common enough to see on the first page of results:
+ *
+ * - Beacons. Feed plugins append a 1×1 GIF whose only job is to be requested.
+ *   Rendering one as a thumbnail is an invisible box in the listing *and* a hit
+ *   on somebody's analytics from every reader who scrolls past it.
+ * - Furniture. WordPress rewrites every 🙂 in a post into an `<img>` on
+ *   s.w.org, so the "picture" of a post that happens to contain a smiley is a
+ *   72px emoji. Badges and avatars are the same problem: a real image, and
+ *   never one of what the post is about.
+ * - Anything sized like the first two, whatever it is called.
+ *
+ * Matched loosely on purpose: a false negative here is one bad thumbnail, and a
+ * false positive costs a post a picture it had an alternative for anyway.
+ */
+const NOT_A_PICTURE = new RegExp(
+  [
+    // The classic spacer filenames, with or without a size suffix.
+    String.raw`/(?:pixel|1x1|blank|spacer|clear|dot|beacon|tracker)[-_.]?\d*\.(?:gif|png|jpg)`,
+    // Named analytics endpoints that answer with an image.
+    String.raw`feedburner\.com/~ff`,
+    String.raw`feeds\.wordpress\.com/\d`,
+    String.raw`(?:pixel|stats)\.wp\.com`,
+    String.raw`stats\.wordpress\.com`,
+    String.raw`doubleclick\.net`,
+    String.raw`google-analytics\.com`,
+    String.raw`/wp-content/plugins/[^"']*(?:pixel|spacer)`,
+    // Emoji, rendered as images by WordPress and by Twitter's old widget.
+    String.raw`s\.w\.org/images/core/emoji`,
+    String.raw`/wp-includes/images/smilies/`,
+    String.raw`twemoji`,
+    String.raw`twimg\.com/emoji`,
+    // A build badge is a fact about a repository, not a picture of a post.
+    String.raw`shields\.io`,
+    String.raw`badgen\.net`,
+    // An author's avatar is the same on every post they have ever written.
+    String.raw`gravatar\.com/avatar`,
+  ].join('|'),
+  'i',
+);
+
+/** An `<img>` tag, and separately the bits of one we care about. */
+const IMG_TAG = /<img\b[^>]*>/gi;
+const IMG_SRC = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const IMG_DIMENSION = /\b(width|height)\s*=\s*["']?(\d+)/gi;
+
+/**
+ * The first usable `<img>` in a post's own HTML.
+ *
+ * A quarter of the directory's posts carry a picture only here: the publisher
+ * embedded it in the body and never declared it in a media element. Read at
+ * crawl time rather than at render time so the listing pages stay one query,
+ * and so the choice is made once per post instead of once per view.
+ *
+ * Regex rather than a DOM parse because this runs over every item of every feed
+ * on every crawl, and the shape being looked for is one attribute of one tag.
+ * The worst case for a mis-parse is no thumbnail.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function htmlImage(html) {
+  if (!html || !html.includes('<img')) return '';
+
+  for (const tag of html.match(IMG_TAG) ?? []) {
+    const src = (IMG_SRC.exec(tag) ?? []).slice(1).find(Boolean);
+    if (!src) continue;
+
+    // A tag that declares itself tiny is a beacon whatever it is called.
+    let tiny = false;
+    for (const [, , value] of tag.matchAll(IMG_DIMENSION)) {
+      if (Number(value) <= 2) tiny = true;
+    }
+    if (tiny) continue;
+
+    const decoded = src.replace(/&amp;/gi, '&').trim();
+    if (decoded && !NOT_A_PICTURE.test(decoded)) return decoded;
+  }
+
+  return '';
+}
+
+/**
+ * Resolve an image reference against the page it was published on.
+ *
+ * Feeds carry relative `src` attributes far more often than they should, and a
+ * relative URL stored here would resolve against *our* origin when the listing
+ * renders it — a 404 on rssamplifier.com for an image that exists on the
+ * publisher's site.
+ *
+ * Anything that is not http(s) after resolution is dropped rather than passed
+ * on: a `data:` image would be a base64 blob in a database column and on every
+ * listing page that shows it, and no other scheme can be rendered at all.
+ *
+ * @param {string} raw
+ * @param {string} base
+ * @returns {string}
+ */
+function absoluteImage(raw, base) {
+  const candidate = String(raw ?? '').trim();
+  if (!candidate) return '';
+
+  try {
+    const url = new URL(candidate, base || undefined);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The picture that best represents one item, from wherever it is hiding.
+ *
+ * Order is most-deliberate-first: an element whose whole purpose is "this is the
+ * image for this item" beats an attachment, which beats a frame grab we derived,
+ * which beats the first thing in the body. Only the last of these can be wrong
+ * about what the post is *about*, and it is also the only one that a fifth of
+ * the directory has.
+ *
+ * @param {any} item
+ * @param {string} contentHtml
+ * @param {string} base URL to resolve a relative reference against.
+ * @returns {string}
+ */
+function itemImage(item, contentHtml, base) {
+  const candidates = [
+    mediaImage(item),
+    enclosureImage(item),
+    // Episode art, where a podcast sets it per episode rather than per show.
+    text(item?.['itunes:image']),
+    youTubeStill(item),
+    htmlImage(contentHtml),
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate || NOT_A_PICTURE.test(candidate)) continue;
+    const url = absoluteImage(candidate, base);
+    if (url) return url;
+  }
+
+  return '';
+}
+
+/**
+ * A YouTube video's poster frame, from its id.
+ *
+ * Only reached when `media:group` had no thumbnail, which happens when a feed
+ * has been through a proxy or a reader service that dropped the media elements
+ * and kept `yt:videoId`. The URL is a documented, stable one, and the id is
+ * validated the same way the embed URL validates it.
+ *
+ * @param {any} item
+ * @returns {string}
+ */
+function youTubeStill(item) {
+  const videoId = text(item?.['yt:videoId']);
+  if (!videoId || !/^[\w-]{6,20}$/.test(videoId)) return '';
+  return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 }
 
 /**
@@ -743,7 +993,7 @@ export function parseFeed(body, feedUrl = '') {
   if (typeof body !== 'string' || !body.trim()) return null;
 
   const trimmed = body.trim();
-  if (trimmed.startsWith('{')) return parseJsonFeed(trimmed);
+  if (trimmed.startsWith('{')) return parseJsonFeed(trimmed, feedUrl);
 
   // A playlist is a feed in everything but format. Checked before the XML
   // parser rather than after it, because the plain form of the format is a
@@ -757,10 +1007,10 @@ export function parseFeed(body, feedUrl = '') {
     return null;
   }
 
-  if (doc?.rss?.channel) return parseRss(doc.rss.channel);
-  if (doc?.feed) return parseAtom(doc.feed);
+  if (doc?.rss?.channel) return parseRss(doc.rss.channel, feedUrl);
+  if (doc?.feed) return parseAtom(doc.feed, feedUrl);
   // RSS 1.0 / RDF keeps channel and items as siblings under rdf:RDF.
-  if (doc?.['rdf:RDF']) return parseRdf(doc['rdf:RDF']);
+  if (doc?.['rdf:RDF']) return parseRdf(doc['rdf:RDF'], feedUrl);
 
   return null;
 }
@@ -783,20 +1033,24 @@ function isPlaylist(trimmed, feedUrl) {
 
 /**
  * @param {any} ch
+ * @param {string} [feedUrl] Where the document was fetched from, so a relative
+ *   image reference resolves against the publisher's site and not against ours.
  */
-function parseRss(ch) {
+function parseRss(ch, feedUrl = '') {
   const raw = arr(ch.item);
+  const siteUrl = text(ch.link);
   const items = raw.map((it) => {
     const contentHtml = text(it['content:encoded']) || text(it.description);
+    const url = text(it.link);
     return {
-      guid: text(it.guid) || text(it.link) || text(it.title),
-      url: text(it.link),
+      guid: text(it.guid) || url || text(it.title),
+      url,
       title: text(it.title) || '(untitled)',
       summary: summarize(text(it.description) || contentHtml),
       contentHtml,
       author: text(it['dc:creator']) || text(it.author),
       publishedAt: date(it.pubDate) || date(it['dc:date']),
-      imageUrl: text(it['media:thumbnail']?.['@url']) || enclosureImage(it),
+      imageUrl: itemImage(it, contentHtml, url || siteUrl || feedUrl),
       categories: categories(it),
       audio: audioEnclosure(it),
     };
@@ -808,8 +1062,13 @@ function parseRss(ch) {
     siteUrl: text(ch.link),
     language: text(ch.language),
     // A podcast's cover art is in itunes:image; the plain <image> element is
-    // optional and podcast hosts do not always emit it.
-    imageUrl: text(ch.image?.url) || text(ch['itunes:image']?.['@href']),
+    // optional and podcast hosts do not always emit it. Absolute-ised for the
+    // same reason an item's image is: a feed's cover art now renders as the
+    // avatar beside its name, and a relative path there would point at us.
+    imageUrl: absoluteImage(
+      text(ch.image?.url) || text(ch['itunes:image']?.['@href']) || text(ch['itunes:image']),
+      siteUrl || feedUrl,
+    ),
     categories: categories(ch),
     kind: kindOfChannel(ch, raw),
     items,
@@ -818,20 +1077,26 @@ function parseRss(ch) {
 
 /**
  * @param {any} feed
+ * @param {string} [feedUrl]
  */
-function parseAtom(feed) {
+function parseAtom(feed, feedUrl = '') {
   const entries = arr(feed.entry);
+  const siteUrl = atomLink(feed.link);
   const items = entries.map((e) => {
     const contentHtml = text(e.content) || text(e.summary);
+    const url = atomLink(e.link);
     return {
-      guid: text(e.id) || atomLink(e.link),
-      url: atomLink(e.link),
+      guid: text(e.id) || url,
+      url,
       title: text(e.title) || '(untitled)',
       summary: summarize(text(e.summary) || contentHtml),
       contentHtml,
       author: text(e.author?.name),
       publishedAt: date(e.published) || date(e.updated),
-      imageUrl: '',
+      // Atom entries used to be stored with no image at all, which is why every
+      // YouTube channel in the directory is text-only: its poster frame is in a
+      // `media:group`, and nothing here looked inside one.
+      imageUrl: itemImage(e, contentHtml, url || siteUrl || feedUrl),
       categories: categories(e),
       audio: audioEnclosure(e),
     };
@@ -843,9 +1108,9 @@ function parseAtom(feed) {
   return {
     title: text(feed.title) || '(untitled)',
     description: summarize(text(feed.subtitle), 500),
-    siteUrl: atomLink(feed.link),
+    siteUrl,
     language: text(feed['@xml:lang']),
-    imageUrl: text(feed.logo) || text(feed.icon),
+    imageUrl: absoluteImage(text(feed.logo) || text(feed.icon), siteUrl || feedUrl),
     categories: categories(feed),
     kind,
     items,
@@ -854,29 +1119,36 @@ function parseAtom(feed) {
 
 /**
  * @param {any} rdf
+ * @param {string} [feedUrl]
  */
-function parseRdf(rdf) {
+function parseRdf(rdf, feedUrl = '') {
   const ch = rdf.channel ?? {};
   const raw = arr(rdf.item);
-  const items = raw.map((it) => ({
-    guid: text(it['@rdf:about']) || text(it.link),
-    url: text(it.link),
-    title: text(it.title) || '(untitled)',
-    summary: summarize(text(it.description)),
-    contentHtml: text(it['content:encoded']) || text(it.description),
-    author: text(it['dc:creator']),
-    publishedAt: date(it['dc:date']),
-    imageUrl: '',
-    categories: categories(it),
-    audio: audioEnclosure(it),
-  }));
+  const siteUrl = text(ch.link);
+  const items = raw.map((it) => {
+    const contentHtml = text(it['content:encoded']) || text(it.description);
+    const url = text(it.link);
+    return {
+      guid: text(it['@rdf:about']) || url,
+      url,
+      title: text(it.title) || '(untitled)',
+      summary: summarize(text(it.description)),
+      contentHtml,
+      author: text(it['dc:creator']),
+      publishedAt: date(it['dc:date']),
+      imageUrl: itemImage(it, contentHtml, url || siteUrl || feedUrl),
+      categories: categories(it),
+      audio: audioEnclosure(it),
+    };
+  });
 
   return {
     title: text(ch.title) || '(untitled)',
     description: summarize(text(ch.description), 500),
-    siteUrl: text(ch.link),
+    siteUrl,
     language: '',
-    imageUrl: '',
+    // RSS 1.0 has an <image> of its own, as a sibling of the channel.
+    imageUrl: absoluteImage(text(rdf.image?.url) || text(ch.image?.['@rdf:resource']), siteUrl || feedUrl),
     categories: categories(ch),
     // RSS 1.0 keeps the channel and the items as siblings, so the channel tags
     // and the items are read from different objects.
@@ -888,7 +1160,7 @@ function parseRdf(rdf) {
 /**
  * @param {string} raw
  */
-function parseJsonFeed(raw) {
+function parseJsonFeed(raw, feedUrl = '') {
   let j;
   try {
     j = JSON.parse(raw);
@@ -897,6 +1169,7 @@ function parseJsonFeed(raw) {
   }
   if (!j || !Array.isArray(j.items)) return null;
 
+  const siteUrl = j.home_page_url ?? '';
   const items = j.items.map((it) => {
     const contentHtml = it.content_html || it.content_text || '';
     return {
@@ -907,7 +1180,10 @@ function parseJsonFeed(raw) {
       contentHtml,
       author: it.author?.name ?? j.author?.name ?? '',
       publishedAt: date(it.date_published),
-      imageUrl: it.image ?? '',
+      // JSON Feed has two image fields and an attachment list. `image` is the
+      // one meant for the item; `banner_image` is explicitly the wide one for
+      // the top of a page, which is still better than nothing.
+      imageUrl: jsonImage(it, contentHtml, it.url || siteUrl || feedUrl),
       // JSON Feed calls them tags; they are the same thing RSS calls
       // categories, so they are read into the same field.
       categories: Array.isArray(it.tags) ? it.tags.map((t) => String(t)) : [],
@@ -929,9 +1205,9 @@ function parseJsonFeed(raw) {
   return {
     title: j.title ?? '(untitled)',
     description: summarize(j.description ?? '', 500),
-    siteUrl: j.home_page_url ?? '',
+    siteUrl,
     language: j.language ?? '',
-    imageUrl: j.icon ?? '',
+    imageUrl: absoluteImage(j.icon ?? j.favicon ?? '', siteUrl || feedUrl),
     categories: [],
     // JSON Feed states the podcast claim in an extension rather than a
     // namespace. It has no equivalent of `podcast:medium`, so a JSON Feed can

@@ -85,6 +85,27 @@ test('items insert, dedupe by guid, and count', async () => {
   assert.equal(rows[0].title, 'Beta post', 'newest first');
 });
 
+test('a re-crawl fills in the thumbnail a post was stored without', async () => {
+  // The whole backfill for four fifths of the directory. The parser learned to
+  // find pictures the feeds were already carrying, and a post already stored
+  // under its guid would otherwise keep its empty image column forever.
+  const feed = await q.feedByUrl(db, 'https://test.example/feed.xml');
+  const id = String(feed.id);
+
+  await q.upsertItems(db, id, [{ guid: 'thumbless', title: 'No picture yet' }]);
+  await q.upsertItems(db, id, [
+    { guid: 'thumbless', title: 'No picture yet', imageUrl: 'https://test.example/hero.jpg' },
+  ]);
+
+  const found = (await q.itemsForFeed(db, id, 200)).find((r) => r.guid === 'thumbless');
+  assert.equal(found.image_url, 'https://test.example/hero.jpg');
+
+  // And a picture we already have survives a crawl that no longer offers one.
+  await q.upsertItems(db, id, [{ guid: 'thumbless', title: 'No picture yet' }]);
+  const again = (await q.itemsForFeed(db, id, 200)).find((r) => r.guid === 'thumbless');
+  assert.equal(again.image_url, 'https://test.example/hero.jpg');
+});
+
 test('items without a guid are skipped rather than inserted blank', async () => {
   const feed = await q.feedByUrl(db, 'https://test.example/feed.xml');
   const id = String(feed.id);

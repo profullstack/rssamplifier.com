@@ -272,7 +272,7 @@ export async function list(db, userId, lane, { done = false, limit = 200 } = {})
     sql: `select e.id, e.lane, e.position, e.added_at, e.done_at,
                  i.id as item_id, i.guid, i.url, i.title, i.summary, i.published_at,
                  i.image_url, i.audio_url, i.audio_type, i.audio_seconds,
-                 f.slug as feed_slug, f.title as feed_title
+                 f.slug as feed_slug, f.title as feed_title, f.image_url as feed_image
           from queue_entries e
           join feed_items i on i.id = e.item_id
           join feeds f on f.id = i.feed_id

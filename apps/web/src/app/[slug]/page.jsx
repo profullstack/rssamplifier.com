@@ -6,12 +6,14 @@ import { currentUser } from '../../lib/auth.js';
 import { adPlan } from '../../lib/ads.js';
 import { lanesOffered, trackFor } from '../../lib/queue.js';
 import { shareText } from '../../lib/share.js';
+import { postThumb } from '../../lib/thumbs.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import FollowButton from '../FollowButton.jsx';
 import PlayButton from '../PlayButton.jsx';
 import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
+import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
 
@@ -220,14 +222,23 @@ export default async function FeedPage({ params }) {
           const track = trackFor(p, { slug, feedTitle: String(feed.title) });
           const lanes = lanesOffered(p);
 
+          // The post's own picture, or the feed's cover art where it has none —
+          // on one feed's page every row shares that fallback, so an archive
+          // either has pictures throughout or has none, and never looks
+          // half-finished.
+          const thumb = postThumb(p, feed);
+          const readHref = `/${slug}/read?p=${encodeURIComponent(String(p.guid))}`;
+
           const entry = (
-            <article className="entry" key={String(p.guid)}>
+            <article className={thumb ? 'entry has-thumb' : 'entry'} key={String(p.guid)}>
+              <Thumb src={thumb} href={p.url ? readHref : null} />
+
               <h3>
                 {p.url ? (
                   // Into the reader rather than straight out: the toolbar stays
                   // on screen, and the reader falls back to the original site for
                   // anything that refuses to be framed.
-                  <a href={`/${slug}/read?p=${encodeURIComponent(String(p.guid))}`}>{p.title}</a>
+                  <a href={readHref}>{p.title}</a>
                 ) : (
                   p.title
                 )}
@@ -248,7 +259,7 @@ export default async function FeedPage({ params }) {
                   <PlayButton
                     track={track}
                     lane={lanes[0]}
-                    href={`/${slug}/read?p=${encodeURIComponent(String(p.guid))}`}
+                    href={readHref}
                   />
                 )}
 

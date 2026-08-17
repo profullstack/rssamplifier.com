@@ -222,13 +222,96 @@ h2 {
 .feed-row {
   background: var(--surface);
   padding: 1.15rem 1.35rem;
-  display: block;
+  /* A grid rather than a block so the cover art can sit in a column of its own
+     and the text keeps its own left edge whether or not there is a picture —
+     the avatar is always rendered (a monogram where there is no icon), so the
+     column never collapses and a long list never zig-zags. */
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 1rem;
+  align-items: start;
   text-decoration: none;
   transition: background 0.15s ease;
 }
 
+/* Placed explicitly rather than by source order: the row's text is three
+   siblings (heading, description, meta line), and auto-placement would run them
+   down the picture's own column. The picture takes the first column and as many
+   rows as the text needs; everything else stays in the second. */
+.feed-row > .feed-avatar {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  align-self: start;
+}
+
+.feed-row > :not(.feed-avatar) {
+  grid-column: 2;
+}
+
 .feed-row:hover {
   background: var(--accent-soft);
+}
+
+/* ------------------------------------------------------------ cover art */
+
+.feed-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  /* The text beside it wraps to two or three lines; the picture must not
+     stretch to match. */
+  flex: none;
+}
+
+/* Both children share the one cell: the initial sits behind the picture and is
+   only ever seen if the picture does not arrive. */
+.feed-avatar > * {
+  grid-area: 1 / 1;
+}
+
+.feed-avatar img {
+  width: 100%;
+  height: 100%;
+  /* Cover, not contain: a favicon and a wide banner both arrive in this column
+     and cropping the banner reads better than letterboxing the favicon. */
+  object-fit: cover;
+  display: block;
+  /* Opaque, so a logo with a transparent background does not show the letter
+     underneath it. */
+  background: var(--bg);
+}
+
+.avatar-initial {
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--muted);
+}
+
+/* What three quarters of the directory gets, because it publishes no icon: its
+   own initial, tinted from its slug so the page is not a column of grey. */
+.feed-avatar.is-monogram {
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1;
+  color: hsl(var(--monogram-hue, 30) 45% 34%);
+  background: hsl(var(--monogram-hue, 30) 52% 93%);
+  border-color: hsl(var(--monogram-hue, 30) 40% 86%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .feed-avatar.is-monogram {
+    color: hsl(var(--monogram-hue, 30) 55% 76%);
+    background: hsl(var(--monogram-hue, 30) 28% 18%);
+    border-color: hsl(var(--monogram-hue, 30) 22% 26%);
+  }
 }
 
 .feed-row h3 {
@@ -267,6 +350,71 @@ h2 {
 
 .entry:last-child {
   border-bottom: none;
+}
+
+/* A post with a picture. The class is on the article rather than inferred from
+   the child, because a listing mixes posts that have one with posts that do
+   not, and a grid declared on all of them would indent the text of the ones
+   without to line up with a column that is not there. */
+.entry.has-thumb {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0 1.35rem;
+  align-items: start;
+}
+
+.entry.has-thumb > .entry-thumb {
+  grid-column: 1;
+  grid-row: 1 / span 4;
+}
+
+.entry.has-thumb > :not(.entry-thumb) {
+  grid-column: 2;
+}
+
+.entry-thumb {
+  display: block;
+  width: 7rem;
+  /* Not square: most of what publishers put in a feed is a 16:9 still or a wide
+     hero image, and 4:3 crops both without turning a photograph into a stamp. */
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.entry-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* On a phone the same column, narrower.
+ *
+ * Full width above the headline was the first shape here and it is the wrong
+ * one for this directory: a podcast's fifty episodes share one piece of cover
+ * art, so a full-bleed picture per row is the same square fifty times down a
+ * phone screen with the episode titles pushed off it. A 4.5rem column keeps the
+ * page a list, and the picture is still large enough to recognise. */
+@media (max-width: 34rem) {
+  .entry.has-thumb {
+    grid-template-columns: 4.5rem 1fr;
+    gap: 0 0.85rem;
+  }
+
+  .entry.has-thumb > .entry-thumb {
+    width: 4.5rem;
+  }
+
+  .post-list > li.has-thumb {
+    grid-template-columns: 4.5rem 1fr;
+  }
+
+  .post-list > li.has-thumb > .entry-thumb {
+    width: 4.5rem;
+  }
 }
 
 .entry h3 {
@@ -1113,6 +1261,15 @@ html[data-dock] body:has(.episode-player.page-docked):not(:has(.dock-player)) {
   gap: 0.8rem;
   padding: 0.9rem 0;
   border-bottom: 1px solid var(--line);
+}
+
+/* Narrower than a listing's thumbnail: a queue row is a title, a meta line and
+   a strip of controls, and a picture as tall as all three would make the list of
+   what to read next twice as long to scan. Flexbox holds the row, so this only
+   has to say how wide and not to squash. */
+.queue-thumb {
+  width: 4.5rem;
+  flex: none;
 }
 
 /* The position, shown rather than left implicit in the layout: order is the
@@ -2448,6 +2605,26 @@ select {
 .post-list > li {
   border-bottom: 1px solid var(--line);
   padding: 1rem 0;
+}
+
+/* A saved post with a picture. Same two-column shape as a listing entry, and
+   placed the same way and for the same reason: the row is three siblings and
+   auto-placement would stack them under the picture. */
+.post-list > li.has-thumb {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: 0 1.1rem;
+  align-items: start;
+}
+
+.post-list > li.has-thumb > .entry-thumb {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  width: 6rem;
+}
+
+.post-list > li.has-thumb > :not(.entry-thumb) {
+  grid-column: 2;
 }
 
 .post-list > li > a {

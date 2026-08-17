@@ -423,7 +423,9 @@ export async function followedItems(db, userId, limit = 60) {
   const { rows } = await db.execute({
     sql: `select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
                  i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds, i.cluster_key,
-                 f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
+                 f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category,
+                 -- Fallback thumbnail: see the same column in itemsForTopic.
+                 f.image_url as feed_image
           from follows fo
           join feeds f on f.id = fo.feed_id
           join feed_items i on i.feed_id = f.id

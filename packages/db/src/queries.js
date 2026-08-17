@@ -313,6 +313,19 @@ export async function upsertItems(db, feedId, items) {
         -- audio it was stored without. Items imported before the media columns
         -- existed would otherwise never gain a player, because the guid is
         -- already there and a do-nothing conflict skips the whole row.
+        --
+        -- The picture heals the same way, and for a bigger population: the
+        -- parser only ever read media:thumbnail and an image enclosure, so
+        -- four fifths of the posts in the directory were stored without one
+        -- that their feed was in fact carrying. This is the whole backfill —
+        -- every feed is re-crawled on its own timer, so the column fills in
+        -- over one crawl cycle with no migration and no script to remember.
+        --
+        -- coalesce, and not excluded.image_url outright: a post whose picture
+        -- we already have keeps it even if the publisher's feed has since
+        -- dropped the element, and a listing never loses a thumbnail it was
+        -- showing yesterday.
+        image_url = coalesce(feed_items.image_url, excluded.image_url),
         audio_url = coalesce(feed_items.audio_url, excluded.audio_url),
         audio_type = coalesce(feed_items.audio_type, excluded.audio_type),
         audio_bytes = coalesce(feed_items.audio_bytes, excluded.audio_bytes),
@@ -604,7 +617,7 @@ export async function feedsForTopic(db, slug, opts = {}) {
 
   const { rows } = await db.execute({
     sql: `select f.slug, f.title, f.description, f.site_url, f.feed_url, f.category, f.item_count,
-                 k.keyword, k.count, k.source
+                 f.image_url, k.keyword, k.count, k.source
           from feed_keywords k
           join feeds f on f.id = k.feed_id
           where k.slug = ? and f.status <> 'dead'${filter.sql}
@@ -737,7 +750,13 @@ export async function itemsForTopic(db, slug, opts = {}) {
           )
           select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
                  i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds, i.cluster_key,
-                 f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
+                 f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category,
+                 -- The feed's own cover art, as the fallback thumbnail for a
+                 -- post that has none of its own. A podcast's episode without
+                 -- its own art is meant to show the show's, and a river of
+                 -- mixed feeds reads better as a column of pictures than as a
+                 -- column with gaps in it.
+                 f.image_url as feed_image
           from feed_items i
           join feeds f on f.id = i.feed_id
           where i.feed_id in (select feed_id from picked)
@@ -1657,8 +1676,8 @@ export async function searchItems(db, query, limit = 40, mode = 'all') {
   if (!match) return [];
 
   const { rows } = await db.execute({
-    sql: `select i.guid, i.title, i.url, i.summary, i.published_at,
-                 f.slug as feed_slug, f.title as feed_title
+    sql: `select i.guid, i.title, i.url, i.summary, i.published_at, i.image_url,
+                 f.slug as feed_slug, f.title as feed_title, f.image_url as feed_image
           from feed_items_fts
           join feed_items i on i.rowid = feed_items_fts.rowid
           join feeds f on f.id = i.feed_id
@@ -1684,7 +1703,7 @@ export async function searchFeeds(db, query, limit = 20, mode = 'all') {
   if (!match) return [];
 
   const { rows } = await db.execute({
-    sql: `select f.slug, f.title, f.description
+    sql: `select f.slug, f.title, f.description, f.image_url
           from feeds_fts
           join feeds f on f.rowid = feeds_fts.rowid
           where feeds_fts match ?

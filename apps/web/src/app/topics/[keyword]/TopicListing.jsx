@@ -10,6 +10,7 @@ import Ad from '../../Ad.jsx';
 import AdBanner from '../../AdBanner.jsx';
 import FollowButton from '../../FollowButton.jsx';
 import Share from '../../Share.jsx';
+import { Avatar } from '../../Thumb.jsx';
 
 /** Feeds per page. Matches the category pages. */
 export const PAGE_SIZE = 60;
@@ -246,6 +247,7 @@ export default async function TopicListing({ topic, counts, group = null, page =
         {rows.flatMap((f, i) => {
           const row = (
             <a className="feed-row" key={String(f.slug)} href={`/${f.slug}`}>
+              <Avatar src={f.image_url} title={f.title} slug={f.slug} />
               <h3>{f.title}</h3>
               {f.description && <p>{f.description}</p>}
               <div className="feed-meta">
