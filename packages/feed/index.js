@@ -24,6 +24,14 @@ export { extractKeywords, feedTopics, tokenize, topicSlug, singularize } from '.
 export { sanitizeHtml, textLength } from './src/sanitize.js';
 export { normalizeUrl, findFeedLinks, guessFeedUrls, looksLikeFeed } from './src/discover.js';
 export { safeFetch, resolveFeed, isBlockedAddress, isPublicHost } from './src/fetch.js';
+export {
+  scrapeFeed,
+  buildFeedFromPage,
+  postsFromJsonLd,
+  postsFromArticles,
+  postsFromClusters,
+} from './src/scrape.js';
+export { clusterKey, dedupeItems, titleWords } from './src/cluster.js';
 export { isFrameable, framingVerdict, probePage } from './src/frameable.js';
 export { readableArticle, figures, MAX_HTML_BYTES } from './src/extract.js';
 export { reframePage } from './src/reframe.js';

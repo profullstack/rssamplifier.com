@@ -1,4 +1,4 @@
-import { resolveFeed, normalizeUrl, parseOpml, uniqueSlug } from '@rssamplifier/feed';
+import { resolveFeed, scrapeFeed, normalizeUrl, parseOpml, uniqueSlug } from '@rssamplifier/feed';
 import { q } from '@rssamplifier/db';
 
 import { importFeeds } from './import.js';
@@ -52,7 +52,15 @@ export async function submitOne(db, input) {
   const url = normalizeUrl(input);
   if (!url) return { ok: false, url: String(input), error: 'invalid-url' };
 
-  const resolved = await resolveFeed(url);
+  // A site that publishes no feed used to end here, which quietly put most of
+  // the web permanently outside the directory. Now the page itself is read: if
+  // it turns out to be a list of posts, the directory builds the feed the site
+  // never did. Only attempted once every real feed path has been ruled out, so
+  // a site that does publish is always indexed from its own document.
+  let resolved = await resolveFeed(url);
+  const built = !resolved.ok && resolved.error === 'no-feed-found';
+  if (built) resolved = await scrapeFeed(url);
+
   if (!resolved.ok) return { ok: false, url, error: resolved.error };
 
   const { feedUrl, feed } = resolved;
@@ -78,6 +86,7 @@ export async function submitOne(db, input) {
       kind: feed.kind,
       status: 'active',
       item_count: feed.items.length,
+      source_kind: built ? 'scraped' : 'feed',
     });
   } catch (err) {
     // A concurrent submission of the same feed can win the unique index between
