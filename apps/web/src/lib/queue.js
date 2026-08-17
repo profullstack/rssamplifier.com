@@ -51,18 +51,51 @@ export function lanesOffered(post) {
 }
 
 /**
- * Can the docked player carry this itself?
+ * Can the docked player *drive* this — start it, seek it, hear it end?
  *
- * Only for media it holds an element for. A YouTube or PeerTube post plays in
- * somebody else's iframe: it cannot be started from outside, cannot report that
- * it finished, and cannot be resumed at a position after a page load — so the
- * dock never claims it.
+ * Only for media it holds a real element for. A YouTube or PeerTube post plays
+ * in somebody else's iframe, and nothing out here can press its play button,
+ * move its needle or be told it finished.
  *
  * @param {string|null} kind
  * @returns {boolean}
  */
 export function dockable(kind) {
   return kind === 'audio' || kind === 'video';
+}
+
+/**
+ * Does this play inside somebody else's frame?
+ *
+ * @param {string|null} kind
+ * @returns {boolean}
+ */
+export function embedded(kind) {
+  return kind === 'youtube' || kind === 'peertube';
+}
+
+/**
+ * Can the docked player *carry* this — show it, and keep it alive while you browse?
+ *
+ * A wider question than `dockable`, and the two are kept apart on purpose. The
+ * dock used to refuse embeds outright, reasoning that it could not control one;
+ * that is true and it was the wrong conclusion. Holding an iframe in the layout
+ * still buys the reader the thing the dock exists for — the video keeps playing
+ * across every soft navigation on the site — and the topic that prompted this
+ * shows why it matters: of the fifty most recent videos under /topics/ai, nine
+ * in ten are YouTube or PeerTube. A watch queue that skipped them would be a
+ * watch queue over a tenth of the videos.
+ *
+ * What the dock must not do is *pretend* to drive one. An embed gets no resume
+ * after a reload and no automatic advance when it ends, because neither can be
+ * known from out here — see DockPlayer, which asks `dockable` again for exactly
+ * those two behaviours.
+ *
+ * @param {string|null} kind
+ * @returns {boolean}
+ */
+export function dockCarries(kind) {
+  return dockable(kind) || embedded(kind);
 }
 
 /**
@@ -77,11 +110,11 @@ export function dockable(kind) {
  * @returns {{
  *   src: string, kind: string, type: string|null, title: string, show: string,
  *   href: string, seconds: number|null, image: string|null, entryId: string|null,
- * }|null} null when there is nothing the dock can play
+ * }|null} null when there is nothing the dock can show
  */
 export function trackFor(post, { slug, feedTitle, entryId = null }) {
   const media = playableMedia(post);
-  if (!media.src || !dockable(media.kind)) return null;
+  if (!media.src || !dockCarries(media.kind)) return null;
 
   return {
     src: media.src,

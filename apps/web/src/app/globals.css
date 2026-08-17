@@ -683,6 +683,14 @@ button:disabled {
 .episode-player.is-video {
   flex-direction: column;
   align-items: stretch;
+  /* Inherited `flex-wrap: wrap` is wrong once the direction is a column, and
+     wrong in a way that is invisible until it bites: a wrapping column with a
+     height cap does not overflow, it starts a *second column*. The transport
+     went into it — off the right-hand edge of the window on a wide screen,
+     above the picture instead of below it on a phone — so « », the thumbnail
+     toggle and the close button sat where nothing could click them. Measured
+     at 1280×860: the controls began at x=1252 and ran to x=1419. */
+  flex-wrap: nowrap;
   gap: 0.5rem;
   max-height: 58vh;
 }
@@ -691,6 +699,9 @@ button:disabled {
   width: 100%;
   aspect-ratio: 16 / 9;
   max-height: 46vh;
+  /* So the picture is what gives way when the box is tight — a long title
+     wrapping onto a second line must not push the transport out of the dock. */
+  min-height: 0;
   border: 0;
   border-radius: 8px;
   background: #000;

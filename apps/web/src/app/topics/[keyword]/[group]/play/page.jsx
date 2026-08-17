@@ -14,10 +14,13 @@ export const dynamic = 'force-dynamic';
  * most often wants — a topic's podcasts are a playlist in a way the whole topic
  * is not.
  *
- * Only the groups that publish playlists have one. The rest are refused for the
- * reason the `.m3u` link is not offered on them: the query behind a playlist
- * selects rows with an enclosure, and a blog has none, so a player page there
- * would be an empty transport over an empty list.
+ * Only the groups the browser can play have one. The rest are refused because
+ * the query behind a playlist selects rows with an enclosure, and a blog has
+ * none, so a player page there would be an empty transport over an empty list.
+ *
+ * `player` rather than `playlists`, and the difference is a topic's videos:
+ * they play here and cannot be written to an `.m3u` at all. See
+ * IN_BROWSER_KINDS.
  *
  * @param {{ params: Promise<{ keyword: string, group: string }> }} props
  * @returns {Promise<{
@@ -28,7 +31,7 @@ export const dynamic = 'force-dynamic';
 async function resolve({ params }) {
   const { keyword, group: segment } = await params;
   const group = topicGroup(segment);
-  if (!group?.playlists) return null;
+  if (!group?.player) return null;
 
   const client = db();
   const slug = slugFromUrl(keyword);

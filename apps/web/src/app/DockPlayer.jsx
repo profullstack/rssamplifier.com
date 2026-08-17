@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { dockable, embedded } from '../lib/queue.js';
+
 /**
  * The player that follows you around the directory.
  *
@@ -35,10 +37,13 @@ import { useRouter } from 'next/navigation';
  * tabs do not fight over one running order, and closing the tab ends the
  * session rather than ambushing the next one with audio.
  *
- * What it will not do is claim to play things it cannot. A YouTube or PeerTube
- * post lives in somebody else's iframe: it cannot be started from out here,
- * cannot be seeked, and cannot tell us it finished. Those never reach the dock
- * — the queue keeps them, and the play control on them opens the post.
+ * A YouTube or PeerTube post lives in somebody else's iframe, and the dock
+ * carries those too — see `dockCarries` in lib/queue.js for why, and for the
+ * line between carrying one and driving one. Everything below that reaches into
+ * a media element asks `dockable` first, so an embed simply skips it: no
+ * resume-to-position after a reload, and no automatic advance when it ends,
+ * because neither is knowable from outside the frame. What it does get is the
+ * one thing the dock exists for, which is to still be there on the next page.
  */
 
 /** Where the tab's player state lives across a reload. */
@@ -64,6 +69,13 @@ export default function DockPlayer() {
   // A video shrunk to a thumbnail, and whether this browser will pop one out.
   const [compact, setCompact] = useState(false);
   const [canPop, setCanPop] = useState(false);
+  // Whether the embed should start itself. Only ever set by a click on a play
+  // control, which is both what the reader asked for and the user gesture the
+  // browser requires before it will let a frame make noise. A restore after a
+  // reload never sets it: the reader pressed play on the last page, not this
+  // one, and a video that starts talking on its own is the thing this whole
+  // directory is a reaction to.
+  const [autoplay, setAutoplay] = useState(false);
 
   const mediaRef = useRef(/** @type {HTMLMediaElement|null} */ (null));
   // Where to drop the needle once the element has metadata — a resume after a
@@ -99,7 +111,9 @@ export default function DockPlayer() {
       return;
     }
 
-    const el = mediaRef.current;
+    // An embed has no element to ask, and guessing would be worse than not
+    // asking: an iframe answers `paused` with undefined, which reads as playing.
+    const el = dockable(current.kind) ? mediaRef.current : null;
     try {
       window.sessionStorage.setItem(
         STORE,
@@ -133,6 +147,7 @@ export default function DockPlayer() {
       if (!next?.src) return;
       resumeAt.current = Number(opts.at ?? 0);
       wantPlay.current = opts.play !== false;
+      setAutoplay(opts.play !== false && embedded(next.kind));
       if (opts.lane) setLane(opts.lane);
       if (opts.source) {
         sourceRef.current = opts.source;
@@ -323,7 +338,9 @@ export default function DockPlayer() {
 
   useEffect(() => {
     const el = mediaRef.current;
-    if (!el || !track) return;
+    // Nothing to seek and nothing to start: an embed governs its own transport
+    // from inside the frame, and the reader presses its play button, not ours.
+    if (!el || !track || !dockable(track.kind)) return;
 
     const at = resumeAt.current;
     resumeAt.current = 0;
@@ -358,6 +375,10 @@ export default function DockPlayer() {
   // and not a hand-built transport.
   useEffect(() => {
     if (!track || typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    // An embed publishes its own metadata to the OS from inside the frame.
+    // Ours would overwrite it with the same title and a play button that
+    // controls nothing.
+    if (!dockable(track.kind)) return;
 
     try {
       navigator.mediaSession.metadata = new window.MediaMetadata({
@@ -413,7 +434,7 @@ export default function DockPlayer() {
 
   const stop = useCallback(() => {
     const el = mediaRef.current;
-    if (el) el.pause();
+    if (el && typeof el.pause === 'function') el.pause();
     const src = trackRef.current?.src;
     if (src) dismissed.current.add(src);
     trackRef.current = null;
@@ -481,10 +502,18 @@ export default function DockPlayer() {
               if (inline) {
                 at = inline.currentTime;
                 inline.pause();
-                // Two transports showing the same thing is one too many, and
-                // the one that just stopped is the one to lose.
-                inline.closest('.episode-player')?.setAttribute('data-handed-over', '');
               }
+              // Two players showing the same thing is one too many, and the one
+              // being handed over is the one to lose. Done off the player
+              // rather than off the media element, because an embed has no
+              // media element to find — and an embed left running behind the
+              // dock is not merely redundant, it is the same video playing
+              // twice, out of sync, out loud.
+              (inline?.closest('.episode-player') ??
+                document.querySelector('.episode-player.is-inline'))?.setAttribute(
+                'data-handed-over',
+                '',
+              );
             }
 
             // A page that ships its own running order — a topic's playlist —
@@ -631,7 +660,10 @@ export default function DockPlayer() {
 
   if (!track) return null;
 
-  const video = track.kind === 'video';
+  const embed = embedded(track.kind);
+  // Both take the picture layout, the corner on a wide screen and the
+  // thumbnail; only one of them is an element this can drive.
+  const video = track.kind === 'video' || embed;
   const list = upNext;
   const here = list.findIndex((entry) => entry.track?.src === track.src);
   const remaining = here === -1 ? list.length : list.length - here - 1;
@@ -651,7 +683,25 @@ export default function DockPlayer() {
         {track.show && <span className="show">{track.show}</span>}
       </div>
 
-      {video ? (
+      {embed ? (
+        // Keyed on the source so stepping through a playlist replaces the frame
+        // rather than re-pointing it: a cross-origin iframe whose src changes
+        // pushes an entry onto the browser's history, and after three videos
+        // the back button walks back through them instead of leaving the page.
+        <iframe
+          key={track.src}
+          className="episode-video"
+          src={embedSrc(track.src, autoplay)}
+          title={track.title}
+          loading="eager"
+          // No referrerPolicy, deliberately — YouTube authorizes an embed by
+          // its Referer and `no-referrer` makes every video fail with Error
+          // 153. The same attribute list the in-page player uses, plus
+          // autoplay, which is what makes pressing play out here start it.
+          allow="accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"
+        />
+      ) : video ? (
         <video
           key="video"
           ref={/** @type {any} */ (mediaRef)}
@@ -729,7 +779,10 @@ export default function DockPlayer() {
           </button>
         )}
 
-        {video && canPop && (
+        {/* Not for an embed: picture-in-picture is asked of a media element,
+            and an iframe is not one. The frame's own player usually offers it
+            from inside, which is the right place for it to come from. */}
+        {video && !embed && canPop && (
           <button type="button" onClick={popOut} title="Pop the video out of the page">
             <span aria-hidden="true">↗</span>
             <span className="label">Pop out</span>
@@ -794,6 +847,29 @@ function listFrom(holder) {
     // A malformed list is a bug in a page, not a reason to refuse to play the
     // track the reader actually clicked. They get it on its own.
     return null;
+  }
+}
+
+/**
+ * An embed's URL, told whether to start itself.
+ *
+ * YouTube and PeerTube both read `autoplay` off the query, which is the only
+ * instruction either of them will take from out here. Built by URL rather than
+ * by string so an embed that already carries a query keeps it.
+ *
+ * @param {string} src
+ * @param {boolean} start
+ * @returns {string}
+ */
+function embedSrc(src, start) {
+  if (!start) return src;
+
+  try {
+    const url = new URL(src);
+    url.searchParams.set('autoplay', '1');
+    return url.toString();
+  } catch {
+    return src;
   }
 }
 

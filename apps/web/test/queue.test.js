@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { dockable, laneFor, lanesOffered, trackFor } from '../src/lib/queue.js';
+import { dockCarries, dockable, embedded, laneFor, lanesOffered, trackFor } from '../src/lib/queue.js';
 
 /** An episode: an mp3 enclosure on a post. */
 const EPISODE = {
@@ -42,7 +42,7 @@ test('a media post offers its own lane and the read lane, an article only read',
   assert.deepEqual(lanesOffered(POST), ['read']);
 });
 
-test('the dock only claims media it holds an element for', () => {
+test('the dock only claims to drive media it holds an element for', () => {
   assert.equal(dockable('audio'), true);
   assert.equal(dockable('video'), true);
   // Somebody else's iframe: it cannot be started, seeked or resumed from out
@@ -50,6 +50,22 @@ test('the dock only claims media it holds an element for', () => {
   assert.equal(dockable('youtube'), false);
   assert.equal(dockable('peertube'), false);
   assert.equal(dockable(null), false);
+});
+
+test('the dock carries embeds it cannot drive', () => {
+  assert.equal(embedded('youtube'), true);
+  assert.equal(embedded('peertube'), true);
+  assert.equal(embedded('video'), false);
+  assert.equal(embedded('audio'), false);
+
+  // The wider question, and the one trackFor asks. Nine in ten videos on a
+  // topic are one of these; a dock that refused them would be a watch queue
+  // over a tenth of the videos.
+  assert.equal(dockCarries('youtube'), true);
+  assert.equal(dockCarries('peertube'), true);
+  assert.equal(dockCarries('audio'), true);
+  assert.equal(dockCarries('video'), true);
+  assert.equal(dockCarries(null), false);
 });
 
 test('a track carries everything the player needs across a page load', () => {
@@ -75,7 +91,16 @@ test('a guid that needs escaping survives the round trip into a link', () => {
   assert.equal(track.href, `/show/read?p=${encodeURIComponent('https://show.example/1?a=b&c=d')}`);
 });
 
-test('nothing the dock cannot play is offered to it as a track', () => {
-  assert.equal(trackFor(YOUTUBE, { slug: 'tube', feedTitle: 'Tube' }), null);
+test('an embed becomes a track, and says which kind it is', () => {
+  const track = trackFor(YOUTUBE, { slug: 'tube', feedTitle: 'Tube' });
+
+  // The kind is what tells the dock to render a frame instead of a media
+  // element, and what every "can we drive this" check keys off afterwards.
+  assert.equal(track.kind, 'youtube');
+  assert.equal(track.src, YOUTUBE.audio_url);
+  assert.equal(track.href, '/tube/read?p=yt-1');
+});
+
+test('a post with nothing attached is not offered to the dock as a track', () => {
   assert.equal(trackFor(POST, { slug: 'blog', feedTitle: 'Blog' }), null);
 });

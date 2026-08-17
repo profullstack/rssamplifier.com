@@ -58,9 +58,10 @@ import QueueButton from './QueueButton.jsx';
 export default function PlaylistPlayer({ entries, label, queued = {}, next = '/queue' }) {
   if (entries.length === 0) return null;
 
-  // Only what the dock can actually carry. An embed in the middle of a running
-  // order is not something to stop on, and leaving it in would put a track in
-  // "up next" that the next button can never reach.
+  // Only what the dock can actually carry, which since the dock learned to hold
+  // an iframe is very nearly everything — a YouTube or PeerTube row is now a
+  // stop on the running order rather than a gap in it. What still drops out is
+  // a row with no feed behind it to link back to.
   const order = entries.map((entry) => entry.dock).filter(Boolean);
 
   return (
@@ -91,7 +92,12 @@ export default function PlaylistPlayer({ entries, label, queued = {}, next = '/q
               // Read by DockPlayer's delegated click handler, the same way every
               // other play control on the site is.
               data-dock-play={entry.dock ? JSON.stringify(entry.dock) : undefined}
-              data-dock-src={entry.dock ? entry.src : undefined}
+              // What the dock will call this once it is playing, which is not
+              // always the enclosure: a PeerTube row is listed at its download
+              // URL and played at its embed URL. The dock matches this against
+              // the track it holds, so it has to be the dock's spelling or the
+              // row never lights up.
+              data-dock-src={entry.dock ? entry.dock.src : undefined}
               data-lane={entry.dock ? entry.lane : undefined}
             >
               <span className="playlist-num" aria-hidden="true">

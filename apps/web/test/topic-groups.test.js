@@ -53,6 +53,31 @@ test('playlists are only offered where the entries are files', () => {
   // An .m3u of a topic's writing is an empty playlist.
   assert.equal(topicGroup('blogs').playlists, false);
   assert.equal(topicGroup('comics').playlists, false);
+  // And an .m3u of a topic's videos is a broken one: YouTube's enclosure is an
+  // embed page and PeerTube's a download endpoint that stops resolving.
+  assert.equal(topicGroup('videos').playlists, false);
+  assert.equal(topicGroup('reels').playlists, false);
+});
+
+test('the browser can play more than a playlist file can carry', () => {
+  // Everything with a playlist plays here too.
+  assert.equal(topicGroup('podcasts').player, true);
+  assert.equal(topicGroup('audio').player, true);
+  assert.equal(topicGroup('lives').player, true);
+  // ...and videos, which is the whole gap between the two questions: they play
+  // in the docked player and cannot be written to a playlist file at all.
+  assert.equal(topicGroup('videos').player, true);
+  assert.equal(topicGroup('reels').player, true);
+  // Writing is still writing.
+  assert.equal(topicGroup('blogs').player, false);
+  assert.equal(topicGroup('comics').player, false);
+});
+
+test('a watch group is the one whose playlist docks instead of playing in the page', () => {
+  assert.equal(topicGroup('videos').watch, true);
+  assert.equal(topicGroup('reels').watch, true);
+  assert.equal(topicGroup('podcasts').watch, false);
+  assert.equal(topicGroup('audio').watch, false);
 });
 
 test('only the groups a topic actually has are offered', () => {

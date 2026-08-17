@@ -36,6 +36,10 @@ export default async function TopicPlayer({ topic, group = null }) {
   const listing = group ? `/topics/${slug}/${group.segment}` : `/topics/${slug}`;
   const hours = queueRuntime(tracks);
   const what = group ? group.item : 'episodes and tracks';
+  // A topic's videos are a queue to watch rather than one to hear, which
+  // changes two things on this page and nothing else: the verb, and whether
+  // there is a playlist file worth offering.
+  const watch = Boolean(group?.watch);
 
   // Which of these the reader already has lined up — one statement for the
   // whole playlist, because fifty rows asking one at a time is fifty round
@@ -87,7 +91,7 @@ export default async function TopicPlayer({ topic, group = null }) {
         <>
           <p className="lede">
             {tracks.length === 1
-              ? 'One thing to play on this topic.'
+              ? `One thing to ${watch ? 'watch' : 'play'} on this topic.`
               : `The ${tracks.length} most recent ${what} on this topic${hours ? `, about ${hours} of it` : ''}.`}
           </p>
 
@@ -117,13 +121,28 @@ export default async function TopicPlayer({ topic, group = null }) {
           drawn from. The `.m3u` carries `?dl=1` because the bare address now
           answers a browser with this page, which is the whole point of it. */}
       <p className="format-links">
-        <span>This playlist:</span>
-        <a href={rawPlaylistPath(`${listing}.m3u`)} title="M3U playlist — for VLC, mpv or a podcast app">
-          .m3u
-        </a>
-        <a href={rawPlaylistPath(`${listing}.pls`)} title="PLS playlist — for VLC, mpv or a podcast app">
-          .pls
-        </a>
+        {/* Not offered on a video queue. An `.m3u` of it is not a smaller
+            playlist, it is a broken one: YouTube's enclosure is an embed page
+            and PeerTube's is a download endpoint that stops resolving once the
+            instance re-encodes, so most of the file would be URLs that open an
+            error in VLC. See IN_BROWSER_KINDS. */}
+        {!watch && (
+          <>
+            <span>This playlist:</span>
+            <a
+              href={rawPlaylistPath(`${listing}.m3u`)}
+              title="M3U playlist — for VLC, mpv or a podcast app"
+            >
+              .m3u
+            </a>
+            <a
+              href={rawPlaylistPath(`${listing}.pls`)}
+              title="PLS playlist — for VLC, mpv or a podcast app"
+            >
+              .pls
+            </a>
+          </>
+        )}
         <a href={listing}>All the feeds behind it</a>
       </p>
     </>

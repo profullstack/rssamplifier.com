@@ -139,9 +139,12 @@ test('a video row is watched rather than listened to, and keeps its poster', () 
   assert.equal(entry.dock.image, 'https://cdn.example.com/thumb.jpg');
 });
 
-test('what the dock cannot carry stays in the list as a plain link', () => {
-  // A YouTube enclosure plays in somebody else's iframe: it cannot be started
-  // from the dock, so the row keeps its place and loses only the payload.
+test('an embed is a stop on the running order, not a gap in it', () => {
+  // This row used to come back with `dock: null`, on the reasoning that a
+  // YouTube enclosure plays in somebody else's iframe and the dock had no
+  // element for one. The dock holds an iframe now — see dockCarries — and on a
+  // video topic these are most of the list, so the row is queued like any
+  // other. What it still does not get is a claim that the dock can drive it.
   const youtube = playlistEntry({
     guid: 'g3',
     url: 'https://www.youtube.com/watch?v=abc',
@@ -153,10 +156,33 @@ test('what the dock cannot carry stays in the list as a plain link', () => {
   });
 
   assert.equal(youtube.title, 'A video');
-  assert.equal(youtube.dock, null);
+  assert.equal(youtube.dock.kind, 'youtube');
+  assert.equal(youtube.dock.href, '/a-channel/read?p=g3');
+  assert.equal(youtube.lane, 'watch');
+});
 
-  // And a row whose feed we cannot name has nowhere to send the dock's title
-  // link, so it gets the same treatment rather than a link to nowhere.
+test('a PeerTube row is listed at one URL and played at another', () => {
+  // The enclosure is a download endpoint; the dock plays the embed. The two
+  // being different is what the row highlight has to survive — PlaylistPlayer
+  // publishes `entry.dock.src`, not `entry.src`, for exactly this row.
+  const peertube = playlistEntry({
+    guid: 'g5',
+    url: 'https://tube.example/w/abc123xyz',
+    title: 'A talk',
+    audio_url: 'https://tube.example/download/videos/generate/uuid?videoFileIds=4',
+    audio_type: 'video/mp4',
+    feed_slug: 'a-tube',
+    feed_title: 'A Tube',
+  });
+
+  assert.equal(peertube.dock.kind, 'peertube');
+  assert.equal(peertube.dock.src, 'https://tube.example/videos/embed/abc123xyz');
+  assert.notEqual(peertube.dock.src, peertube.src);
+});
+
+test('a row with no feed behind it stays a plain link', () => {
+  // Nowhere to send the dock's title link, so it gets no payload rather than a
+  // link to nowhere.
   const orphan = playlistEntry({
     guid: 'g4',
     title: 'Homeless episode',

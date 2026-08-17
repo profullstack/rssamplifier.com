@@ -138,9 +138,11 @@ export function trackFrom(row) {
  * a poster and a way back to the post. Reading the row twice, in two files,
  * is how they end up disagreeing about what a track is.
  *
- * `dock` is null for the media the dock has no element for — a YouTube or
- * PeerTube enclosure — and those rows stay in the list as links to the file,
- * which is what they were before any of this.
+ * `dock` is null only for a row with no feed behind it. It used to be null for
+ * YouTube and PeerTube too, on the reasoning that the dock had no element for
+ * one; the dock carries an embed now — see `dockCarries` in lib/queue.js — and
+ * on a video topic that is most of the list, so those rows are queued like any
+ * other rather than left behind as bare links.
  *
  * The queue handles — slug, guid, item id and the lanes on offer — come out
  * here too, and they are a different question from `dock`. Saving a video for
