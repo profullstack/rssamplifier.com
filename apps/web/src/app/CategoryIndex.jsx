@@ -5,6 +5,8 @@ import { AD_TEXT, adPlan } from '../lib/ads.js';
 import { CATEGORIES } from '../lib/categories.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
+import { Avatar } from './Thumb.jsx';
+import { feedImage } from '../lib/thumbs.js';
 
 /** Feeds per category page. Matches the home page's run length. */
 export const PAGE_SIZE = 60;
@@ -107,6 +109,7 @@ export default async function CategoryIndex({ kind, page = 1 }) {
           {rows.flatMap((f, i) => {
             const row = (
               <a className="feed-row" key={String(f.slug)} href={`/${f.slug}`}>
+                <Avatar src={feedImage(f)} title={f.title} slug={f.slug} />
                 <h3>{f.title}</h3>
                 {f.description && <p>{f.description}</p>}
                 <div className="feed-meta">

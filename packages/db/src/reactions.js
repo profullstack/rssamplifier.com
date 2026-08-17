@@ -100,8 +100,9 @@ export async function scoreFor(db, itemId) {
  */
 export async function likedItems(db, userId, limit = 200) {
   const { rows } = await db.execute({
-    sql: `select i.guid, i.url, i.title, i.summary, i.published_at,
+    sql: `select i.guid, i.url, i.title, i.summary, i.published_at, i.image_url,
                  f.slug as feed_slug, f.title as feed_title,
+                 f.image_url as feed_image, f.card_url as feed_card,
                  r.updated_at as liked_at
           from post_reactions r
           join feed_items i on i.id = r.item_id

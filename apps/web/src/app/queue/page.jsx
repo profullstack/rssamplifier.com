@@ -4,7 +4,9 @@ import { queue } from '@rssamplifier/db';
 import { db } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { LANE_LABEL, trackFor } from '../../lib/queue.js';
+import { postThumb } from '../../lib/thumbs.js';
 import PlayButton from '../PlayButton.jsx';
+import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -115,6 +117,10 @@ export default async function QueuePage({ searchParams }) {
                   <span className="queue-index" aria-hidden="true">
                     {i + 1}
                   </span>
+
+                  {/* Smaller than a listing's, because a queue row is one line
+                      of type and a control strip rather than a summary. */}
+                  <Thumb src={postThumb(entry)} href={href} className="entry-thumb queue-thumb" />
 
                   <div className="queue-body">
                     <a className="queue-title" href={href}>

@@ -277,3 +277,23 @@ test('the rewrite rule offers exactly the formats that exist', () => {
   assert.ok(rule, 'no topic syndication rewrite found in next.config.mjs');
   assert.deepEqual(rule[1].split('|').sort(), [...SYNDICATION_FORMATS.keys()].sort());
 });
+
+test('a post picture rides along in every format that can carry one', () => {
+  // Round-trips through our own parser on purpose: the crawler reads
+  // media:thumbnail, so a document built here and crawled back keeps its
+  // pictures rather than losing them at the boundary between the two.
+  const withImage = [{ ...items[0], image_url: 'https://example.com/hero.jpg' }];
+
+  const rss = parser.parse(buildRss(channel, withImage));
+  assert.equal(rss.rss.channel.item['media:thumbnail']['@url'], 'https://example.com/hero.jpg');
+
+  const atom = parser.parse(buildAtom(channel, withImage));
+  assert.equal(atom.feed.entry['media:thumbnail']['@url'], 'https://example.com/hero.jpg');
+
+  const json = JSON.parse(buildJsonFeed(channel, withImage));
+  assert.equal(json.items[0].image, 'https://example.com/hero.jpg');
+
+  // And a post without one carries no empty element.
+  assert.ok(!buildRss(channel, items).includes('media:thumbnail'));
+  assert.ok(!buildAtom(channel, items).includes('media:thumbnail'));
+});

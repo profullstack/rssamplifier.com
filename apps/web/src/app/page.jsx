@@ -4,6 +4,8 @@ import { db, siteUrl } from '../lib/db.js';
 import { AD_TEXT, adPlan } from '../lib/ads.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
+import { Avatar } from './Thumb.jsx';
+import { feedImage } from '../lib/thumbs.js';
 import Toolbar from './Toolbar.jsx';
 import { CATEGORIES } from './CategoryIndex.jsx';
 
@@ -140,6 +142,10 @@ export default async function Home() {
           {rows.flatMap((f, i) => {
             const row = (
               <a className="feed-row" key={String(f.slug)} href={`/${f.slug}`}>
+                {/* Cover art where the feed publishes any, its initial where it
+                    does not — three quarters of the directory is the second
+                    case, so the column is always there and never empty. */}
+                <Avatar src={feedImage(f)} title={f.title} slug={f.slug} />
                 <h3>{f.title}</h3>
                 {f.description && <p>{f.description}</p>}
                 <div className="feed-meta">

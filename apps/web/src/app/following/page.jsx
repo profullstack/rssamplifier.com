@@ -1,9 +1,11 @@
 import { redirect } from 'next/navigation';
 import { accounts } from '@rssamplifier/db';
 
+import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
+import { postThumb } from '../../lib/thumbs.js';
 import {
   RIVER_LIMIT,
   RIVER_TOPICS,
@@ -172,12 +174,22 @@ export default async function FollowingPage({ searchParams }) {
             : 'Nothing published recently by anything you follow.'}
         </p>
       ) : (
-        items.map((p) => (
-          <article className="entry" key={`${p.feed_slug}-${p.guid}`}>
+        items.map((p) => {
+          // A mixed river reads better with pictures in it than without, and a
+          // post with none of its own borrows its feed's cover art — which the
+          // query selects as feed_image for exactly this.
+          const thumb = postThumb(p);
+          const readHref = `/${p.feed_slug}/read?p=${encodeURIComponent(String(p.guid))}`;
+
+          return (
+          <article
+            className={thumb ? 'entry has-thumb' : 'entry'}
+            key={`${p.feed_slug}-${p.guid}`}
+          >
+            <Thumb src={thumb} href={readHref} />
+
             <h3>
-              <a href={`/${p.feed_slug}/read?p=${encodeURIComponent(String(p.guid))}`}>
-                {String(p.title)}
-              </a>
+              <a href={readHref}>{String(p.title)}</a>
             </h3>
             {p.summary && <p>{String(p.summary)}</p>}
             <p className="meta">
@@ -197,7 +209,8 @@ export default async function FollowingPage({ searchParams }) {
               }`}
             </p>
           </article>
-        ))
+          );
+        })
       )}
 
       <Toolbar />

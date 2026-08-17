@@ -13,9 +13,10 @@
  */
 
 // Bumped with the brand assets: the activate handler drops every cache that is
-// not this version, which is what evicts the old SVG icon and the manifest that
-// pointed at it from clients that already installed them.
-const VERSION = 'v2';
+// not this version, which is what evicts the previous artwork from clients that
+// already installed it. The filenames do not change when the art does, so
+// without the bump an installed app keeps serving the logo it cached.
+const VERSION = 'v3';
 const SHELL = `shell-${VERSION}`;
 const ASSETS = `assets-${VERSION}`;
 

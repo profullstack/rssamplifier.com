@@ -117,6 +117,32 @@ export default function RootLayout({ children }) {
           }}
         />
 
+        {/* One listener for every thumbnail on the page.
+         *
+         * A directory of fifty thousand publishers always has some dead image
+         * URLs in it, and a browser draws its broken-image icon over any image
+         * that has a size in CSS — an empty `alt` does not stop it, because the
+         * box is still there to paint. So the box is what goes: the image hides
+         * itself and the row is left with the empty tile the design already has
+         * for a post with no picture at all.
+         *
+         * Delegated, in the capture phase, because `error` on an image does not
+         * bubble — and delegated rather than an `onError` per image so that a
+         * listing of fifty rows stays fifty server-rendered `<img>` tags and not
+         * fifty hydrated components. It sets a style rather than removing the
+         * node, because the node is React's: removing it from under a tree that
+         * has not hydrated yet is a mismatch, and an inline style React never set
+         * is not something it will patch back. Guarded on the empty alt, so it
+         * can only ever act on an image the markup called decorative. With
+         * JavaScript off a dead thumbnail shows the browser's icon, which is the
+         * same trade the signed-in hint above makes. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "addEventListener('error',function(e){var t=e.target;if(t&&t.tagName==='IMG'&&t.alt==='')t.style.display='none'},true)",
+          }}
+        />
+
         <a className="skip-link" href="#main">
           Skip to content
         </a>
@@ -130,15 +156,15 @@ export default function RootLayout({ children }) {
                 are the intrinsic pixels, so the strip reserves its space before
                 the file lands and the nav below it never jumps. */}
             <a className="wordmark" href="/">
-              {/* Two files rather than one, because the logo's "Amplifier" half
-                  is near-black and disappears into the dark palette. <picture>
-                  rather than a CSS filter so each version keeps its own colour,
-                  and rather than two <img>s so only the matching one is ever
-                  fetched. The alt lives on the <img>, which is the element that
-                  actually renders either way. */}
+              {/* Two files rather than one, because the logo's "RSS" half and
+                  the megaphone are near-black and disappear into the dark
+                  palette. <picture> rather than a CSS filter so each version
+                  keeps its own colour, and rather than two <img>s so only the
+                  matching one is ever fetched. The alt lives on the <img>, which
+                  is the element that actually renders either way. */}
               <picture>
                 <source srcSet="/logo-dark.png" media="(prefers-color-scheme: dark)" />
-                <img src="/logo.png" alt="RSS Amplifier" width="532" height="96" />
+                <img src="/logo.png" alt="RSS Amplifier" width="646" height="96" />
               </picture>
             </a>
 

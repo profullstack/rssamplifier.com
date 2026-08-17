@@ -7,6 +7,7 @@ import {
   drainDiscoveryKeywords,
 } from '@rssamplifier/ingest';
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
+import { findFeedCard } from '@rssamplifier/feed';
 
 import { createRecorder, toEntry } from './log.js';
 
@@ -56,6 +57,15 @@ const sourceIntervalMs = (Number(env['DISCOVERY_SOURCE_INTERVAL_SECONDS']) || 18
 // the supply of topics worth searching grows at the speed of the crawler.
 const topicSearchIntervalMs = (Number(env['DISCOVERY_TOPIC_INTERVAL_SECONDS']) || 86400) * 1000;
 
+// Feeds whose picture is looked up per pass. Small, because each one is a page
+// fetch plus up to two image probes against a cold host — and unlike a crawl,
+// nobody is waiting on it.
+const cardBatch = Number(env['CARD_BACKFILL_BATCH']) || 8;
+// How often that pass runs. Its own timer for the same reason the cluster walk
+// below has one: a tick spends minutes inside the crawl, and work queued after
+// that only happens if the process lives long enough to reach it.
+const cardIntervalMs = (Number(env['CARD_BACKFILL_SECONDS']) || 20) * 1000;
+
 // Items keyed for grouping per tick. Each one is a title hashed in process and
 // a single-column update, so the batch is bounded by the write round trip
 // rather than by CPU.
@@ -90,6 +100,9 @@ let clusterBackfill = true;
 let clusterCursor = '';
 // Guards the walk against overlapping itself if one page runs long.
 let backfilling = false;
+// The same guard for the card pass, which makes outbound requests and so must
+// never be allowed to stack.
+let carding = false;
 let lastPurge = 0;
 let lastSources = 0;
 let lastTopicSearch = 0;
@@ -292,10 +305,76 @@ async function backfillTick() {
   }
 }
 
+/**
+ * Go and look at what each feed offers as its picture.
+ *
+ * The directory stores whatever cover art a feed declared, and three quarters of
+ * the blogs in it declared none — so a listing had nothing to put beside their
+ * names, and a shared link had no card. Both are answered by the same look: the
+ * site's own og:image, fetched, with the first few kilobytes read to find out how
+ * big the image really is. The size is what makes it safe to promise to a
+ * crawler, and a URL cannot be trusted for it — a favicon and a 1200x630 card
+ * are the same string as far as the markup is concerned.
+ *
+ * Its own timer, and a small batch, because this is speculative work against
+ * other people's servers. Every feed is answered exactly once: a publisher with
+ * no picture is recorded as such rather than being asked again tomorrow.
+ */
+async function cardTick() {
+  if (stopping || carding) return;
+  carding = true;
+
+  try {
+    const feeds = await q.feedsNeedingCard(db, cardBatch);
+    if (feeds.length === 0) {
+      // Nothing waiting. Not logged: this is the steady state once the backfill
+      // has drained, and a line a second saying so is not a log.
+      return;
+    }
+
+    let found = 0;
+    let cards = 0;
+
+    // Sequentially rather than in parallel. The batch is small, each feed is one
+    // page and up to two images from a stranger's server, and the crawl running
+    // alongside this already owns the outbound request budget.
+    for (const feed of feeds) {
+      if (stopping) break;
+
+      try {
+        const card = await findFeedCard({
+          imageUrl: feed.image_url ? String(feed.image_url) : '',
+          siteUrl: feed.site_url ? String(feed.site_url) : '',
+        });
+
+        await q.setFeedCard(db, String(feed.id), card);
+        if (card.state === 'ok') found += 1;
+        if (card.fit === 'large' || card.fit === 'small') cards += 1;
+      } catch (err) {
+        // One publisher's server misbehaving must not stop the batch, and the
+        // row is marked so the queue moves on rather than handing it back.
+        await q
+          .setFeedCard(db, String(feed.id), { state: 'error' })
+          .catch(() => {});
+        log('card-error', { slug: String(feed.slug ?? ''), message: String(err?.message ?? err) });
+      }
+    }
+
+    const coverage = await q.cardCoverage(db);
+    log('cards', { looked: feeds.length, found, cards, pending: coverage.pending });
+  } catch (err) {
+    log('card-tick-error', { message: String(err?.message ?? err) });
+  } finally {
+    carding = false;
+  }
+}
+
 const timer = setInterval(tick, intervalMs);
 const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
+const cardTimer = setInterval(cardTick, cardIntervalMs);
 void tick();
 void backfillTick();
+void cardTick();
 
 log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency, discoveryBatch });
 
@@ -308,6 +387,7 @@ function shutdown(signal) {
   stopping = true;
   clearInterval(timer);
   clearInterval(backfillTimer);
+  clearInterval(cardTimer);
 
   // Recorded before the buffer is closed, so the live log's last line is the
   // daemon saying it stopped rather than the log simply going quiet — which is
