@@ -56,6 +56,11 @@ const sourceIntervalMs = (Number(env['DISCOVERY_SOURCE_INTERVAL_SECONDS']) || 18
 // the supply of topics worth searching grows at the speed of the crawler.
 const topicSearchIntervalMs = (Number(env['DISCOVERY_TOPIC_INTERVAL_SECONDS']) || 86400) * 1000;
 
+// Items keyed for grouping per tick. Each one is a title hashed in process and
+// a single-column update, so the batch is bounded by the write round trip
+// rather than by CPU.
+const clusterBatch = Number(env['CLUSTER_BACKFILL_BATCH']) || 500;
+
 // Whether the daemon's log is also written to the database, where /crawlstats
 // can stream it. On by default; an operator debugging against a production
 // database from a laptop can turn it off so their own runs stay out of the
@@ -71,6 +76,9 @@ const recorder = createRecorder({
 
 let running = false;
 let stopping = false;
+// Whether any item still lacks a grouping key. Latches off for good once the
+// backfill drains, so a finished migration costs nothing on every later tick.
+let clusterBackfill = true;
 let lastPurge = 0;
 let lastSources = 0;
 let lastTopicSearch = 0;
@@ -197,6 +205,25 @@ async function tick() {
       lastTopics = Date.now();
       const topics = await q.refreshTopics(db);
       log('topics', { topics, ms: Date.now() - lastTopics });
+    }
+
+    // Grouping keys for the items stored before the column existed. Runs every
+    // tick while there is anything left and then costs one indexed lookup that
+    // returns nothing, which is why it is not on a timer: the work ends on its
+    // own, and until it does there is no reason to go slower.
+    //
+    // Last in the tick on purpose. It is the only step here that nobody is
+    // waiting on — a river that still shows a duplicate for another hour is a
+    // smaller problem than a crawl that ran late.
+    if (clusterBackfill) {
+      try {
+        const filled = await q.backfillClusterKeys(db, clusterBatch);
+        if (filled.scanned) log('cluster-backfill', filled);
+        // Nothing left to key. Stop asking for the rest of this process's life.
+        else clusterBackfill = false;
+      } catch (err) {
+        log('cluster-backfill-error', { message: String(err?.message ?? err) });
+      }
     }
 
     if (Date.now() - lastPurge > 3_600_000) {

@@ -1,3 +1,5 @@
+import { clusterKey, dedupeItems } from '@rssamplifier/feed';
+
 import { newId, nowIso } from './client.js';
 
 /**
@@ -13,10 +15,10 @@ import { newId, nowIso } from './client.js';
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
-  fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at`;
+  fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at, source_kind`;
 
 /** The categories the directory is browsable by. */
-export const KINDS = ['blog', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
+export const KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
 
 /**
  * The categories a crawler can work out for itself.
@@ -30,8 +32,13 @@ export const KINDS = ['blog', 'podcast', 'music', 'video', 'comic', 'live', 'ree
  * `live` was among them until playlists were indexed. RSS still cannot state
  * it, but HLS can and does: a manifest with no `#EXT-X-ENDLIST` is a
  * broadcaster saying the stream has not finished. See packages/feed/src/kinds.js.
+ *
+ * `news` is derived, but only where the evidence is unarguable — a newsroom and
+ * a blog publish the same document, so `isNewsroom` wants two independent
+ * signals and lets the quiet section feeds go. It is the one category that is
+ * routinely both: detected for the wires, curated for the rest.
  */
-export const DERIVED_KINDS = ['blog', 'podcast', 'music', 'video', 'live'];
+export const DERIVED_KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'live'];
 
 /**
  * Read a caller-supplied kind, rejecting anything that is not one.
@@ -46,6 +53,46 @@ export const DERIVED_KINDS = ['blog', 'podcast', 'music', 'video', 'live'];
 export function normalizeKind(kind) {
   const value = String(kind ?? '').toLowerCase();
   return KINDS.includes(value) ? value : null;
+}
+
+/**
+ * Read a set of kinds, keeping only the real ones.
+ *
+ * A topic's sub-groups are mostly one kind each, but not all of them: "audio"
+ * is podcasts and music together, because a listener looking for something to
+ * put on does not care which of the two a feed was filed as. So the queries
+ * take a set rather than a kind, and a set of one covers the ordinary case.
+ *
+ * Returns null — meaning "every kind", the same as passing nothing — when
+ * nothing usable survives, so a caller that guessed a category name gets the
+ * whole topic instead of an empty page.
+ *
+ * @param {unknown} kinds
+ * @returns {string[]|null}
+ */
+export function normalizeKinds(kinds) {
+  const list = (Array.isArray(kinds) ? kinds : [kinds])
+    .map((kind) => normalizeKind(kind))
+    .filter((kind) => kind !== null);
+
+  return list.length > 0 ? [...new Set(list)] : null;
+}
+
+/**
+ * A `category in (…)` fragment and its arguments, or nothing at all.
+ *
+ * Placeholders rather than interpolation even though `normalizeKinds` has
+ * already rejected anything that is not a known kind: the validation is what
+ * makes it safe, and the placeholders are what keep it safe if somebody later
+ * calls this with a value that skipped the validation.
+ *
+ * @param {string[]|null} kinds
+ * @param {string} [column]
+ * @returns {{ sql: string, args: string[] }}
+ */
+function kindFilter(kinds, column = 'f.category') {
+  if (!kinds || kinds.length === 0) return { sql: '', args: [] };
+  return { sql: ` and ${column} in (${kinds.map(() => '?').join(', ')})`, args: kinds };
 }
 
 /**
@@ -211,8 +258,8 @@ export async function insertFeed(db, feed) {
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
        categories, category, status, last_fetched_at, last_success_at, error_count,
        fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at,
-       discovery_run_id)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?, ?)`,
+       discovery_run_id, source_kind)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       feed.slug,
@@ -233,6 +280,7 @@ export async function insertFeed(db, feed) {
       now,
       now,
       feed.discovery_run_id ?? null,
+      feed.source_kind === 'scraped' ? 'scraped' : 'feed',
     ],
   });
 
@@ -258,8 +306,8 @@ export async function upsertItems(db, feedId, items) {
   const statements = rows.map((i) => ({
     sql: `insert into feed_items
       (id, feed_id, guid, url, title, summary, content_html, author, image_url, published_at,
-       categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at, cluster_key)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict (feed_id, guid) do update set
         -- An episode already stored keeps its row, but a re-crawl fills in the
         -- audio it was stored without. Items imported before the media columns
@@ -286,11 +334,58 @@ export async function upsertItems(db, feedId, items) {
       i.audio?.bytes ?? null,
       i.audio?.seconds ?? null,
       now,
+      // Computed on the way in, so the river never pays for it. An empty string
+      // means "looked at, deliberately not groupable"; NULL is reserved for
+      // rows the backfill worker has not reached yet, and writing NULL here
+      // would put every new item back into its queue forever.
+      clusterKey(i.title || '') ?? '',
     ],
   }));
 
   await db.batch(statements, 'write');
   return statements.length;
+}
+
+/**
+ * Give one batch of older items a grouping key.
+ *
+ * Every item stored from now on is keyed as it arrives, so this exists only for
+ * the rows that predate the column — of which there are millions. It runs as a
+ * step of the poller's ordinary tick rather than as a migration or a one-off
+ * script: a single statement over the whole table would hold a write open on a
+ * network database for minutes, and a script is a thing somebody has to
+ * remember to run and to finish.
+ *
+ * The work is self-terminating. Each pass claims rows where cluster_key is
+ * null, writes a key or the "never group this" sentinel to every one of them,
+ * and so strictly shrinks the set it selects from next time. When it returns
+ * zero the backfill is done and the partial index behind it has shrunk to
+ * nothing.
+ *
+ * @param {Client} db
+ * @param {number} [limit] rows per pass
+ * @returns {Promise<{ scanned: number, keyed: number }>}
+ */
+export async function backfillClusterKeys(db, limit = 500) {
+  const { rows } = await db.execute({
+    sql: `select id, title from feed_items where cluster_key is null limit ?`,
+    args: [limit],
+  });
+
+  if (rows.length === 0) return { scanned: 0, keyed: 0 };
+
+  let keyed = 0;
+  const statements = rows.map((row) => {
+    const key = clusterKey(String(row.title ?? '')) ?? '';
+    if (key) keyed += 1;
+    return {
+      sql: `update feed_items set cluster_key = ? where id = ?`,
+      args: [key, row.id],
+    };
+  });
+
+  await db.batch(statements, 'write');
+  return { scanned: rows.length, keyed };
 }
 
 /**
@@ -481,25 +576,60 @@ export async function topicBySlug(db, slug) {
  * A feed's own categories rank above a keyword counted out of its prose: the
  * publisher saying "this is about homelabs" outranks us noticing the word.
  *
+ * `kinds` narrows it to a sub-group of the topic — the blogs about physics
+ * rather than everything about physics. See `normalizeKinds`.
+ *
  * @param {Client} db
  * @param {string} slug
- * @param {{ limit?: number, offset?: number }} [opts]
+ * @param {{ limit?: number, offset?: number, kinds?: string[]|null }} [opts]
  * @returns {Promise<object[]>}
  */
 export async function feedsForTopic(db, slug, opts = {}) {
-  const { limit = 60, offset = 0 } = opts;
+  const { limit = 60, offset = 0, kinds = null } = opts;
+  const filter = kindFilter(normalizeKinds(kinds));
 
   const { rows } = await db.execute({
     sql: `select f.slug, f.title, f.description, f.site_url, f.category, f.item_count,
                  k.keyword, k.count, k.source
           from feed_keywords k
           join feeds f on f.id = k.feed_id
-          where k.slug = ? and f.status <> 'dead'
+          where k.slug = ? and f.status <> 'dead'${filter.sql}
           order by case k.source when 'category' then 0 else 1 end, k.count desc, f.title asc
           limit ? offset ?`,
-    args: [slug, limit, offset],
+    args: [slug, ...filter.args, limit, offset],
   });
   return rows;
+}
+
+/**
+ * How many feeds a topic has of each category.
+ *
+ * One query for the whole breakdown rather than one per sub-group: the topic
+ * page links every group that has anything in it, so the alternative is eight
+ * counts on a page that already runs a listing query.
+ *
+ * Categories with nothing in them are absent rather than zero, which is what
+ * the page wants — a link to an empty sub-group is a link to a page that says
+ * "nothing here".
+ *
+ * @param {Client} db
+ * @param {string} slug
+ * @returns {Promise<Record<string, number>>}
+ */
+export async function topicKindCounts(db, slug) {
+  const { rows } = await db.execute({
+    sql: `select f.category, count(*) as n
+          from feed_keywords k
+          join feeds f on f.id = k.feed_id and f.status <> 'dead'
+          where k.slug = ?
+          group by f.category`,
+    args: [slug],
+  });
+
+  /** @type {Record<string, number>} */
+  const counts = {};
+  for (const row of rows) counts[String(row.category)] = Number(row.n ?? 0);
+  return counts;
 }
 
 /**
@@ -548,23 +678,51 @@ const TOPIC_RIVER_DAYS = 730;
  *
  * @param {Client} db
  * @param {string} slug
- * @param {{ limit?: number, feedCap?: number, days?: number }} [opts]
+ * @param {{
+ *   limit?: number,
+ *   feedCap?: number,
+ *   days?: number,
+ *   kinds?: string[]|null,
+ *   group?: boolean,
+ * }} [opts] `kinds` narrows the river to feeds of those categories; `group`
+ *   collapses the same story told by several of them, which costs an overread
+ *   and is why the SQL limit is `want` rather than `limit`.
  * @returns {Promise<object[]>}
  */
 export async function itemsForTopic(db, slug, opts = {}) {
-  const { limit = 50, feedCap = TOPIC_RIVER_FEEDS, days = TOPIC_RIVER_DAYS } = opts;
+  const {
+    limit = 50,
+    feedCap = TOPIC_RIVER_FEEDS,
+    days = TOPIC_RIVER_DAYS,
+    kinds = null,
+    group = true,
+  } = opts;
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  // Applied inside `picked`, so the cap counts feeds of the requested kinds
+  // rather than spending itself on the ones about to be filtered out. A river
+  // of a topic's podcasts would otherwise be drawn from whichever podcasts
+  // happened to survive a cut made mostly of blogs.
+  const filter = kindFilter(normalizeKinds(kinds));
+
+  // Grouping removes rows, so the query has to read past `limit` to still fill
+  // a page after the duplicates collapse. Three times over is enough for the
+  // observed shape — a story rarely runs in more than a handful of the feeds on
+  // one topic — and it is bounded, which a "keep reading until full" loop is
+  // not. Collapsing in JS rather than SQL is deliberate: the river's join is
+  // already the expensive part, and a correlated subquery to pick one row per
+  // key would be run over every row it returns.
+  const want = group ? Math.min(limit * 3, 600) : limit;
 
   const { rows } = await db.execute({
     sql: `with picked as (
             select k.feed_id from feed_keywords k
             join feeds f on f.id = k.feed_id and f.status <> 'dead'
-            where k.slug = ?
+            where k.slug = ?${filter.sql}
             order by case k.source when 'category' then 0 else 1 end, k.count desc
             limit ?
           )
           select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
-                 i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds,
+                 i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds, i.cluster_key,
                  f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
           from feed_items i
           join feeds f on f.id = i.feed_id
@@ -572,9 +730,17 @@ export async function itemsForTopic(db, slug, opts = {}) {
             and i.published_at >= ?
           order by i.published_at desc
           limit ?`,
-    args: [slug, feedCap, since, limit],
+    // `filter.args` belongs to the `picked` subquery and `want` to the outer
+    // limit, so the kind filter and the grouping overread bind in the order
+    // their placeholders appear rather than one replacing the other.
+    args: [slug, ...filter.args, feedCap, since, want],
   });
-  return rows;
+
+  if (!group) return rows;
+
+  // Ordered newest-first above, and dedupeItems keeps the first occurrence, so
+  // the telling that survives is the one that ran first.
+  return dedupeItems(rows).slice(0, limit);
 }
 
 /**
@@ -594,13 +760,14 @@ export async function itemsForTopic(db, slug, opts = {}) {
  * @returns {Promise<object[]>}
  */
 export async function mediaForTopic(db, slug, opts = {}) {
-  const { limit = 100, feedCap = TOPIC_RIVER_FEEDS } = opts;
+  const { limit = 100, feedCap = TOPIC_RIVER_FEEDS, kinds = null } = opts;
+  const filter = kindFilter(normalizeKinds(kinds));
 
   const { rows } = await db.execute({
     sql: `with picked as (
             select k.feed_id from feed_keywords k
             join feeds f on f.id = k.feed_id and f.status <> 'dead'
-            where k.slug = ?
+            where k.slug = ?${filter.sql}
             order by case k.source when 'category' then 0 else 1 end, k.count desc
             limit ?
           )
@@ -613,7 +780,7 @@ export async function mediaForTopic(db, slug, opts = {}) {
             and i.audio_url is not null
           order by i.published_at desc nulls last, i.created_at desc
           limit ?`,
-    args: [slug, feedCap, limit],
+    args: [slug, ...filter.args, feedCap, limit],
   });
   return rows;
 }
@@ -1149,8 +1316,10 @@ export async function dueFeeds(db, limit = 25) {
   const { rows } = await db.execute({
     // slug and title are along for the log: a crawler log line that names the
     // blog and links to its page is worth two columns the crawl itself is
-    // holding the row for anyway.
-    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes from feeds
+    // holding the row for anyway. source_kind is what main added, and the
+    // crawl still needs it to know what it is fetching.
+    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind
+          from feeds
           where status <> 'dead' and next_fetch_at <= ?
           order by next_fetch_at asc limit ?`,
     args: [nowIso(), limit],

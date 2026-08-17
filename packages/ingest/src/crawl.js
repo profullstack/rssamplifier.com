@@ -1,4 +1,4 @@
-import { resolveFeed, feedTopics } from '@rssamplifier/feed';
+import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q } from '@rssamplifier/db';
 
 /** Backoff ladder in minutes, indexed by consecutive error count. */
@@ -91,13 +91,21 @@ export async function refreshFeedKeywords(db, feedId, feed = {}) {
 /**
  * Re-crawl one feed and store anything new.
  *
+ * A scraped source is re-scraped rather than re-resolved. Its feed_url is a
+ * page of prose, so parsing it as a feed fails; and sending it back through
+ * resolveFeed would also spend nine speculative requests per crawl guessing at
+ * feed paths that were already ruled out when it was submitted.
+ *
  * @param {import('@libsql/client').Client} db
- * @param {{ id: string, feed_url: string, error_count?: number, fetch_interval_minutes?: number }} feed
+ * @param {{ id: string, feed_url: string, error_count?: number, fetch_interval_minutes?: number, source_kind?: string }} feed
  * @returns {Promise<{ ok: boolean, newItems: number, error?: string }>}
  */
 export async function crawlFeed(db, feed) {
   const id = String(feed.id);
-  const resolved = await resolveFeed(String(feed.feed_url));
+  const scraped = feed.source_kind === 'scraped';
+  const resolved = scraped
+    ? await scrapeFeed(String(feed.feed_url))
+    : await resolveFeed(String(feed.feed_url));
 
   if (!resolved.ok) {
     const errorCount = Number(feed.error_count ?? 0) + 1;

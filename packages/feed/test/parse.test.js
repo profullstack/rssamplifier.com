@@ -417,6 +417,163 @@ test('a JSON Feed article with a video attached is an article', () => {
   assert.equal(parseFeed(json).kind, 'blog');
 });
 
+// ---------------------------------------------------------------- news
+
+/**
+ * Items dated backwards from now, because the newsroom test asks whether a feed
+ * is publishing at a rate *today* — a fixture dated 2019 would measure as an
+ * archive however fast its items came, which is the point of the freshness
+ * guard and not something a fixture should have to fight.
+ *
+ * @param {number} count
+ * @param {number} apartMinutes
+ * @param {(i: number) => string} body what goes inside each <item>
+ * @param {number} [startMinutesAgo]
+ */
+function datedItems(count, apartMinutes, body, startMinutesAgo = 30) {
+  return Array.from({ length: count }, (_, i) => {
+    const at = new Date(Date.now() - (startMinutesAgo + i * apartMinutes) * 60_000);
+    return `<item>${body(i)}<pubDate>${at.toUTCString()}</pubDate></item>`;
+  }).join('\n');
+}
+
+const wrap = (title, description, items, extra = '') => `<?xml version="1.0"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel>
+  <title>${title}</title>
+  <link>https://n.example/</link>
+  <description>${description}</description>
+  ${extra}
+  ${items}
+</channel></rss>`;
+
+test('a feed publishing all day under many bylines is news', () => {
+  const staff = ['Ada Reyes', 'Bo Chen', 'Cass Ide', 'Dev Rao', 'Eve Toms'];
+  const rss = wrap(
+    'The Daily Chronicle',
+    'Reporting from the city',
+    datedItems(
+      12,
+      120,
+      (i) =>
+        `<title>Council votes ${i}</title><guid>https://n.example/${i}</guid>` +
+        `<description>The council met on Tuesday.</description>` +
+        `<dc:creator>${staff[i % staff.length]}</dc:creator>`,
+    ),
+  );
+  assert.equal(parseFeed(rss).kind, 'news');
+});
+
+test('a wire is news even unsigned and named for its section', () => {
+  // BBC Sport and Politics - CBSNews.com: twenty-odd headlines a day, not a
+  // byline anywhere, and a title that names the desk rather than the paper. Its
+  // pace is the only thing it has to say, so the pace has to be enough.
+  const rss = wrap(
+    'Sport Front Page',
+    'The sport desk',
+    datedItems(
+      12,
+      45,
+      (i) =>
+        `<title>Late winner in the derby ${i}</title><guid>https://n.example/${i}</guid>` +
+        `<description>Two sentences of match report.</description>`,
+    ),
+  );
+  assert.equal(parseFeed(rss).kind, 'news');
+});
+
+test('a linkblog at a wire’s pace is still a blog', () => {
+  // mitchipedia.tumblr.com posts twenty-five times a day and would pass any
+  // test made of pace alone. What it does not publish is articles: three posts
+  // in twelve are a reblogged image with no title and nothing under it.
+  const rss = wrap(
+    'Mitchipedia',
+    'Mostly memes and other curiosities',
+    datedItems(12, 45, (i) =>
+      i % 4 === 0
+        ? `<guid>https://n.example/${i}</guid>`
+        : `<title>a thing I saw ${i}</title><guid>https://n.example/${i}</guid>` +
+          `<description>ha</description>`,
+    ),
+  );
+  assert.equal(parseFeed(rss).kind, 'blog');
+});
+
+test('a blog with a page called News is not news', () => {
+  // The shape that made "news" in a title worthless on its own: Natural Docs
+  // News, News - Fred Kahl, cweiske.de news. Release notes, twice a year.
+  const rss = wrap(
+    'Natural Docs News',
+    'News and updates about Natural Docs',
+    datedItems(
+      4,
+      60 * 24 * 120,
+      (i) =>
+        `<title>Version 2.${i} released</title><guid>https://n.example/${i}</guid>` +
+        `<description>Changelog.</description>`,
+    ),
+  );
+  assert.equal(parseFeed(rss).kind, 'blog');
+});
+
+test('a forum with hundreds of posters is not news', () => {
+  // Writing Stack Exchange and r/PayPie: as many names as a newsroom, one
+  // question a day, and nothing that calls itself a publication.
+  const rss = wrap(
+    'Recent Questions - Writing Stack Exchange',
+    'Most recent questions',
+    datedItems(
+      10,
+      60 * 24,
+      (i) =>
+        `<title>How do I ${i}</title><guid>https://n.example/${i}</guid>` +
+        `<description>A question.</description><dc:creator>user${i}</dc:creator>`,
+    ),
+  );
+  assert.equal(parseFeed(rss).kind, 'blog');
+});
+
+test('an archive uploaded in one afternoon is not a publishing rate', () => {
+  // astronotyet.com posted twelve entries five minutes apart and davidcancel.com
+  // imported nine in an hour in 2024. Read as a rate those are hundreds of
+  // articles a day; what gives them away is that the run does not reach today.
+  const rss = wrap(
+    'An imported archive',
+    'Everything, all at once',
+    datedItems(
+      12,
+      5,
+      (i) =>
+        `<title>Post ${i}</title><guid>https://n.example/${i}</guid>` +
+        `<description>Words.</description><dc:creator>Author ${i}</dc:creator>`,
+      60 * 24 * 400,
+    ),
+  );
+  assert.equal(parseFeed(rss).kind, 'blog');
+});
+
+test('a news podcast is a podcast, not news', () => {
+  // The categories above this one are claims about the payload and this one is
+  // a claim about the publisher, so the payload wins: NPR News Now ships audio.
+  const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:dc="http://purl.org/dc/elements/1.1/"><channel>
+  <title>NPR News Now</title>
+  <link>https://npr.example/</link>
+  <description>The latest news in five minutes</description>
+  <itunes:owner><itunes:email>x@npr.example</itunes:email></itunes:owner>
+  <itunes:type>episodic</itunes:type>
+  ${datedItems(
+    12,
+    60,
+    (i) =>
+      `<title>News, hour ${i}</title><guid>https://npr.example/${i}</guid>` +
+      `<description>Five minutes of news.</description><dc:creator>Desk ${i}</dc:creator>` +
+      `<enclosure url="https://npr.example/${i}.mp3" type="audio/mpeg" length="1"/>`,
+  )}
+</channel></rss>`;
+  assert.equal(parseFeed(rss).kind, 'podcast');
+});
+
 test('an atom feed with an audio enclosure link is a blog', () => {
   const atom = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
