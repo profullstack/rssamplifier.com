@@ -65,6 +65,80 @@ export async function add(db, userId, itemId, lane) {
 }
 
 /**
+ * Put a whole running order in the queue, in the order it was handed over.
+ *
+ * A playlist is fifty posts and adding them one at a time is fifty round trips
+ * to Turso — which on a page the reader is waiting on is the difference between
+ * a button and a stall. `batch` sends them as one transactional round trip, and
+ * because the statements run in order the `max(position) + 1` in each insert
+ * sees the one before it: the queue ends up in the order the playlist was in,
+ * rather than in whatever order fifty concurrent writes happened to land.
+ *
+ * Each entry carries its own lane, because a playlist is not one kind of thing:
+ * a topic's media is podcasts and videos together, and they belong in listen
+ * and watch respectively. Sorting that out here rather than in the caller is
+ * what lets one "add all" button do the honest thing with a mixed list.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {Array<{ itemId: string, lane: Lane }>} entries
+ * @returns {Promise<number>} how many rows were written
+ */
+export async function addMany(db, userId, entries) {
+  const wanted = entries.filter((entry) => entry?.itemId && isLane(entry?.lane));
+  if (wanted.length === 0) return 0;
+
+  const now = nowIso();
+  await db.batch(
+    wanted.map(({ itemId, lane }) => ({
+      sql: `insert into queue_entries (id, user_id, item_id, lane, position, added_at, done_at)
+            values (
+              ?, ?, ?, ?,
+              (select coalesce(max(position), 0) + 1 from queue_entries where user_id = ? and lane = ?),
+              ?, null
+            )
+            on conflict (user_id, lane, item_id) do update
+              set position = case when queue_entries.done_at is null
+                                  then queue_entries.position
+                                  else excluded.position end,
+                  done_at = null`,
+      args: [newId(), userId, String(itemId), lane, userId, lane, now],
+    })),
+    'write',
+  );
+
+  return wanted.length;
+}
+
+/**
+ * Take a whole running order back out again.
+ *
+ * The other half of the button above, and the reason it is a toggle: a reader
+ * who lined up fifty episodes by accident should not have to press fifty
+ * buttons — or empty the lane, which would take the rest of their queue with
+ * it. Only the posts that were handed over are removed.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {Array<{ itemId: string, lane: Lane }>} entries
+ * @returns {Promise<number>} how many rows went
+ */
+export async function removeMany(db, userId, entries) {
+  const wanted = entries.filter((entry) => entry?.itemId && isLane(entry?.lane));
+  if (wanted.length === 0) return 0;
+
+  const results = await db.batch(
+    wanted.map(({ itemId, lane }) => ({
+      sql: 'delete from queue_entries where user_id = ? and item_id = ? and lane = ?',
+      args: [userId, String(itemId), lane],
+    })),
+    'write',
+  );
+
+  return results.reduce((total, res) => total + Number(res?.rowsAffected ?? 0), 0);
+}
+
+/**
  * Take one entry out of the queue entirely.
  *
  * @param {Client} db

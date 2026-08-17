@@ -2,12 +2,25 @@ import { q, queue } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
-import { trackFor } from '../../../lib/queue.js';
+import { laneFor, trackFor } from '../../../lib/queue.js';
+import { PLAYLIST_LIMIT } from '../../../lib/topicFeed.js';
+import { topicGroup } from '../../../lib/topicGroups.js';
 
 export const dynamic = 'force-dynamic';
 
 /** What this endpoint accepts. */
-const ACTIONS = new Set(['add', 'remove', 'done', 'undone', 'up', 'down', 'clear', 'clear-done']);
+const ACTIONS = new Set([
+  'add',
+  'remove',
+  'add-topic',
+  'remove-topic',
+  'done',
+  'undone',
+  'up',
+  'down',
+  'clear',
+  'clear-done',
+]);
 
 /**
  * The reader's own queue: add, remove, reorder, finish.
@@ -68,6 +81,36 @@ export async function POST(req) {
 
   const client = db();
   const userId = String(user.id);
+
+  if (action === 'add-topic' || action === 'remove-topic') {
+    // A whole playlist, named by the page that is showing it rather than sent
+    // as fifty pairs of hidden inputs. The server re-runs the same query the
+    // page was drawn from, at the same limit, so "add all" adds exactly what
+    // the reader is looking at — and a form that carried the list instead
+    // would be four kilobytes of guids that a stale tab could replay.
+    const group = body.group ? topicGroup(body.group) : null;
+    if (body.group && !group) return wantsHtml ? redirect(back) : json({ error: 'not-found' }, 404);
+
+    const rows = await q.mediaForTopic(client, String(body.topic ?? ''), {
+      limit: PLAYLIST_LIMIT,
+      kinds: group?.kinds ?? null,
+    });
+
+    // One lane per post rather than one for the playlist. A topic's media is
+    // episodes and videos together, and dropping the videos into the listen
+    // lane would put a queue of things to watch behind an audio player.
+    const entries = rows
+      .filter((row) => row.item_id)
+      .map((row) => ({ itemId: String(row.item_id), lane: laneFor(row) }));
+
+    const changed =
+      action === 'add-topic'
+        ? await queue.addMany(client, userId, entries)
+        : await queue.removeMany(client, userId, entries);
+
+    if (wantsHtml) return redirect(back);
+    return json({ ok: true, action, changed, counts: await queue.counts(client, userId) });
+  }
 
   if (action === 'add' || (action === 'remove' && !entryId)) {
     if (!queue.isLane(lane)) return json({ error: 'bad-lane' }, 400);

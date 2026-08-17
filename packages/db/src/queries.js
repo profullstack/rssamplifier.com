@@ -785,7 +785,8 @@ export async function mediaForTopic(db, slug, opts = {}) {
             order by case k.source when 'category' then 0 else 1 end, k.count desc
             limit ?
           )
-          select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
+          select i.id as item_id, i.guid, i.url, i.title, i.summary, i.author, i.image_url,
+                 i.published_at,
                  i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds,
                  f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
           from feed_items i
