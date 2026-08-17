@@ -78,6 +78,50 @@ export function clampRawInput(raw) {
 }
 
 /**
+ * Collect the stored copy from an upload that is still arriving.
+ *
+ * `clampRawInput` wants the whole text, which a streamed upload does not have
+ * and must not assemble. So the head is gathered chunk by chunk and the scan is
+ * done once, at the end, over what was gathered — never over the upload.
+ *
+ * Newlines are counted per chunk rather than re-scanned from the start each
+ * time. Re-scanning would be O(n²) in the number of chunks, which on a 16 MiB
+ * head arriving in 64 KiB pieces is gigabytes of pointless work.
+ *
+ * @returns {{ add: (text: string) => boolean, value: () => string }}
+ */
+export function rawInputCollector() {
+  let buffer = '';
+  let newlines = 0;
+  let full = false;
+
+  return {
+    /**
+     * Add a chunk. Returns false once no further chunk can change the result,
+     * which is the caller's cue to stop handing them over.
+     */
+    add(text) {
+      if (full) return false;
+
+      buffer += text;
+      for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) newlines += 1;
+
+      if (newlines >= RAW_INPUT_LINE_LIMIT || buffer.length >= RAW_INPUT_BYTE_LIMIT) {
+        buffer = clampRawInput(buffer);
+        full = true;
+        return false;
+      }
+
+      return true;
+    },
+
+    value() {
+      return full ? buffer : clampRawInput(buffer);
+    },
+  };
+}
+
+/**
  * Whether a stored copy is all of what was uploaded or only the head of it.
  *
  * Inferred from the stored text rather than recorded at write time, so that

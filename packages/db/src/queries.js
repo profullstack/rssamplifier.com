@@ -2071,6 +2071,27 @@ export async function submissionProgress(db, id) {
 }
 
 /**
+ * Record what a submission's upload looked like, once enough of it has arrived.
+ *
+ * A streamed upload cannot supply this at insert time — the row has to exist
+ * before the body has been read, or a long import would have no status page to
+ * watch while it ran. So the row is written without an input and the head is
+ * filled in here, as soon as the stream has delivered it, rather than at the
+ * end alongside the tallies: the "what you submitted" section is most useful
+ * during the import, which is exactly when the tallies are not ready.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {string} raw already clamped by the caller
+ */
+export async function setSubmissionInput(db, id, raw) {
+  await db.execute({
+    sql: `update submissions set raw_input = ? where id = ?`,
+    args: [raw, id],
+  });
+}
+
+/**
  * Fill in a submission's tallies once its inline half has finished.
  *
  * A submission that answers before it is done has to exist before it is done,

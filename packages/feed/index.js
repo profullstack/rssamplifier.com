@@ -1,5 +1,6 @@
 export { slugify, isReserved, uniqueSlug } from './src/slug.js';
 export { parseOpml, buildOpml, opmlHead, opmlOutline, opmlFoot } from './src/opml.js';
+export { streamOpmlOutlines, OpmlTooLargeError } from './src/opml-stream.js';
 export {
   SYNDICATION_FORMATS,
   buildSyndication,

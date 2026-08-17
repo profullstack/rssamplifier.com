@@ -1,4 +1,11 @@
-export { submitOne, submitMany, submitOpml, submitCatalogue } from './src/submit.js';
+export {
+  submitOne,
+  submitMany,
+  submitOpml,
+  submitOpmlStream,
+  submitCatalogue,
+  submitCatalogueStream,
+} from './src/submit.js';
 export {
   crawlFeed,
   crawlDue,

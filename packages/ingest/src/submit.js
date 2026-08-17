@@ -1,4 +1,11 @@
-import { resolveFeed, scrapeFeed, normalizeUrl, parseOpml, uniqueSlug } from '@rssamplifier/feed';
+import {
+  resolveFeed,
+  scrapeFeed,
+  normalizeUrl,
+  parseOpml,
+  streamOpmlOutlines,
+  uniqueSlug,
+} from '@rssamplifier/feed';
 import { q } from '@rssamplifier/db';
 
 import { importFeeds } from './import.js';
@@ -186,6 +193,89 @@ export async function submitCatalogue(db, entries, opts = {}) {
   );
 
   return { accepted, rejected, queued, total: entries.length };
+}
+
+/**
+ * Accept a catalogue that is still arriving.
+ *
+ * The same contract as `submitCatalogue` — resolve the head, queue the tail —
+ * for a source that has no length and does not fit in memory. Nothing here
+ * accumulates except the head, which is a hundred entries by definition.
+ *
+ * The tail is handed to `importFeeds` as a generator rather than an array, so
+ * the importer pulls entries through the scanner at the rate it can write them.
+ * That is what keeps the whole path flat in memory: the upload is never faster
+ * than the database for long, and back-pressure travels all the way out to the
+ * socket instead of piling up in the heap.
+ *
+ * `onQueued` therefore fires once the upload has been fully received, which is
+ * later than the array version's — there is no honest way to know a stream's
+ * tail is durable before the stream has ended.
+ *
+ * @param {import('@libsql/client').Client} db
+ * @param {AsyncIterable<{ url: string, title?: string, siteUrl?: string|null }>} entries
+ * @param {{ inlineLimit?: number, submissionId?: string|null, spreadMinutes?: number, onQueued?: (queued: number) => void }} [opts]
+ * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}
+ */
+export async function submitCatalogueStream(db, entries, opts = {}) {
+  const inlineLimit = opts.inlineLimit ?? INLINE_LIMIT;
+
+  /** @type {Array<{ url: string, title?: string, siteUrl?: string|null }>} */
+  const head = [];
+  let total = 0;
+
+  async function* tail() {
+    for await (const entry of entries) {
+      total += 1;
+      if (head.length < inlineLimit) {
+        head.push(entry);
+        continue;
+      }
+      yield entry;
+    }
+  }
+
+  const imported = await importFeeds(db, tail(), {
+    submissionId: opts.submissionId ?? null,
+    spreadMinutes: opts.spreadMinutes,
+  });
+
+  const queued = imported.inserted;
+  opts.onQueued?.(queued);
+
+  const { accepted, rejected } = await submitMany(
+    db,
+    head.map((e) => e.url),
+  );
+
+  return { accepted, rejected, queued, total };
+}
+
+/**
+ * Accept an OPML upload as it arrives, without ever holding the document.
+ *
+ * The streaming counterpart of `submitOpml`, and the one the endpoint uses for
+ * a file: it scans rather than parses, so the ceiling is `opts.maxBytes` and
+ * not the heap. `submitOpml` stays for callers that already have the whole
+ * string in hand — the MCP tool, and a JSON body with `opml` in it — where
+ * parsing properly is both affordable and better.
+ *
+ * @param {import('@libsql/client').Client} db
+ * @param {AsyncIterable<Uint8Array|string>} chunks
+ * @param {{ maxBytes?: number, inlineLimit?: number, submissionId?: string|null, spreadMinutes?: number, onQueued?: (queued: number) => void }} [opts]
+ * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}
+ */
+export async function submitOpmlStream(db, chunks, opts = {}) {
+  const entries = streamOpmlOutlines(chunks, { maxBytes: opts.maxBytes });
+  const result = await submitCatalogueStream(db, entries, opts);
+
+  // Said in the same words the whole-document path uses, so a caller cannot
+  // tell a streamed empty upload from a parsed one.
+  if (result.total === 0) {
+    return { ...result, rejected: [{ url: '', error: 'no-feeds-in-opml' }] };
+  }
+
+  return result;
 }
 
 /**

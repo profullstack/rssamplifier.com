@@ -54,8 +54,9 @@ export default async function SubmitPage({ searchParams }) {
         <p className="eyebrow">Or upload an OPML file</p>
         <input type="file" name="opml" accept=".opml,.xml,text/xml" aria-label="OPML file" />
         <p className="hint">
-          Any size. The first 100 are added while you wait and the rest are queued for the crawler,
-          so a catalogue of tens of thousands is fine — you will get a status page to watch.
+          Any size, and we mean it: the file is read as it uploads rather than held in memory, so
+          millions of feeds is fine. The first 100 are added while you wait and the rest are queued
+          for the crawler — you will get a status page to watch.
         </p>
         <input
           type="email"
@@ -73,6 +74,14 @@ export default async function SubmitPage({ searchParams }) {
       <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/submit \\
   -H 'content-type: application/json' \\
   -d '{"urls":["example.com","another.blog"]}'`}</pre>
+
+      <p>
+        For a catalogue, send the OPML as the body and skip the form entirely. It is streamed, so
+        the size of the file is not the size of anything we have to hold:
+      </p>
+      <pre className="snippet">{`curl -X POST 'https://rssamplifier.com/api/submit?email=you@example.com' \\
+  -H 'content-type: application/xml' \\
+  --data-binary @subscriptions.opml`}</pre>
 
       {/*
        * The only ad on the funnel, and it is below everything: both forms, the
