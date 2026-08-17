@@ -15,6 +15,19 @@ import { isPublicHost } from './fetch.js';
 /** Headers-only probes are quick; a slow one is not worth delaying the page for. */
 const TIMEOUT_MS = 5000;
 
+/**
+ * Longer, and only spent once the headers said the page cannot be framed — at
+ * which point the body is the article the reader came for, not a detail.
+ */
+const BODY_TIMEOUT_MS = 10_000;
+
+/**
+ * Byte ceiling on a body worth reading. Mirrors extract.js, which explains why
+ * it is this generous: an article page's own markup is a small fraction of
+ * what a commercial site sends, and cutting early cuts the article.
+ */
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
+
 const USER_AGENT = 'rssamplifier.com reader (+https://rssamplifier.com)';
 
 /**
@@ -104,21 +117,44 @@ function sourceAllows(source, origin) {
  * @returns {Promise<{ frameable: boolean, reason: string }>}
  */
 export async function isFrameable(url, origin = 'https://rssamplifier.com') {
+  const { frameable, reason } = await probePage(url, { origin });
+  return { frameable, reason };
+}
+
+/**
+ * Probe a URL, and keep the page when the answer is no.
+ *
+ * The probe already fetches the page with GET — HEAD is answered with 405 by
+ * too much of the web to be worth trying — and then throws the body away. When
+ * the verdict is "cannot be framed" that body is the only copy of an article
+ * the reader is about to tell somebody they cannot have, so it is read instead
+ * of dropped. A refusal costs no extra request: it is the same response, read
+ * to the end rather than cancelled.
+ *
+ * A page that *can* be framed still has its body cancelled. Nothing downstream
+ * wants it, and downloading a megabyte of somebody's homepage to discard it is
+ * a cost paid on the reader's time.
+ *
+ * @param {string} url
+ * @param {{ origin?: string, wantHtml?: boolean }} [options]
+ * @returns {Promise<{ frameable: boolean, reason: string, html: string|null, url: string|null }>}
+ */
+export async function probePage(url, options = {}) {
+  const { origin = 'https://rssamplifier.com', wantHtml = true } = options;
+  const no = (reason) => ({ frameable: false, reason, html: null, url: null });
+
   const normalized = normalizeUrl(url);
-  if (!normalized) return { frameable: false, reason: 'invalid-url' };
+  if (!normalized) return no('invalid-url');
 
   const target = new URL(normalized);
-  if (!(await isPublicHost(target.hostname))) {
-    return { frameable: false, reason: 'blocked-host' };
-  }
+  if (!(await isPublicHost(target.hostname))) return no('blocked-host');
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  // Headers decide the verdict and arrive quickly; a body worth reading is
+  // allowed longer, because it is now the page rather than a detail of it.
+  let timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    // GET, not HEAD: a fair number of sites answer HEAD with 405 or omit the
-    // very headers being probed for. The body is abandoned as soon as the
-    // headers are in.
     const res = await fetch(normalized, {
       method: 'GET',
       headers: { 'user-agent': USER_AGENT, accept: 'text/html,*/*' },
@@ -134,14 +170,67 @@ export async function isFrameable(url, origin = 'https://rssamplifier.com') {
       origin,
     );
 
-    await res.body?.cancel();
+    // Redirects are followed, so what came back may not be what was asked for,
+    // and relative URLs inside it resolve against where it landed.
+    const finalUrl = res.url || normalized;
 
-    if (!res.ok) return { frameable: false, reason: `http-${res.status}` };
-    return verdict;
+    const readable =
+      wantHtml &&
+      res.ok &&
+      !verdict.frameable &&
+      String(res.headers.get('content-type') ?? '').toLowerCase().includes('html');
+
+    if (!readable) {
+      await res.body?.cancel();
+      if (!res.ok) return no(`http-${res.status}`);
+      return { ...verdict, html: null, url: finalUrl };
+    }
+
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), BODY_TIMEOUT_MS);
+
+    const html = await readCapped(res, MAX_HTML_BYTES);
+    return { ...verdict, html, url: finalUrl };
   } catch (err) {
     const aborted = err?.name === 'AbortError';
-    return { frameable: false, reason: aborted ? 'timeout' : 'fetch-failed' };
+    return no(aborted ? 'timeout' : 'fetch-failed');
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Read a response body, stopping at a byte budget.
+ *
+ * `res.text()` has no ceiling, and a reader who opens a post should not be
+ * waiting on a page that turned out to be a 40MB single-page app. Cutting the
+ * HTML mid-document is fine here: the parser is forgiving and the article is
+ * near the top of anything worth reading.
+ *
+ * @param {Response} res
+ * @param {number} limit bytes
+ * @returns {Promise<string>}
+ */
+async function readCapped(res, limit) {
+  const body = res.body;
+  if (!body) return '';
+
+  const decoder = new TextDecoder('utf-8');
+  const reader = body.getReader();
+  let out = '';
+  let seen = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      seen += value.byteLength;
+      out += decoder.decode(value, { stream: true });
+      if (seen >= limit) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+
+  return out + decoder.decode();
 }

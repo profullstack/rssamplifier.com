@@ -33,7 +33,19 @@ const ALLOWED = new Set([
  * The rest of the sanitizer drops the tag but keeps the text — right for a
  * `<font>`, catastrophic for a `<script>`, whose "text" is the program.
  */
-const STRIP_WITH_CONTENT = new Set(['script', 'style', 'noscript', 'iframe', 'object', 'embed', 'template', 'svg', 'math', 'form', 'input', 'button', 'select', 'textarea', 'canvas', 'audio', 'video', 'source', 'track', 'link', 'meta', 'base', 'title', 'head']);
+const STRIP_WITH_CONTENT = new Set(['script', 'style', 'noscript', 'iframe', 'object', 'template', 'svg', 'math', 'form', 'button', 'select', 'textarea', 'canvas', 'audio', 'video', 'title', 'head']);
+
+/**
+ * Elements dropped on their own, because they have no contents to drop.
+ *
+ * These are void: `<source>`, `<input>` and the rest never close. Stripping
+ * them "with their content" means searching for a closing tag that cannot
+ * exist, and the search falls through to end-of-document — so one `<source>`
+ * inside a `<picture>` silently deleted the whole rest of the article. Every
+ * modern responsive image ships one, which is how an 11,000-character page
+ * sanitized down to an empty figure.
+ */
+const STRIP_VOID = new Set(['embed', 'input', 'source', 'track', 'link', 'meta', 'base']);
 
 /** Attributes kept, per element. `*` applies to every allowed element. */
 const ALLOWED_ATTRS = {
@@ -120,11 +132,24 @@ export function sanitizeHtml(html, opts = {}) {
   input = input.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
 
   for (const tag of STRIP_WITH_CONTENT) {
+    // Running to end-of-document when the closing tag is missing is deliberate
+    // here: an unterminated <script> is a script, and failing closed on it is
+    // the whole point. It is only wrong for tags that never close, which is
+    // why those are handled separately below.
     input = input.replace(
       new RegExp(`<${tag}\\b[\\s\\S]*?(?:</${tag}\\s*>|$)`, 'gi'),
       ' ',
     );
     // A closing tag with no opener would otherwise survive as text.
+    input = input.replace(new RegExp(`</${tag}\\s*>`, 'gi'), '');
+  }
+
+  for (const tag of STRIP_VOID) {
+    // The tag alone, attributes and all, and never past its own `>`.
+    input = input.replace(
+      new RegExp(`<${tag}\\b(?:[^>"']|"[^"]*"|'[^']*')*>?`, 'gi'),
+      ' ',
+    );
     input = input.replace(new RegExp(`</${tag}\\s*>`, 'gi'), '');
   }
 
