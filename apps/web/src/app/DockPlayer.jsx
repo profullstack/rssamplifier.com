@@ -902,7 +902,7 @@ function softNavigable(link) {
   if (url.origin !== window.location.origin) return false;
   if (url.pathname.startsWith('/api/')) return false;
   if (NOT_PAGES.has(url.pathname)) return false;
-  // A dot in the last segment means a file: /feed.rss, /list.opml, /icon.svg.
+  // A dot in the last segment means a file: /feed.rss, /list.opml, /icon.png.
   // Subscribing to a blog is a link like that, and it must reach the browser's
   // own downloader rather than the router.
   if (/\.[a-z0-9]{2,5}$/i.test(url.pathname)) return false;

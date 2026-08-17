@@ -12,12 +12,25 @@
  * an old bundle.
  */
 
-const VERSION = 'v1';
+// Bumped with the brand assets: the activate handler drops every cache that is
+// not this version, which is what evicts the old SVG icon and the manifest that
+// pointed at it from clients that already installed them.
+const VERSION = 'v2';
 const SHELL = `shell-${VERSION}`;
 const ASSETS = `assets-${VERSION}`;
 
 const OFFLINE_URL = '/offline';
-const SHELL_URLS = [OFFLINE_URL, '/icon.svg', '/manifest.webmanifest'];
+// The logo is in the shell because the masthead is on the offline page too, and
+// a brand that only appears once you are back online is worse than none.
+// Both logos, because which one the masthead asks for is decided by the
+// reader's colour scheme and the install has no way to know which that is.
+const SHELL_URLS = [
+  OFFLINE_URL,
+  '/logo.png',
+  '/logo-dark.png',
+  '/icon-192.png',
+  '/manifest.webmanifest',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

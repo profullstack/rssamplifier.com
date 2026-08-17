@@ -78,22 +78,35 @@ a {
   margin: 0 auto;
   padding: 0 1.25rem;
   display: flex;
-  align-items: baseline;
+  /* Centred rather than baseline-aligned: an image has no baseline of its own
+     beyond its bottom edge, so aligning to one would hang the nav off the foot
+     of the logo instead of level with it. */
+  align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
   flex-wrap: wrap;
 }
 
+/* The wordmark is now the logo file rather than type, so the anchor is sized by
+   what it holds: a flex box, which also drops the descender gap an inline image
+   would otherwise leave under it. Height is what is pinned and width follows —
+   the strip stays the same depth whatever the asset's aspect turns out to be. */
 .wordmark {
-  font-family: var(--serif);
-  font-size: 1.4rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
   text-decoration: none;
 }
 
-.wordmark span {
-  color: var(--accent);
+/* The <picture> is a plain inline box around the image, so it needs the same
+   treatment or it reintroduces the descender gap the flex box just removed. */
+.wordmark picture {
+  display: flex;
+}
+
+.wordmark img {
+  display: block;
+  height: 2rem;
+  width: auto;
 }
 
 /* Mobile first, and on a phone that means closed: thirteen links in a row is
@@ -1279,8 +1292,8 @@ body:has(.reader) .masthead {
   margin-bottom: 0.5rem;
 }
 
-body:has(.reader) .wordmark {
-  font-size: 1rem;
+body:has(.reader) .wordmark img {
+  height: 1.4rem;
 }
 
 body:has(.reader) .masthead nav {

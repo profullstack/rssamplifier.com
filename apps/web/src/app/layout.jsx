@@ -22,8 +22,15 @@ export const metadata = {
     statusBarStyle: 'default',
   },
   icons: {
-    icon: '/icon.svg',
-    apple: '/icon.svg',
+    // Two sizes rather than one: a browser tab picks the 192 and downscales it,
+    // while an install prompt and the task switcher want the 512.
+    icon: [
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon.png', sizes: '512x512', type: 'image/png' },
+    ],
+    // Opaque and pre-sized, because iOS composites a home-screen icon on white
+    // and rounds the corners itself — a transparent PNG comes out ringed.
+    apple: [{ url: '/apple-icon.png', sizes: '180x180', type: 'image/png' }],
   },
   openGraph: {
     type: 'website',
@@ -116,8 +123,23 @@ export default function RootLayout({ children }) {
 
         <header className="masthead">
           <div className="masthead-inner">
+            {/* A plain <img> rather than next/image: the wordmark is one fixed
+                asset served from /public at a size the CSS already pins, so the
+                optimiser has nothing to decide and would only put a render-
+                blocking round trip in front of the first paint. Width and height
+                are the intrinsic pixels, so the strip reserves its space before
+                the file lands and the nav below it never jumps. */}
             <a className="wordmark" href="/">
-              RSS<span>Amplifier</span>
+              {/* Two files rather than one, because the logo's "Amplifier" half
+                  is near-black and disappears into the dark palette. <picture>
+                  rather than a CSS filter so each version keeps its own colour,
+                  and rather than two <img>s so only the matching one is ever
+                  fetched. The alt lives on the <img>, which is the element that
+                  actually renders either way. */}
+              <picture>
+                <source srcSet="/logo-dark.png" media="(prefers-color-scheme: dark)" />
+                <img src="/logo.png" alt="RSS Amplifier" width="532" height="96" />
+              </picture>
             </a>
 
             {/* A checkbox rather than a button, so the menu opens with no
