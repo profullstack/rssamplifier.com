@@ -26,3 +26,14 @@ export const KIND_VIDEO = 'video';
  * durations is a radio station. Both are `live` and neither is a guess.
  */
 export const KIND_LIVE = 'live';
+
+/**
+ * A newsroom rather than a person.
+ *
+ * The one split in this file that is about who published something rather than
+ * what they attached to it: a news feed and a blog feed are the same document,
+ * article for article, and no namespace exists to tell them apart. It is
+ * inferred from how the feed behaves instead — see `isNewsroom` in parse.js,
+ * which wants two independent signals before it will move a feed out of blogs.
+ */
+export const KIND_NEWS = 'news';

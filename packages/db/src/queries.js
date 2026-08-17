@@ -16,7 +16,7 @@ const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, i
   fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at`;
 
 /** The categories the directory is browsable by. */
-export const KINDS = ['blog', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
+export const KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
 
 /**
  * The categories a crawler can work out for itself.
@@ -30,8 +30,13 @@ export const KINDS = ['blog', 'podcast', 'music', 'video', 'comic', 'live', 'ree
  * `live` was among them until playlists were indexed. RSS still cannot state
  * it, but HLS can and does: a manifest with no `#EXT-X-ENDLIST` is a
  * broadcaster saying the stream has not finished. See packages/feed/src/kinds.js.
+ *
+ * `news` is derived, but only where the evidence is unarguable — a newsroom and
+ * a blog publish the same document, so `isNewsroom` wants two independent
+ * signals and lets the quiet section feeds go. It is the one category that is
+ * routinely both: detected for the wires, curated for the rest.
  */
-export const DERIVED_KINDS = ['blog', 'podcast', 'music', 'video', 'live'];
+export const DERIVED_KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'live'];
 
 /**
  * Read a caller-supplied kind, rejecting anything that is not one.

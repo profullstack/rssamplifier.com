@@ -26,6 +26,16 @@ export const CATEGORIES = {
     schemaType: 'Blog',
     item: 'posts',
   },
+  news: {
+    path: '/news',
+    heading: 'News',
+    noun: 'news sources',
+    one: 'news source',
+    title: 'News',
+    lede: 'Newsrooms rather than people: feeds that publish several articles a day, carry a staff of bylines, or say outright that they are news — two of those three, because any one of them on its own is also a description of somebody’s blog. A blog with a page called News stays under Blogs.',
+    schemaType: 'NewsMediaOrganization',
+    item: 'articles',
+  },
   podcast: {
     path: '/podcasts',
     heading: 'Podcasts',
@@ -108,7 +118,7 @@ export function pageNumber(raw) {
 /**
  * One category of the directory, paged.
  *
- * @param {{ kind: 'blog'|'podcast', page?: number }} props
+ * @param {{ kind: keyof typeof CATEGORIES, page?: number }} props
  */
 export default async function CategoryIndex({ kind, page = 1 }) {
   const category = CATEGORIES[kind];

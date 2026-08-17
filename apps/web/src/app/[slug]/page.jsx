@@ -7,6 +7,7 @@ import { adPlan } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import Toolbar from '../Toolbar.jsx';
+import { CATEGORIES } from '../CategoryIndex.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,9 @@ export async function generateMetadata({ params }) {
 
   return {
     title: String(feed.title),
-    description: feed.description ? String(feed.description) : `Latest posts from ${feed.title}.`,
+    description: feed.description
+      ? String(feed.description)
+      : `Latest ${(CATEGORIES[String(feed.category)] ?? CATEGORIES.blog).item} from ${feed.title}.`,
     alternates: { canonical: `${siteUrl()}/${slug}` },
   };
 }
@@ -58,20 +61,33 @@ export default async function FeedPage({ params }) {
 
   const podcast = feed.category === 'podcast';
 
+  // What this feed's own category calls itself, so the page agrees with the
+  // directory it was filed in. Falls back to Blogs for a category this build
+  // has never heard of — a row written by a newer deploy, say — because an
+  // eyebrow linking nowhere is worse than one that is merely unspecific.
+  const category = CATEGORIES[String(feed.category)] ?? CATEGORIES.blog;
+
   // A podcast described as a Blog is wrong in the one place a machine reads
   // this page, so the type and the property that carries the entries both
   // follow the feed's kind. The entries themselves are the same rows either
   // way — what differs is what they are called.
+  // An article is not a blog post and a newsroom is not a Blog, so news gets
+  // its own pair too. Everything else keeps the blog shape, which is what the
+  // overwhelming majority of the directory is.
+  const news = feed.category === 'news';
+  const entryType = podcast ? 'PodcastEpisode' : news ? 'NewsArticle' : 'BlogPosting';
+  const entryProp = podcast || news ? 'hasPart' : 'blogPost';
+
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': podcast ? 'PodcastSeries' : 'Blog',
+    '@type': podcast ? 'PodcastSeries' : news ? 'NewsMediaOrganization' : 'Blog',
     name: feed.title,
     description: feed.description ?? undefined,
     url: feed.site_url ?? `${siteUrl()}/${feed.slug}`,
     webFeed: String(feed.feed_url),
     keywords: topics.length ? topics.map((t) => String(t.keyword)).join(', ') : undefined,
-    [podcast ? 'hasPart' : 'blogPost']: posts.slice(0, 20).map((p) => ({
-      '@type': podcast ? 'PodcastEpisode' : 'BlogPosting',
+    [entryProp]: posts.slice(0, 20).map((p) => ({
+      '@type': entryType,
       [podcast ? 'name' : 'headline']: p.title,
       url: p.url ?? undefined,
       datePublished: p.published_at ?? undefined,
@@ -91,7 +107,7 @@ export default async function FeedPage({ params }) {
           page that says which category it was filed under, so it may as well be
           the way back to the rest of that category. */}
       <p className="eyebrow">
-        <a href={podcast ? '/podcasts' : '/blogs'}>{podcast ? 'Podcast' : 'Blog'}</a>
+        <a href={category.path}>{category.one[0].toUpperCase() + category.one.slice(1)}</a>
       </p>
       <h1>{feed.title}</h1>
       {feed.description && <p className="lede">{feed.description}</p>}
@@ -106,7 +122,7 @@ export default async function FeedPage({ params }) {
           RSS feed ↗
         </a>
         <span>
-          {feed.item_count} {podcast ? 'episodes' : 'posts'}
+          {feed.item_count} {category.item}
         </span>
       </div>
 
@@ -156,12 +172,11 @@ export default async function FeedPage({ params }) {
         </p>
       )}
 
-      <h2>{podcast ? 'Latest episodes' : 'Latest posts'}</h2>
+      <h2>Latest {category.item}</h2>
 
       {posts.length === 0 ? (
         <p className="empty">
-          {podcast ? 'No episodes' : 'No posts'} collected yet — the crawler will pick this up
-          shortly.
+          No {category.item} collected yet — the crawler will pick this up shortly.
         </p>
       ) : (
         posts.flatMap((p, i) => {
