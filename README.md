@@ -22,6 +22,7 @@ apps/cli/        @profullstack/rssamplifier — the directory from a terminal
 packages/feed/   Feed discovery, RSS/Atom/JSON Feed parsing, OPML, SSRF guards
 packages/ingest/ Submit + crawl orchestration
 packages/db/     Turso/libSQL client, migrations and every query
+packages/notify/ Alerts — web push, email digests and webhooks
 ```
 
 Everything outside the Next app is plain ESM with JSDoc types — no build step, so Docker stays
@@ -248,6 +249,16 @@ Talks to the public HTTP API, so it needs no credentials. Point it elsewhere wit
   builds and then dies on boot. The image carries real `node_modules` instead.
 - **Nothing pins the web port.** Railway injects `PORT`; passing `-p` to `next start` would override
   it and leave the edge proxy talking to a closed port.
+- **Alerts never replay a backlog.** An account that has just switched alerts on has no watermark,
+  and the sender answers that by starting the clock at the present rather than by mailing somebody
+  two years of a topic they discovered this afternoon.
+- **The alert watermark runs on `feed_items.created_at`, not `published_at`.** One is when the
+  crawler saw a post, the other is what the publisher claims — and a backdated import would
+  otherwise either replay a year or skip a week.
+- **Web push is implemented from the RFCs, not from a library** (`packages/notify/src/webpush.js`).
+  A wrongly derived key produces a body that every push service accepts, forwards, and the browser
+  silently fails to decrypt, with no error anywhere — so the test pins it to the published worked
+  example in RFC 8291 §5 rather than to a round trip through our own code.
 
 ## Deployment
 
@@ -258,6 +269,29 @@ Two Railway services in the shared Profullstack project, both building from this
 - `rssamplifier-poller` → `apps/poller/Dockerfile`
 
 Secrets live in logicsrc: `logicsrc teams pull profullstack rssamplifier-com prod`.
+
+### Alerts
+
+Following collects; an alert interrupts. The bell beside Follow on any blog or topic says whether
+that follow alerts, and `/account/alerts` says where the alerts go — the browser, email, or a
+webhook. The poller sends them on its own timer; nothing else has to be run.
+
+Email needs `RESEND_API_KEY`, which the deployment already has. Browser push needs a VAPID pair,
+minted once:
+
+```
+pnpm --filter @rssamplifier/notify vapid
+```
+
+Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` on **both** services — the web app
+hands the public key to browsers, the poller signs with the private one. The pair is an identity:
+every subscription in the database was created against that public key, so replacing it later
+invalidates all of them at once. Without it the site simply does not offer browser alerts, and the
+other two channels work as normal.
+
+Webhooks receive one `POST` of JSON per batch (`{version, type, at, count, items}`). With a signing
+secret the body is HMAC'd into `x-rssamplifier-signature: sha256=…` over the exact bytes sent;
+`verifySignature` in `packages/notify/src/webhook.js` is the reference for checking it.
 
 ## Licence
 

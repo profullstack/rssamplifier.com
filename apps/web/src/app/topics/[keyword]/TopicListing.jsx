@@ -1,4 +1,4 @@
-import { accounts, q } from '@rssamplifier/db';
+import { alerts, q } from '@rssamplifier/db';
 import { SYNDICATION_FORMATS } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../lib/db.js';
@@ -8,7 +8,7 @@ import { IN_BROWSER_KINDS, PLAYABLE_KINDS, groupsWithFeeds } from '../../../lib/
 import { shareText } from '../../../lib/share.js';
 import Ad from '../../Ad.jsx';
 import AdBanner from '../../AdBanner.jsx';
-import FollowButton from '../../FollowButton.jsx';
+import FollowControls from '../../FollowControls.jsx';
 import Share from '../../Share.jsx';
 import { Avatar } from '../../Thumb.jsx';
 import { feedImage } from '../../../lib/thumbs.js';
@@ -92,9 +92,9 @@ export default async function TopicListing({ topic, counts, group = null, page =
   // Only asked once we know there is someone to ask about. A signed-out visitor
   // still gets the button — the endpoint sends them to sign in and back here —
   // so this decides what it says rather than whether it appears.
-  const following = user
-    ? await accounts.isFollowingTopic(client, String(user.id), topic.slug, group?.segment ?? '')
-    : false;
+  const follow = user
+    ? await alerts.topicFollowState(client, String(user.id), topic.slug, group?.segment ?? '')
+    : { following: false, alerts: false };
 
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const ads = adPlan(rows.length, { first: 11, every: 24, max: 2 });
@@ -224,11 +224,13 @@ export default async function TopicListing({ topic, counts, group = null, page =
             form underneath, so it works with JavaScript off; with JavaScript it
             flips in place rather than reloading a page of sixty feeds to change
             two words on one button. */}
-        <FollowButton
+        <FollowControls
           endpoint="/api/follows/topics"
+          kind="topic"
           slug={topic.slug}
           segment={group?.segment ?? ''}
-          following={following}
+          following={follow.following}
+          alerts={follow.alerts}
           signedIn={Boolean(user)}
           next={base}
           label="Follow this topic"

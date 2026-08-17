@@ -178,6 +178,14 @@ export default async function AccountPage({ searchParams }) {
             <a href="/following">Your river →</a> everything above, newest first, and a feed URL for
             your reader.
           </p>
+
+          {/* The other half of following: a river is a place you visit, an
+              alert is a thing that arrives. Linked from here because this is
+              where somebody stands when they wonder what an account is for. */}
+          <p className="hint">
+            <a href="/account/alerts">Alerts →</a> be told about new posts by email, in this
+            browser, or at a webhook.
+          </p>
         </>
       )}
 

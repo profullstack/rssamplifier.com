@@ -126,11 +126,25 @@ export const TEXT_STREAM_HEADERS = {
  * shape of a frame and of the closing line are the only things that differ
  * between a browser's EventSource and somebody's `curl -N`.
  *
+ * `tick` is how long to wait between polls. A second is right for a run whose
+ * every event matters and whose queries are small. It is wrong for a queue of
+ * several hundred thousand feeds, where the progress query counts every row of
+ * the submission and the run takes days — there, a second between polls is a
+ * permanent load on the database in exchange for a bar that could not move
+ * perceptibly faster anyway. So the caller picks, having seen the size.
+ *
  * @param {(first: boolean) => Promise<{ frames: Uint8Array[], done: boolean }>} poll
- * @param {{ headers?: Record<string, string>, end?: (reason: object) => Uint8Array|null }} [opts]
+ * @param {{
+ *   headers?: Record<string, string>,
+ *   end?: (reason: object) => Uint8Array|null,
+ *   tick?: number,
+ * }} [opts]
  * @returns {Response}
  */
-export function stream(poll, { headers = SSE_HEADERS, end = (reason) => frame('end', reason) } = {}) {
+export function stream(
+  poll,
+  { headers = SSE_HEADERS, end = (reason) => frame('end', reason), tick = TICK_MS } = {},
+) {
   let cancelled = false;
 
   const body = new ReadableStream({
@@ -161,7 +175,7 @@ export function stream(poll, { headers = SSE_HEADERS, end = (reason) => frame('e
             break;
           }
 
-          await sleep(TICK_MS);
+          await sleep(tick);
         }
       } catch (err) {
         // A failed query should say so rather than look like a finished run.

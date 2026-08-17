@@ -8,6 +8,7 @@ export {
   refreshFeedKeywords,
 } from './src/crawl.js';
 export { importFeeds, importOpml } from './src/import.js';
+export { queueFeeds } from './src/queue.js';
 export {
   notifyFinishedSubmissions,
   sendSubmissionEmail,
@@ -24,3 +25,9 @@ export {
   INLINE_LIMIT,
 } from './src/keywords.js';
 export { hashIp } from './src/hash.js';
+export {
+  claimAuthorSlug,
+  enrichDue,
+  enrichFeedAuthors,
+  storeCredits,
+} from './src/enrich.js';

@@ -1,8 +1,9 @@
-import { q, discovery } from '@rssamplifier/db';
+import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import { categoryStats, indexingHistory, GROWTH_DAYS } from '../../lib/crawlstats.js';
 import { toLine } from '../../lib/crawlLog.js';
+import { etaLabel, jobRows } from '../../lib/jobs.js';
 import AutoRefresh from '../AutoRefresh.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
 import Toolbar from '../Toolbar.jsx';
@@ -33,20 +34,50 @@ export const metadata = {
 export default async function CrawlStatsPage() {
   const client = db();
 
-  const [stats, failing, recent, discoveryQueue, keywordQueue, history, categories, logTail] =
-    await Promise.all([
-      q.crawlStats(client),
-      q.failingFeeds(client, 15),
-      q.recentlyCrawled(client, 15),
-      discovery.countQueuedCandidates(client),
-      discovery.countQueuedKeywords(client),
-      indexingHistory(),
-      categoryStats(),
-      // Rendered into the log so the panel arrives with history rather than
-      // waiting for the crawler's next line, and so the log is not blank for a
-      // reader with JavaScript off.
-      q.crawlLogTail(client, 40),
-    ]);
+  const [
+    stats,
+    failing,
+    recent,
+    discoveryQueue,
+    keywordQueue,
+    history,
+    categories,
+    logTail,
+    backlogs,
+    activity,
+    alertAccounts,
+  ] = await Promise.all([
+    q.crawlStats(client),
+    q.failingFeeds(client, 15),
+    q.recentlyCrawled(client, 15),
+    discovery.countQueuedCandidates(client),
+    discovery.countQueuedKeywords(client),
+    indexingHistory(),
+    categoryStats(),
+    // Rendered into the log so the panel arrives with history rather than
+    // waiting for the crawler's next line, and so the log is not blank for a
+    // reader with JavaScript off.
+    q.crawlLogTail(client, 40),
+    // The two halves of the jobs board: what each kind of work has waiting, and
+    // what each has been doing. Both are one query, and both are asked here
+    // rather than cached — a stale answer about whether a worker is alive is the
+    // one thing this page must never give.
+    q.jobBacklogs(client),
+    q.logActivity(client, 1),
+    // Only to tell a sender with nothing to do from one that has stopped: the
+    // alert pass writes no log line at all when nobody is subscribed, and a
+    // silent job is otherwise indistinguishable from a dead one.
+    alerts.alertingAccountCount(client),
+  ]);
+
+  const jobs = jobRows({
+    backlogs,
+    activity,
+    fetchedLastHour: stats.fetchedLastHour,
+    keywordQueue,
+    candidateQueue: discoveryQueue,
+    alertAccounts,
+  });
 
   // The whole directory's curve is the categories' curves added up, which is
   // one array of thirty numbers rather than a seventh query for a total the
@@ -101,6 +132,69 @@ export default async function CrawlStatsPage() {
         Last successful fetch {ago(stats.lastSuccessAt)} · next feed due {due(stats.nextFetchAt)} ·
         generated {new Date(stats.generatedAt).toISOString()}
       </p>
+
+      <h2>Jobs</h2>
+      <p>
+        One daemon runs all of this, and the numbers above add it up as if it were one queue. It is
+        not, and the pieces have opposite shapes: <strong>feed updates</strong> is meant to be deep —
+        {' '}
+        {fmt(stats.total)} feeds on an hourly interval want more checks per hour than any polite
+        crawler makes, so it is permanently behind by design, and the useful figure is how long a
+        full pass takes. <strong>First crawls</strong> is the one that should be near empty: feeds
+        imported or discovered but never yet read. It has no throughput of its own — it shares the
+        update queue and is sorted by the same clock, so an unread feed waits behind everything
+        already overdue. A feed added through the submit form is not in it: that path reads the feed
+        and stores its posts on the spot.
+      </p>
+
+      <table className="crawl-table job-table">
+        <thead>
+          <tr>
+            <th scope="col">Job</th>
+            <th scope="col">State</th>
+            <th scope="col">Waiting</th>
+            <th scope="col">Last hour</th>
+            <th scope="col">Clears in</th>
+            <th scope="col">Last ran</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((job) => (
+            <tr key={job.key}>
+              <td>
+                <strong>{job.label}</strong>
+                <span className="job-what">{job.what}</span>
+              </td>
+              <td>
+                <span className={`job-state job-state-${job.state}`}>{job.state}</span>
+                {job.errors > 0 && (
+                  <span className="job-errors">
+                    {fmt(job.errors)} {job.errors === 1 ? 'error' : 'errors'}
+                  </span>
+                )}
+              </td>
+              <td className="num">
+                {job.backlog == null ? (
+                  <span title="Counting these would mean scanning every post on every refresh">
+                    not counted
+                  </span>
+                ) : (
+                  fmt(job.backlog)
+                )}
+                {/* What the job has settled so far, where "waiting" alone would
+                    make a long backfill look like it is achieving nothing. */}
+                {job.done && <span className="job-what">{job.done}</span>}
+              </td>
+              <td className="num">
+                {job.rate == null ? '—' : fmt(job.rate)}
+                {job.rateNote && <span className="job-what">{job.rateNote}</span>}
+              </td>
+              <td className="num">{etaLabel(job.eta)}</td>
+              <td className="num">{ago(job.lastAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       <h2>Live log</h2>
       <p>

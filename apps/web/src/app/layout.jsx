@@ -285,7 +285,12 @@ export default function RootLayout({ children }) {
               <a href="/podcasts">Podcasts</a> ·{' '}
               <a href="/music">Music</a> · <a href="/videos">Videos</a> ·{' '}
               <a href="/comics">Comics</a> · <a href="/lives">Live</a> ·{' '}
-              <a href="/reels">Reels</a> · <a href="/topics">Topics</a>
+              <a href="/reels">Reels</a> · <a href="/topics">Topics</a> ·{' '}
+              {/* Authors sits here rather than in the nav above, which the
+                  comment on that strip explains is already at the height a
+                  phone can carry. It is reached from every feed page anyway,
+                  which is where somebody wonders who wrote the thing. */}
+              <a href="/authors">Authors</a>
             </p>
             <p>
               Machine-readable: <a href="/mcp">MCP server</a> · <a href="/cli">CLI</a> ·{' '}

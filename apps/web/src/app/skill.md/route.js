@@ -43,6 +43,16 @@ is not a search engine for the whole web.
 - \`GET ${base}/topics/{keyword}.json\` — everything published on a topic, as a
   JSON Feed. Also available as \`.rss\`, \`.atom\`, \`.m3u\` and \`.pls\`.
 - \`GET ${base}/api/topics?q=\` — search the topic index for a subject.
+- \`GET ${base}/api/authors\` — the people behind the feeds and where else they
+  publish. \`?network=email|fediverse|bluesky|github|website|linktree\` narrows
+  to people reachable a given way. Every link was published by the author on
+  their own site as a \`rel="me"\` claim, an h-card or JSON-LD; role mailboxes
+  are dropped at extraction, so an address here belongs to a person.
+- \`GET ${base}/api/authors/{slug}\` — one author, with everything they publish.
+- \`GET ${base}/api/feeds/{slug}\` also carries \`authors\` and \`links\`. \`links\` is
+  the blog's own accounts — Mastodon, Bluesky, X, LinkedIn, GitHub and the rest
+  — which is what a blog with no byline has instead of an author, and roughly a
+  third of the directory is that shape.
 - \`GET ${base}/opml\` — the whole directory as a subscription list, one
   category with \`?kind=\`, or one subject with \`?topic=\`.
 - \`GET ${base}/search?q=\` — search the directory.

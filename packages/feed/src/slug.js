@@ -28,6 +28,10 @@ const RESERVED = new Set([
   'lives',
   'reels',
   'topics',
+  // The people index, for the same reason as the categories above: a feed
+  // slugged 'authors' would still be served, but only Next's static segment
+  // would answer and the blog's own page would be unreachable.
+  'authors',
   'admin',
   'static',
   '_next',

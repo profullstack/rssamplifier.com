@@ -8,3 +8,5 @@ export * as translations from './src/translations.js';
 export * as discovery from './src/discovery.js';
 export * as extracts from './src/extracts.js';
 export * as apikeys from './src/apikeys.js';
+export * as authors from './src/authors.js';
+export * as alerts from './src/alerts.js';

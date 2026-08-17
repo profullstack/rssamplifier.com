@@ -16,7 +16,7 @@ import { newId, nowIso } from './client.js';
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
   fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at, source_kind,
-  card_url, card_width, card_height, card_type`;
+  card_url, card_width, card_height, card_type, authors_checked_at`;
 
 /** The categories the directory is browsable by. */
 export const KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
@@ -983,6 +983,142 @@ export async function topicsForSitemap(db, limit = 20_000) {
 }
 
 /**
+ * The backlog each kind of work is sitting on, for the jobs board.
+ *
+ * One pass over `feeds` for all of it, for the same reason `crawlStats` is one
+ * pass: /crawlstats is public, uncached and refreshes itself every fifteen
+ * seconds, so every figure it shows has to be affordable at that rate forever.
+ *
+ * The counts are deliberately per *job* rather than per feed status, because
+ * they answer different questions. `due` is the update queue — feeds already
+ * indexed whose next check has come round — and it is permanently large by
+ * design: 52,000 feeds on an hourly interval want more checks per hour than any
+ * polite crawler will make. `neverCrawled` is the queue that should be near
+ * empty, and is the one worth an alarm when it is not, because those are
+ * submissions nobody has seen the result of yet.
+ *
+ * @param {Client} db
+ * @returns {Promise<object>}
+ */
+export async function jobBacklogs(db) {
+  const now = nowIso();
+  const hourAgo = nowIso(-3_600_000);
+
+  const { rows } = await db.execute({
+    sql: `select
+            sum(case when status <> 'dead' and next_fetch_at <= ? then 1 else 0 end) as due,
+            -- Accepted and not yet attempted at all: the first-crawl queue, and
+            -- the same figure the page's "Pending" stat shows, so the two agree.
+            sum(case when status = 'pending' then 1 else 0 end)             as pending,
+            -- Attempted and never once successful. A wider set, and deliberately
+            -- not the queue above: a feed that has failed nine times is not
+            -- waiting for its first crawl, it is failing, and the page counts it
+            -- under Erroring.
+            sum(case when status <> 'dead' and last_success_at is null then 1 else 0 end) as never_crawled,
+            sum(case when status = 'pending' and created_at >= ?
+                     then 1 else 0 end)                                    as submitted_hour,
+            sum(case when card_state is null then 1 else 0 end)            as cards_pending,
+            sum(case when card_state = 'ok' then 1 else 0 end)             as cards_ok,
+            sum(case when card_state = 'none' then 1 else 0 end)           as cards_none,
+            sum(case when card_state = 'error' then 1 else 0 end)          as cards_error,
+            sum(case when card_checked_at >= ? then 1 else 0 end)          as cards_hour
+          from feeds`,
+    // Deliberately no "first crawls completed this hour". Nothing records when a
+    // feed was read for the *first* time, and every way of inferring it from
+    // these columns is a guess — a status board that mixes measurements with
+    // guesses is worse than one that admits the gap. The first-crawl row shows
+    // its backlog and its inflow, and says outright that it shares the update
+    // queue's throughput.
+    args: [now, hourAgo, hourAgo],
+  });
+
+  const row = rows[0] ?? {};
+  return {
+    due: Number(row.due ?? 0),
+    pendingFirstCrawl: Number(row.pending ?? 0),
+    neverCrawled: Number(row.never_crawled ?? 0),
+    submittedLastHour: Number(row.submitted_hour ?? 0),
+    cardsPending: Number(row.cards_pending ?? 0),
+    cardsOk: Number(row.cards_ok ?? 0),
+    cardsNone: Number(row.cards_none ?? 0),
+    cardsError: Number(row.cards_error ?? 0),
+    cardsLastHour: Number(row.cards_hour ?? 0),
+  };
+}
+
+/**
+ * What each kind of work has been doing lately, from the log it already writes.
+ *
+ * The poller names every line by event — 'feed', 'crawl', 'cards',
+ * 'discovery-search', 'cluster-backfill' — so grouping the log by that column is
+ * a per-job activity feed with no new bookkeeping and nothing for a metrics
+ * table to drift away from. It answers the question a backlog cannot: a queue
+ * that is large and moving and a queue that is large and stopped look identical
+ * in a count.
+ *
+ * Bounded by `at`, which is the one index this table has, and returned as a map
+ * so a caller reads it by event name rather than searching an array.
+ *
+ * @param {Client} db
+ * @param {number} [hours]
+ * @returns {Promise<Record<string, { lines: number, errors: number, amount: number, lastAt: string|null, ms: number|null }>>}
+ */
+export async function logActivity(db, hours = 1) {
+  const since = nowIso(-Math.max(1, hours) * 3_600_000);
+
+  const { rows } = await db.execute({
+    sql: `select event,
+                 count(*)                                              as lines,
+                 sum(case when status = 'error' then 1 else 0 end)      as errors,
+                 coalesce(sum(amount), 0)                              as amount,
+                 -- The poller's own count for the event, whatever that event
+                 -- calls it. Most summary lines put their number inside detail
+                 -- rather than in the amount column, which is how a board built on
+                 -- amount alone came to report a busy discovery worker as stalled:
+                 -- it had checked 700 sites and reported 0.
+                 --
+                 -- Guarded on the leading brace because detail is either a JSON
+                 -- object or a plain error message, and json_extract raises on the
+                 -- second rather than returning null.
+                 coalesce(sum(case when detail like '{%' then coalesce(
+                   json_extract(detail, '$.checked'),
+                   json_extract(detail, '$.searched'),
+                   json_extract(detail, '$.keyed'),
+                   json_extract(detail, '$.looked'),
+                   json_extract(detail, '$.crawled'),
+                   json_extract(detail, '$.topics'),
+                   json_extract(detail, '$.sent'),
+                   json_extract(detail, '$.rows')
+                 ) end), 0)                                            as counted,
+                 max(at)                                               as last_at,
+                 -- The typical cost of one pass, not the total: a job that has
+                 -- run twice in an hour and a job that has run 200 times are
+                 -- not comparable on a sum.
+                 cast(avg(ms) as integer)                              as ms
+          from crawl_log
+          where at >= ?
+          group by event`,
+    args: [since],
+  });
+
+  /** @type {Record<string, { lines: number, errors: number, amount: number, lastAt: string|null, ms: number|null }>} */
+  const byEvent = {};
+  for (const row of rows) {
+    byEvent[String(row.event)] = {
+      lines: Number(row.lines ?? 0),
+      errors: Number(row.errors ?? 0),
+      // The column where it exists, the payload where it does not, so a job's
+      // rate does not depend on which of the two the poller happened to use.
+      amount: Number(row.amount ?? 0) || Number(row.counted ?? 0),
+      lastAt: row.last_at ? String(row.last_at) : null,
+      ms: row.ms == null ? null : Number(row.ms),
+    };
+  }
+
+  return byEvent;
+}
+
+/**
  * A snapshot of what the crawler is doing, for /crawlstats.
  *
  * One round trip rather than a dozen counts: the page is public and uncached,
@@ -1424,7 +1560,10 @@ export async function dueFeeds(db, limit = 25) {
     // blog and links to its page is worth two columns the crawl itself is
     // holding the row for anyway. source_kind is what main added, and the
     // crawl still needs it to know what it is fetching.
-    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind
+    // item_count comes along so a crawl that stored nothing can pass the number
+    // straight back instead of paying for a count(*) to be told it is unchanged.
+    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
+                 item_count
           from feeds
           where status <> 'dead' and next_fetch_at <= ?
           order by next_fetch_at asc limit ?`,
@@ -1583,6 +1722,97 @@ export async function existingFeedKeys(db, pageSize = 5000) {
   }
 
   return { urls, slugs };
+}
+
+/**
+ * Which of these feed URLs the directory already holds.
+ *
+ * The scoped counterpart to {@link existingFeedKeys}. That one reads the whole
+ * table, which is right when a single process imports a whole catalogue in one
+ * go — the read is amortised over every row of the file. It is exactly wrong
+ * for an upload that arrives as a few hundred separate HTTP requests: each one
+ * would re-read fifty thousand rows to check two thousand URLs, and the cost
+ * grows with the directory rather than with the upload.
+ *
+ * Matched on the exact stored string rather than a lowercased one, so the
+ * unique index on feed_url can answer it. That is also the only comparison that
+ * means anything here: the index is what `insertFeedsBulk` conflicts against,
+ * so a URL this misses is a URL the insert would have dropped anyway.
+ *
+ * @param {Client} db
+ * @param {string[]} urls normalized feed URLs
+ * @returns {Promise<Set<string>>} the subset that already exists
+ */
+export async function knownFeedUrls(db, urls) {
+  return lookupIn(db, 'select feed_url from feeds where feed_url in', urls, (url) => url);
+}
+
+/**
+ * Which of these slugs are already claimed.
+ *
+ * @param {Client} db
+ * @param {string[]} slugs
+ * @returns {Promise<Set<string>>}
+ */
+export async function knownSlugs(db, slugs) {
+  return lookupIn(db, 'select slug from feeds where slug in', slugs, (slug) => slug);
+}
+
+/**
+ * Run one `where x in (…)` lookup over a list of any length.
+ *
+ * SQLite has a ceiling on bound parameters per statement, and a batch import
+ * hands us a couple of thousand keys at a time, so the list is asked for in
+ * pages. Five hundred is well under every version's limit and still turns a
+ * two-thousand-key check into four round trips rather than two thousand.
+ *
+ * @param {Client} db
+ * @param {string} prefix SQL up to and including `in`
+ * @param {string[]} values
+ * @param {(value: unknown) => string} key how a returned row maps back to the set
+ * @returns {Promise<Set<string>>}
+ */
+async function lookupIn(db, prefix, values, key) {
+  const found = new Set();
+  const page = 500;
+
+  for (let i = 0; i < values.length; i += page) {
+    const slice = values.slice(i, i + page);
+    if (slice.length === 0) break;
+
+    const { rows } = await db.execute({
+      sql: `${prefix} (${slice.map(() => '?').join(', ')})`,
+      args: slice,
+    });
+    for (const row of rows) found.add(key(String(Object.values(row)[0])));
+  }
+
+  return found;
+}
+
+/**
+ * The IP hash a submission was made from, for deciding who may add to it.
+ *
+ * An upload that arrives in hundreds of separate requests has to name the
+ * submission it belongs to, and a submission id is a public URL — it is printed
+ * on the status page. That is fine for reading and wrong for writing, so a
+ * batch is only accepted from the address that opened the submission.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @returns {Promise<{ ip_hash: string|null, created_at: string }|null>}
+ */
+export async function submissionOwner(db, id) {
+  const { rows } = await db.execute({
+    sql: 'select ip_hash, created_at from submissions where id = ? limit 1',
+    args: [id],
+  });
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    ip_hash: row.ip_hash == null ? null : String(row.ip_hash),
+    created_at: String(row.created_at),
+  };
 }
 
 /**

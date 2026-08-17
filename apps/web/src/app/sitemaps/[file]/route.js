@@ -1,4 +1,4 @@
-import { q } from '@rssamplifier/db';
+import { q, authors } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { CHUNK_SIZE, STATIC_PAGES, esc, parseChunkFilename } from '../../../lib/sitemap.js';
@@ -42,6 +42,23 @@ export async function GET(request, ctx) {
       topics.map((t) => {
         const lastmod = t.refreshed_at ? `<lastmod>${esc(t.refreshed_at)}</lastmod>` : '';
         return `  <url><loc>${esc(`${base}/topics/${encodeURIComponent(String(t.slug))}`)}</loc>${lastmod}</url>`;
+      }),
+    );
+  }
+
+  // Author pages, in one file for the same reason topics are: a person has no
+  // creation date worth chunking on, and the count is far below the ceiling.
+  // Only the ones the site itself publishes — below 0.6 confidence a byline is
+  // a guess, and a guess about a named individual is not something to invite
+  // every search engine to index.
+  if (file === 'authors.xml') {
+    const people = await authors.authorsForSitemap(db(), CHUNK_SIZE);
+    if (people.length === 0) return new Response('Not found', { status: 404 });
+
+    return xml(
+      people.map((person) => {
+        const lastmod = person.updated_at ? `<lastmod>${esc(String(person.updated_at))}</lastmod>` : '';
+        return `  <url><loc>${esc(`${base}/authors/${encodeURIComponent(String(person.slug))}`)}</loc>${lastmod}</url>`;
       }),
     );
   }

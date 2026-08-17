@@ -1,7 +1,7 @@
 import { q } from '@rssamplifier/db';
 
 import { db } from '../../../../../lib/db.js';
-import { frame, stream } from '../../../../../lib/sse.js';
+import { TICK_MS, frame, stream } from '../../../../../lib/sse.js';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -33,6 +33,16 @@ export async function GET(req, { params }) {
   // Resume from whatever the page already showed — see the discovery stream.
   let cursor = new URL(req.url).searchParams.get('since') || null;
   let last = '';
+
+  // How often to look, decided once from how much there is to look at.
+  //
+  // Every poll counts every feed in the submission by status. That is nothing
+  // for the few hundred a paste queues and it is a scan of six hundred thousand
+  // index entries for a catalogue upload — which now happens, because the
+  // uploader made a file that size importable. Such a queue also takes days to
+  // drain, so polling it every second buys no visible smoothness at all: the
+  // bar advances by a fraction of a percent an hour either way.
+  const tick = pollInterval(Number(submission.queued_count ?? 0));
 
   return stream(async (first) => {
     const [progressRow, events] = await Promise.all([
@@ -79,5 +89,21 @@ export async function GET(req, { params }) {
     }
 
     return { frames, done };
-  });
+  }, { tick });
+}
+
+/**
+ * Milliseconds between polls, for a queue of this size.
+ *
+ * Stepped rather than continuous, because the only thing being decided is which
+ * of "responsive", "steady" and "leave it alone" a queue deserves, and a formula
+ * would invite reading precision into it that is not there.
+ *
+ * @param {number} queued
+ * @returns {number}
+ */
+function pollInterval(queued) {
+  if (queued > 100_000) return 15_000;
+  if (queued > 10_000) return 5_000;
+  return TICK_MS;
 }

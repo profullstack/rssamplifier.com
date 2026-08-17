@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { q, accounts, queue } from '@rssamplifier/db';
+import { q, alerts, queue, authors as people } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
@@ -9,7 +9,8 @@ import { shareText } from '../../lib/share.js';
 import { feedCard, postThumb } from '../../lib/thumbs.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
-import FollowButton from '../FollowButton.jsx';
+import AuthorLinks from '../AuthorLinks.jsx';
+import FollowControls from '../FollowControls.jsx';
 import PlayButton from '../PlayButton.jsx';
 import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
@@ -92,17 +93,21 @@ export default async function FeedPage({ params }) {
   const feed = await q.feedBySlug(client, slug);
   if (!feed) notFound();
 
-  const [posts, nav, topics, user] = await Promise.all([
+  const [posts, nav, topics, credited, feedLinks, user] = await Promise.all([
     q.itemsForFeed(client, String(feed.id), 50),
     q.neighbours(client, String(feed.created_at)),
     q.keywordsForFeed(client, String(feed.id)),
+    people.authorsForFeed(client, String(feed.id)),
+    people.linksForFeed(client, String(feed.id)),
     currentUser(),
   ]);
 
   // Only asked once we know there is someone to ask about.
-  const [following, queued] = user
+  const [follow, queued] = user
     ? await Promise.all([
-        accounts.isFollowing(client, String(user.id), String(feed.id)),
+        // Following and alerting in one row, because the two controls sit side
+        // by side and asking twice would be two queries for one answer.
+        alerts.feedFollowState(client, String(user.id), String(feed.id)),
         // One statement for the whole page. Asking per post would be fifty
         // round trips to decide what fifty buttons say.
         queue.lanesForItems(
@@ -111,7 +116,10 @@ export default async function FeedPage({ params }) {
           posts.map((p) => String(p.id)),
         ),
       ])
-    : [false, /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({})];
+    : [
+        { following: false, alerts: false },
+        /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({}),
+      ];
 
   // A blog page is the longest read on the site — up to fifty summaries — so it
   // is the one place a rectangle earns its keep, sat in the flow where somebody
@@ -152,6 +160,19 @@ export default async function FeedPage({ params }) {
     url: feed.site_url ?? `${siteUrl()}/${feed.slug}`,
     webFeed: String(feed.feed_url),
     keywords: topics.length ? topics.map((t) => String(t.keyword)).join(', ') : undefined,
+    // The people, with the accounts they published, in the vocabulary the
+    // extractor read them out of. A feed page that names its author only in
+    // prose is a page every other crawler has to guess at.
+    author: credited.length
+      ? credited.map((person) => ({
+          '@type': 'Person',
+          name: person.name,
+          url: `${siteUrl()}/authors/${person.slug}`,
+          sameAs: (person.links ?? [])
+            .filter((l) => l.network !== 'email')
+            .map((l) => l.url),
+        }))
+      : undefined,
     [entryProp]: posts.slice(0, 20).map((p) => ({
       '@type': entryType,
       [podcast ? 'name' : 'headline']: p.title,
@@ -200,10 +221,12 @@ export default async function FeedPage({ params }) {
             a click that lands flips the button in place rather than reloading
             fifty posts. A signed-out reader is not shown a dead button: the
             endpoint sends them to sign in and back here afterwards. */}
-        <FollowButton
+        <FollowControls
           endpoint="/api/follows"
+          kind="feed"
           slug={String(feed.slug)}
-          following={following}
+          following={follow.following}
+          alerts={follow.alerts}
           signedIn={Boolean(user)}
           next={`/${slug}`}
           label="Follow"
@@ -243,6 +266,44 @@ export default async function FeedPage({ params }) {
             </a>
           ))}
         </nav>
+      )}
+
+      {/* Who writes this, and where else they are. Under the topics rather
+          than up in the meta line for the same reason topics are: it is a way
+          out of this page to somewhere else, not a fact about the feed.
+
+          The links are shown inline for a feed with one author — which is most
+          of the small web, and where "how do I reach this person" is a question
+          with a single answer. A group blog gets names only, because a row of
+          six link sets is a wall, and each name leads to a page that has
+          them. */}
+      {credited.length > 0 && (
+        <section className="feed-authors">
+          <h2>Written by</h2>
+          <ul>
+            {credited.map((person) => (
+              <li key={String(person.id)}>
+                <a href={`/authors/${encodeURIComponent(String(person.slug))}`}>{person.name}</a>
+                {credited.length === 1 && <AuthorLinks links={person.links} />}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* The blog's own accounts. Shown when nobody is named — which is a
+          third of the small web, and where they are the only way to reach
+          whoever writes it — and for a group blog, where they belong to the
+          publication rather than to any one of the bylines.
+
+          Suppressed for a single-author feed, because there the same links are
+          already sitting under that person's name and saying them twice adds
+          nothing but a second row of chips. */}
+      {feedLinks.length > 0 && !(credited.length === 1) && (
+        <section className="feed-authors">
+          <h2>{credited.length > 1 ? 'This blog elsewhere' : 'Elsewhere'}</h2>
+          <AuthorLinks links={feedLinks} />
+        </section>
       )}
 
       {feed.status === 'dead' && (

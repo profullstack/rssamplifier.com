@@ -1,7 +1,8 @@
-import { q, discovery } from '@rssamplifier/db';
+import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { categoryStats, indexingHistory } from '../../../lib/crawlstats.js';
+import { jobRows } from '../../../lib/jobs.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,16 +22,40 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const client = db();
 
-  const [stats, failing, recent, sitesToCheck, keywordsQueued, history, categories] =
-    await Promise.all([
-      q.crawlStats(client),
-      q.failingFeeds(client, 20),
-      q.recentlyCrawled(client, 20),
-      discovery.countQueuedCandidates(client),
-      discovery.countQueuedKeywords(client),
-      indexingHistory(),
-      categoryStats(),
-    ]);
+  const [
+    stats,
+    failing,
+    recent,
+    sitesToCheck,
+    keywordsQueued,
+    history,
+    categories,
+    backlogs,
+    activity,
+    alertAccounts,
+  ] = await Promise.all([
+    q.crawlStats(client),
+    q.failingFeeds(client, 20),
+    q.recentlyCrawled(client, 20),
+    discovery.countQueuedCandidates(client),
+    discovery.countQueuedKeywords(client),
+    indexingHistory(),
+    categoryStats(),
+    q.jobBacklogs(client),
+    q.logActivity(client, 1),
+    // See the page: this only tells a sender with nobody to serve from one that
+    // has stopped, which the log alone cannot say.
+    alerts.alertingAccountCount(client),
+  ]);
+
+  const jobs = jobRows({
+    backlogs,
+    activity,
+    fetchedLastHour: stats.fetchedLastHour,
+    keywordQueue: keywordsQueued,
+    candidateQueue: sitesToCheck,
+    alertAccounts,
+  });
 
   return new Response(
     JSON.stringify(
@@ -43,6 +68,22 @@ export async function GET() {
         // The discovery queues run on the same poller, so a monitor watching
         // this endpoint should see them stall too.
         discovery: { keywordsQueued, sitesToCheck },
+        // The same work, split by job. This is the shape to alert on rather than
+        // the totals above: `due` is one queue that is meant to be deep, and a
+        // monitor built on it either pages constantly or never. A job whose
+        // state is 'stalled' is work waiting with nothing working on it, which is
+        // the condition worth waking somebody for.
+        jobs: jobs.map((job) => ({
+          key: job.key,
+          label: job.label,
+          what: job.what,
+          state: job.state,
+          backlog: job.backlog,
+          ratePerHour: job.rate,
+          errorsLastHour: job.errors,
+          clearsInHours: job.eta == null ? null : Math.round(job.eta * 10) / 10,
+          lastRanAt: job.lastAt,
+        })),
         // What the directory holds, and how that has moved. `growth` is
         // cumulative and aligned to `days`, so the two zip into a series
         // without the caller having to reconstruct anything.
