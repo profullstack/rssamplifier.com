@@ -2381,6 +2381,25 @@ select {
   margin: 0.25rem 0 0;
 }
 
+/* ------------------------------------------------------------- following
+ *
+ * The list of followed topics, on /following. A post-list whose rows carry the
+ * control that undoes them, so the label and its Unfollow sit on one line —
+ * .follow-form's own bottom margin is for a page where it is the call to
+ * action, and inside a list row it reads as a gap.
+ */
+
+.following-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.following-list .follow-form {
+  margin: 0;
+}
+
 /* ---- live progress -------------------------------------------------------
  *
  * The status pages report on work that takes minutes to hours. Numbers alone

@@ -171,6 +171,21 @@ const nextConfig = {
           source: '/topics/:slug/:group.:format(rss|atom|json|xml|m3u|pls)',
           destination: '/api/topics/:slug/:group/feed/:format',
         },
+
+        // One reader's own river: /following.rss?t=<token>.
+        //
+        // The token stays in the query rather than becoming a segment, which is
+        // the one thing about this rewrite worth knowing: a destination query
+        // string never arrives at an App Router handler, but the *caller's* query
+        // does, because `req.url` there is the URL the client asked for. So `?t=`
+        // survives and a `?t=` written here would not.
+        //
+        // No playlist formats, unlike the topic rules above — see the handler for
+        // why a personal river has no honest `.m3u`.
+        {
+          source: '/following.:format(rss|atom|json|xml)',
+          destination: '/api/following/feed/:format',
+        },
       ],
     };
   },

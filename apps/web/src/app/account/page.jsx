@@ -5,13 +5,14 @@ import Toolbar from '../Toolbar.jsx';
 import { AddPasskey } from '../Passkey.jsx';
 import { db } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
+import { topicLabel } from '../../lib/following.js';
 import { ANONYMOUS_HOURLY } from '../../lib/ratelimit.js';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Your account',
-  description: 'The blogs you follow, and the passkeys that get you in.',
+  description: 'The blogs and topics you follow, and the passkeys that get you in.',
 };
 
 /**
@@ -28,10 +29,10 @@ export default async function AccountPage({ searchParams }) {
   const client = db();
   const userId = String(user.id);
 
-  const [follows, credentials, latest, keys] = await Promise.all([
+  const [follows, credentials, topics, keys] = await Promise.all([
     accounts.followedFeeds(client, userId),
     accounts.credentialsForUser(client, userId),
-    accounts.followedItems(client, userId, 40),
+    accounts.followedTopics(client, userId),
     apikeys.keysForUser(client, userId),
   ]);
 
@@ -137,38 +138,46 @@ export default async function AccountPage({ searchParams }) {
         <button type="submit">Create a key</button>
       </form>
 
-      <h2>Following {follows.length > 0 && `(${follows.length})`}</h2>
-      {follows.length === 0 ? (
+      {/* What is followed, but not what it published: the river moved to
+          /following, which is the one place the blogs and the topics are merged
+          into a single list and the only one of the two that can be subscribed
+          to. Two rivers on two pages would have drifted the moment one of them
+          grew a feature. */}
+      <h2>Following {follows.length + topics.length > 0 && `(${follows.length + topics.length})`}</h2>
+      {follows.length + topics.length === 0 ? (
         <p className="empty">
-          Nothing yet. Open any blog and press Follow — or hit <a href="/random">random</a> until
-          something catches.
+          Nothing yet. Open any blog and press Follow, or any <a href="/topics">topic</a> to be told
+          when anybody writes about it — or hit <a href="/random">random</a> until something catches.
         </p>
       ) : (
-        <div className="feed-meta detail">
-          {follows.map((f) => (
-            <a key={String(f.slug)} href={`/${f.slug}`}>
-              {String(f.title)}
-            </a>
-          ))}
-        </div>
-      )}
-
-      {latest.length > 0 && (
         <>
-          <h2>Latest from what you follow</h2>
-          {latest.map((p) => (
-            <article className="entry" key={`${p.feed_slug}-${p.guid}`}>
-              <h3>
-                <a href={`/${p.feed_slug}/read?p=${encodeURIComponent(String(p.guid))}`}>
-                  {String(p.title)}
+          {topics.length > 0 && (
+            <div className="feed-meta detail">
+              {topics.map((t) => {
+                const label = topicLabel(t);
+                return (
+                  <a key={`${t.slug}:${t.segment}`} href={label.href}>
+                    {label.title}
+                  </a>
+                );
+              })}
+            </div>
+          )}
+
+          {follows.length > 0 && (
+            <div className="feed-meta detail">
+              {follows.map((f) => (
+                <a key={String(f.slug)} href={`/${f.slug}`}>
+                  {String(f.title)}
                 </a>
-              </h3>
-              {p.summary && <p>{String(p.summary)}</p>}
-              <time dateTime={p.published_at ? String(p.published_at) : undefined}>
-                {formatDate(p.published_at)} · {String(p.feed_title)}
-              </time>
-            </article>
-          ))}
+              ))}
+            </div>
+          )}
+
+          <p className="hint">
+            <a href="/following">Your river →</a> everything above, newest first, and a feed URL for
+            your reader.
+          </p>
         </>
       )}
 
