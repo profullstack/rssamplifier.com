@@ -72,8 +72,7 @@ export default function Uploader({ shared = '' }) {
    *   read: number,
    *   size: number,
    *   seen: number,
-   *   queued: number,
-   *   skipped: number,
+   *   staged: number,
    *   invalid: number,
    *   statusPath: string|null,
    *   error: string|null,
@@ -103,8 +102,7 @@ export default function Uploader({ shared = '' }) {
       read: 0,
       size: job.size,
       seen: 0,
-      queued: 0,
-      skipped: 0,
+      staged: 0,
       invalid: 0,
       statusPath: null,
       error: null,
@@ -155,22 +153,24 @@ export default function Uploader({ shared = '' }) {
           const slice = pending.slice(0, batchSize);
           pending = pending.slice(batchSize);
 
-          const res = await post('/api/submit/batch', {
+          // Staged rather than queued: this request only records the feeds, and
+          // the poller turns them into rows on its own time. It is what lets
+          // this tab be closed the moment the file has been read, instead of
+          // held open for the length of the import.
+          const res = await post('/api/submit/stage', {
             submissionId,
             entries: slice,
             offset: state.seen,
           });
 
           say(
-            `queued ${Number(res.queued).toLocaleString()} of ${slice.length.toLocaleString()}` +
-              (res.skipped ? ` — ${Number(res.skipped).toLocaleString()} already here` : '') +
+            `sent ${Number(res.staged ?? slice.length).toLocaleString()} of ${slice.length.toLocaleString()}` +
               (slice.at(-1) ? ` — ${hostOf(slice.at(-1).url)}` : ''),
           );
 
           show({
             seen: state.seen + slice.length,
-            queued: state.queued + Number(res.queued ?? 0),
-            skipped: state.skipped + Number(res.skipped ?? 0),
+            staged: state.staged + Number(res.staged ?? 0),
             invalid: state.invalid + Number(res.invalid ?? 0),
           });
         }
@@ -193,17 +193,19 @@ export default function Uploader({ shared = '' }) {
       show({ phase: 'saving', percent: 100, read: job.size });
       await flush(true);
 
+      // Hands the list over: everything after this happens on the poller,
+      // whether or not this tab still exists.
       const done = await post('/api/submit/finish', {
         submissionId,
         email: job.email,
         invalid: state.invalid,
+        total: state.staged,
       });
 
-      // Everything in the file was already in the directory. The status page
-      // would report that honestly as nought per cent of nothing, which reads
-      // as a failed import — so say it here instead, where it is plainly an
-      // answer rather than an error.
-      if (Number(done.queued) === 0) {
+      // A file with nothing in it never becomes a queue to watch, so there is
+      // no status page worth sending anyone to — say so here instead, where it
+      // is plainly an answer rather than an error.
+      if (Number(done.pending ?? done.queued ?? 0) === 0) {
         show({ phase: 'empty', statusPath: done.statusPath ?? null });
         return;
       }
@@ -353,8 +355,8 @@ function Progress({ run, onReset }) {
             : run.phase === 'reading'
               ? `${bytes(run.read)} of ${bytes(run.size)} read`
               : run.phase === 'saving'
-                ? 'saving the last batch'
-                : `${Number(run.queued).toLocaleString()} feeds queued`}
+                ? 'sending the last batch'
+                : `${Number(run.staged).toLocaleString()} feeds sent`}
         </span>
       </div>
 
@@ -375,9 +377,9 @@ function Progress({ run, onReset }) {
       <p className="live-busy">
         {run.phase === 'error' ? (
           <>
-            {explain(run.error)} {Number(run.queued) > 0 && (
+            {explain(run.error)} {Number(run.staged) > 0 && (
               <>
-                {Number(run.queued).toLocaleString()} feeds were queued before it stopped
+                {Number(run.staged).toLocaleString()} feeds were sent before it stopped
                 {run.statusPath ? <> — <a href={run.statusPath}>see them</a></> : null}.{' '}
               </>
             )}
@@ -385,17 +387,13 @@ function Progress({ run, onReset }) {
             directory is skipped rather than added twice.
           </>
         ) : run.phase === 'empty' ? (
-          <>
-            Every one of the {Number(run.skipped).toLocaleString()} feeds in {run.name} is already
-            in the directory, so there was nothing to add.
-          </>
+          <>We could not find any feeds in {run.name}, so there was nothing to send.</>
         ) : run.phase === 'done' ? (
-          <>Queued. Taking you to the status page…</>
+          <>Sent. Taking you to the status page…</>
         ) : (
           <>
-            Reading {run.name} — {Number(run.queued).toLocaleString()} queued
-            {run.skipped > 0 ? `, ${Number(run.skipped).toLocaleString()} already here` : ''}. Leave
-            this tab open until it finishes.
+            Reading {run.name} — {Number(run.staged).toLocaleString()} feeds sent. This only takes
+            as long as reading the file; the import itself carries on without this tab.
           </>
         )}
       </p>

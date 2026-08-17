@@ -9,6 +9,7 @@ export {
 } from './src/crawl.js';
 export { importFeeds, importOpml } from './src/import.js';
 export { queueFeeds } from './src/queue.js';
+export { drainImport } from './src/drain.js';
 export {
   notifyFinishedSubmissions,
   sendSubmissionEmail,

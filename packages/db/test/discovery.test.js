@@ -217,5 +217,7 @@ test('a submission reads back as a log of the feeds the crawler settled', async 
   assert.equal(String(after[0].slug), 's-two');
 
   const progress = await q.submissionProgress(db, submissionId);
-  assert.deepEqual(progress, { queued: 3, crawled: 1, failed: 1, waiting: 1 });
+  // `pending` counts entries handed over but not yet queued, which is zero for
+  // a submission whose feeds were written directly.
+  assert.deepEqual(progress, { queued: 3, crawled: 1, failed: 1, waiting: 1, pending: 0 });
 });

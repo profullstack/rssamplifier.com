@@ -51,7 +51,11 @@ export default async function SubmissionPage({ params }) {
 
   const input = describeSubmittedInput(submission);
   const added = Number(submission.accepted_count ?? 0);
-  const done = progress.waiting === 0;
+  // Entries handed over but not yet turned into feeds. While there are any, the
+  // import is still arriving and cannot be finished however few feeds are
+  // currently pending.
+  const staged = Number(progress.pending ?? 0);
+  const done = progress.waiting === 0 && staged === 0;
   const settled = progress.crawled + progress.failed;
   const percent = progress.queued === 0 ? 100 : Math.floor((settled / progress.queued) * 100);
 
@@ -62,7 +66,9 @@ export default async function SubmissionPage({ params }) {
       <p className="lede">
         {done
           ? `Everything you submitted has been crawled. ${added + progress.crawled} blogs are in the directory.`
-          : `${progress.waiting.toLocaleString()} feeds still queued. This page updates as the crawler works through them — it is safe to close and come back.`}
+          : staged > 0
+            ? `${staged.toLocaleString()} feeds are waiting to be added, and the crawler is working through the ${progress.waiting.toLocaleString()} already queued. Nothing here needs you — close the tab and come back whenever.`
+            : `${progress.waiting.toLocaleString()} feeds still queued. This page updates as the crawler works through them — it is safe to close and come back.`}
       </p>
 
       <LiveProgress
@@ -82,6 +88,12 @@ export default async function SubmissionPage({ params }) {
           <dt>Queued for the crawler</dt>
           <dd>{progress.queued.toLocaleString()}</dd>
         </div>
+        {staged > 0 && (
+          <div>
+            <dt>Still being added</dt>
+            <dd>{staged.toLocaleString()}</dd>
+          </div>
+        )}
         <div>
           <dt>Crawled so far</dt>
           <dd>{progress.crawled.toLocaleString()}</dd>

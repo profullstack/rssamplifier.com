@@ -1823,6 +1823,149 @@ async function lookupIn(db, prefix, values, key) {
 }
 
 /**
+ * Record entries against a submission without queueing any of them.
+ *
+ * Everything the queueing does — normalising, deduplicating, claiming slugs,
+ * scheduling — is the poller's job now, so this is one insert and nothing else.
+ * That is the point: it is what lets a very large catalogue be handed over in a
+ * minute instead of half an hour, and the tab closed.
+ *
+ * One statement with many rows, for the reason `insertFeedsBulk` documents.
+ *
+ * @param {Client} db
+ * @param {string} submissionId
+ * @param {Array<{ url: string, title?: string|null, siteUrl?: string|null }>} entries
+ * @returns {Promise<number>}
+ */
+export async function stageImportEntries(db, submissionId, entries) {
+  if (entries.length === 0) return 0;
+
+  const result = await db.execute({
+    sql:
+      `insert into import_entries (submission_id, url, title, site_url) values ` +
+      entries.map(() => '(?, ?, ?, ?)').join(', '),
+    args: entries.flatMap((e) => [
+      submissionId,
+      String(e.url ?? ''),
+      e.title == null ? null : String(e.title),
+      e.siteUrl == null ? null : String(e.siteUrl),
+    ]),
+  });
+
+  return Number(result.rowsAffected ?? 0);
+}
+
+/**
+ * Mark a submission's list complete, so the poller may start draining it.
+ *
+ * `notify_email` is written here for the reason `completeSubmission` gives: an
+ * address stored while there was still nothing queued reads as a finished
+ * import and gets mailed about immediately.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {{ entries_total?: number, rejected_count?: number, notify_email?: string|null }} row
+ */
+export async function markImportReady(db, id, row) {
+  await db.execute({
+    sql: `update submissions
+          set entries_ready_at = ?, entries_total = ?, rejected_count = ?, notify_email = ?
+          where id = ?`,
+    args: [
+      nowIso(),
+      Math.max(0, Math.floor(Number(row.entries_total ?? 0)) || 0),
+      Math.max(0, Math.floor(Number(row.rejected_count ?? 0)) || 0),
+      row.notify_email ?? null,
+      id,
+    ],
+  });
+}
+
+/**
+ * The next submission with a finished list and rows still to drain.
+ *
+ * Oldest first, so a catalogue uploaded while another is draining waits its turn
+ * rather than interleaving with it — which would put both imports' feeds in one
+ * another's crawl schedule.
+ *
+ * @param {Client} db
+ * @returns {Promise<{ id: string, entries_total: number }|null>}
+ */
+export async function nextImportToDrain(db) {
+  const { rows } = await db.execute({
+    sql: `select s.id, s.entries_total
+          from submissions s
+          where s.entries_ready_at is not null
+            and exists (select 1 from import_entries e where e.submission_id = s.id)
+          order by s.entries_ready_at asc
+          limit 1`,
+  });
+
+  const row = rows[0];
+  if (!row) return null;
+  return { id: String(row.id), entries_total: Number(row.entries_total ?? 0) };
+}
+
+/**
+ * Take a slice of a submission's staged entries, oldest first.
+ *
+ * @param {Client} db
+ * @param {string} submissionId
+ * @param {number} limit
+ * @returns {Promise<Array<{ id: number, url: string, title: string, siteUrl: string|null }>>}
+ */
+export async function takeImportEntries(db, submissionId, limit) {
+  const { rows } = await db.execute({
+    sql: `select id, url, title, site_url from import_entries
+          where submission_id = ? order by id asc limit ?`,
+    args: [submissionId, limit],
+  });
+
+  return rows.map((r) => ({
+    id: Number(r.id),
+    url: String(r.url),
+    title: r.title == null ? '' : String(r.title),
+    siteUrl: r.site_url == null ? null : String(r.site_url),
+  }));
+}
+
+/**
+ * Forget entries once they have been queued.
+ *
+ * Deleted by id rather than by submission so that a drain interrupted halfway
+ * resumes where it stopped instead of starting again.
+ *
+ * @param {Client} db
+ * @param {number[]} ids
+ * @returns {Promise<number>}
+ */
+export async function dropImportEntries(db, ids) {
+  if (ids.length === 0) return 0;
+
+  const result = await db.execute({
+    sql: `delete from import_entries where id in (${ids.map(() => '?').join(',')})`,
+    args: ids,
+  });
+
+  return Number(result.rowsAffected ?? 0);
+}
+
+/**
+ * How many of a submission's entries are still waiting to be queued.
+ *
+ * @param {Client} db
+ * @param {string} submissionId
+ * @returns {Promise<number>}
+ */
+export async function countImportEntries(db, submissionId) {
+  const { rows } = await db.execute({
+    sql: 'select count(*) as n from import_entries where submission_id = ?',
+    args: [submissionId],
+  });
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
  * The IP hash a submission was made from, for deciding who may add to it.
  *
  * An upload that arrives in hundreds of separate requests has to name the
@@ -2193,7 +2336,17 @@ export async function submissionProgress(db, id) {
   const failed = (by.error ?? 0) + (by.dead ?? 0);
   const waiting = by.pending ?? 0;
 
-  return { queued: crawled + failed + waiting, crawled, failed, waiting };
+  // Feeds handed over but not yet turned into rows. Without this an upload
+  // reads as finished the moment it is sent — nought of nought crawled — which
+  // is the worst possible thing for the page to say about a catalogue that is
+  // about to become half a million feeds.
+  const { rows: staged } = await db.execute({
+    sql: 'select count(*) as n from import_entries where submission_id = ?',
+    args: [id],
+  });
+  const pending = Number(staged[0]?.n ?? 0);
+
+  return { queued: crawled + failed + waiting, crawled, failed, waiting, pending };
 }
 
 /**
@@ -2285,6 +2438,14 @@ export async function submissionsAwaitingNotice(db, limit = 5) {
             and not exists (
               select 1 from feeds f
               where f.submission_id = s.id and f.status = 'pending'
+            )
+            -- An upload records its address the moment its list is handed over,
+            -- which is before a single feed of it exists. Without this clause
+            -- "has an address and nothing pending" is true for that whole
+            -- window, and the submitter is told their import finished seconds
+            -- after starting it.
+            and not exists (
+              select 1 from import_entries e where e.submission_id = s.id
             )
           order by s.created_at asc
           limit ?`,
