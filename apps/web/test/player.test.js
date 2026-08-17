@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   playerPath,
+  playlistEntry,
   queueRuntime,
   rawPlaylistPath,
   runtime,
@@ -90,6 +91,112 @@ test('a track with no duration says nothing rather than zero', () => {
   const track = trackFrom({ audio_url: 'https://cdn.example.com/x.mp3', audio_seconds: -1 });
   assert.equal(track.seconds, null);
   assert.equal(track.title, 'Untitled');
+});
+
+test('a playlist row is both a line of the list and something the dock can carry', () => {
+  const entry = playlistEntry({
+    guid: 'tag:example.com,2026:1',
+    url: 'https://example.com/ep1',
+    title: 'Episode One',
+    image_url: 'https://cdn.example.com/cover.jpg',
+    audio_url: 'https://cdn.example.com/1.mp3',
+    audio_type: 'audio/mpeg',
+    audio_seconds: 1426,
+    feed_slug: 'coder-radio',
+    feed_title: 'Coder Radio',
+  });
+
+  // Everything the list itself draws is untouched.
+  assert.equal(entry.title, 'Episode One');
+  assert.equal(entry.seconds, 1426);
+  assert.equal(entry.postHref, 'https://example.com/ep1');
+
+  // ...and alongside it, what the dock needs to play it and to say what it is.
+  assert.equal(entry.lane, 'listen');
+  assert.equal(entry.dock.src, 'https://cdn.example.com/1.mp3');
+  assert.equal(entry.dock.kind, 'audio');
+  assert.equal(entry.dock.show, 'Coder Radio');
+  assert.equal(entry.dock.image, 'https://cdn.example.com/cover.jpg');
+  // Back to the post on this site, not off to the publisher: the dock's title
+  // is a way back to what you are hearing.
+  assert.equal(entry.dock.href, '/coder-radio/read?p=tag%3Aexample.com%2C2026%3A1');
+});
+
+test('a video row is watched rather than listened to, and keeps its poster', () => {
+  const entry = playlistEntry({
+    guid: 'g2',
+    url: 'https://example.com/v1',
+    title: 'A talk',
+    image_url: 'https://cdn.example.com/thumb.jpg',
+    audio_url: 'https://cdn.example.com/1.mp4',
+    audio_type: 'video/mp4',
+    feed_slug: 'confs',
+    feed_title: 'Conferences',
+  });
+
+  assert.equal(entry.lane, 'watch');
+  assert.equal(entry.dock.kind, 'video');
+  assert.equal(entry.dock.image, 'https://cdn.example.com/thumb.jpg');
+});
+
+test('an embed is a stop on the running order, not a gap in it', () => {
+  // This row used to come back with `dock: null`, on the reasoning that a
+  // YouTube enclosure plays in somebody else's iframe and the dock had no
+  // element for one. The dock holds an iframe now — see dockCarries — and on a
+  // video topic these are most of the list, so the row is queued like any
+  // other. What it still does not get is a claim that the dock can drive it.
+  const youtube = playlistEntry({
+    guid: 'g3',
+    url: 'https://www.youtube.com/watch?v=abc',
+    title: 'A video',
+    audio_url: 'https://www.youtube.com/watch?v=abc',
+    audio_type: 'video/youtube',
+    feed_slug: 'a-channel',
+    feed_title: 'A Channel',
+  });
+
+  assert.equal(youtube.title, 'A video');
+  assert.equal(youtube.dock.kind, 'youtube');
+  assert.equal(youtube.dock.href, '/a-channel/read?p=g3');
+  assert.equal(youtube.lane, 'watch');
+});
+
+test('a PeerTube row is listed at one URL and played at another', () => {
+  // The enclosure is a download endpoint; the dock plays the embed. The two
+  // being different is what the row highlight has to survive — PlaylistPlayer
+  // publishes `entry.dock.src`, not `entry.src`, for exactly this row.
+  const peertube = playlistEntry({
+    guid: 'g5',
+    url: 'https://tube.example/w/abc123xyz',
+    title: 'A talk',
+    audio_url: 'https://tube.example/download/videos/generate/uuid?videoFileIds=4',
+    audio_type: 'video/mp4',
+    feed_slug: 'a-tube',
+    feed_title: 'A Tube',
+  });
+
+  assert.equal(peertube.dock.kind, 'peertube');
+  assert.equal(peertube.dock.src, 'https://tube.example/videos/embed/abc123xyz');
+  assert.notEqual(peertube.dock.src, peertube.src);
+});
+
+test('a row with no feed behind it stays a plain link', () => {
+  // Nowhere to send the dock's title link, so it gets no payload rather than a
+  // link to nowhere.
+  const orphan = playlistEntry({
+    guid: 'g4',
+    title: 'Homeless episode',
+    audio_url: 'https://cdn.example.com/4.mp3',
+    audio_type: 'audio/mpeg',
+  });
+
+  assert.equal(orphan.dock, null);
+  assert.equal(orphan.src, 'https://cdn.example.com/4.mp3');
+});
+
+test('a row with nothing to play is not a playlist entry either', () => {
+  assert.equal(playlistEntry({ title: 'A blog post', audio_url: null }), null);
+  assert.equal(playlistEntry(null), null);
 });
 
 test('a runtime reads as a person would say it', () => {

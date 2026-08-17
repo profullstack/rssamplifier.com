@@ -15,6 +15,8 @@
  * `/topics/[keyword]/play` for what it is given.
  */
 
+import { laneFor, trackFor } from './queue.js';
+
 /** The query that says "no, really, give me the file." */
 const RAW_PARAM = 'dl';
 
@@ -118,6 +120,49 @@ export function trackFrom(row) {
     // notes for the thing they are hearing.
     postHref: row.url ? String(row.url) : null,
     seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null,
+  };
+}
+
+/**
+ * One playlist row, as both a line of a list and something the dock can carry.
+ *
+ * The playlist page used to own a player: its own `<audio>`, its own index, its
+ * own queue. That player died at the first click, because a component on a page
+ * cannot outlive the page — press play on a topic's podcasts, follow any link,
+ * and the episode stopped. The transport that *does* survive a navigation is the
+ * one in the layout, so the page stops being a player and becomes what it should
+ * always have been: a running order to hand the dock.
+ *
+ * Two shapes come out of one row for the same reason `trackFrom` exists at all.
+ * The list needs a duration and a link to the show notes; the dock needs a kind,
+ * a poster and a way back to the post. Reading the row twice, in two files,
+ * is how they end up disagreeing about what a track is.
+ *
+ * `dock` is null only for a row with no feed behind it. It used to be null for
+ * YouTube and PeerTube too, on the reasoning that the dock had no element for
+ * one; the dock carries an embed now — see `dockCarries` in lib/queue.js — and
+ * on a video topic that is most of the list, so those rows are queued like any
+ * other rather than left behind as bare links.
+ *
+ * @param {Record<string, unknown>} row a row from q.mediaForTopic
+ * @returns {{
+ *   id: string, src: string, type: string|null, title: string, show: string|null,
+ *   showHref: string|null, postHref: string|null, seconds: number|null,
+ *   dock: object|null, lane: string,
+ * }|null}
+ */
+export function playlistEntry(row) {
+  const listed = trackFrom(row);
+  if (!listed) return null;
+
+  const slug = row?.feed_slug ? String(row.feed_slug) : null;
+
+  return {
+    ...listed,
+    // Without a feed slug there is no reader page to send the dock's title link
+    // to, and a dock entry whose title goes nowhere is worse than a plain link.
+    dock: slug ? trackFor(row, { slug, feedTitle: String(row.feed_title ?? '') }) : null,
+    lane: laneFor(/** @type {any} */ (row)),
   };
 }
 

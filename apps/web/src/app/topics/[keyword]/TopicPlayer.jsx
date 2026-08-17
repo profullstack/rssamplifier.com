@@ -2,9 +2,8 @@ import { q } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { PLAYLIST_LIMIT } from '../../../lib/topicFeed.js';
-import { queueRuntime, rawPlaylistPath, trackFrom } from '../../../lib/player.js';
+import { playlistEntry, queueRuntime, rawPlaylistPath } from '../../../lib/player.js';
 import PlaylistPlayer from '../../PlaylistPlayer.jsx';
-import WatchPlaylist from './WatchPlaylist.jsx';
 
 /**
  * A topic's playlist, as a page you can press play on.
@@ -28,18 +27,14 @@ export default async function TopicPlayer({ topic, group = null }) {
     kinds: group?.kinds ?? null,
   });
 
-  // A video queue is counted off the rows themselves, because the two players
-  // below do not agree on what is playable. `trackFrom` shapes an entry for a
-  // media element and an `.m3u`, which is most of a video topic's rows thrown
-  // away — under /topics/ai nine in ten are YouTube or PeerTube embeds. The
-  // dock carries those; the count has to say so or the page announces ten
-  // videos and lists a hundred.
-  const watch = Boolean(group?.watch);
-  const tracks = rows.map(trackFrom).filter(Boolean);
-  const count = watch ? rows.length : tracks.length;
+  const tracks = rows.map(playlistEntry).filter(Boolean);
   const listing = group ? `/topics/${slug}/${group.segment}` : `/topics/${slug}`;
-  const hours = watch ? null : queueRuntime(tracks);
+  const hours = queueRuntime(tracks);
   const what = group ? group.item : 'episodes and tracks';
+  // A topic's videos are a queue to watch rather than one to hear, which
+  // changes two things on this page and nothing else: the verb, and whether
+  // there is a playlist file worth offering.
+  const watch = Boolean(group?.watch);
 
   return (
     <>
@@ -60,7 +55,7 @@ export default async function TopicPlayer({ topic, group = null }) {
           linked — but none of their recent posts carries a file, and a reader
           told that plainly can go and read them instead. A 404 would say the
           topic does not exist, which is false. */}
-      {count === 0 ? (
+      {tracks.length === 0 ? (
         <p className="lede">
           Nothing on this topic has a file attached to it right now. The writing is all
           still there — <a href={listing}>read the feeds</a> instead.
@@ -68,23 +63,15 @@ export default async function TopicPlayer({ topic, group = null }) {
       ) : (
         <>
           <p className="lede">
-            {count === 1
+            {tracks.length === 1
               ? `One thing to ${watch ? 'watch' : 'play'} on this topic.`
-              : `The ${count} most recent ${what} on this topic${hours ? `, about ${hours} of it` : ''}.`}
-            {watch && ' Press play and it docks at the foot of the window, so it keeps going while you carry on reading.'}
+              : `The ${tracks.length} most recent ${what} on this topic${hours ? `, about ${hours} of it` : ''}.`}
           </p>
 
-          {watch ? (
-            <WatchPlaylist
-              rows={rows}
-              label={group ? `${topic.keyword} — ${group.heading}` : topic.keyword}
-            />
-          ) : (
-            <PlaylistPlayer
-              tracks={tracks}
-              label={group ? `${topic.keyword} — ${group.heading}` : topic.keyword}
-            />
-          )}
+          <PlaylistPlayer
+            entries={tracks}
+            label={group ? `${topic.keyword} — ${group.heading}` : topic.keyword}
+          />
         </>
       )}
 
@@ -96,8 +83,8 @@ export default async function TopicPlayer({ topic, group = null }) {
         {/* Not offered on a video queue. An `.m3u` of it is not a smaller
             playlist, it is a broken one: YouTube's enclosure is an embed page
             and PeerTube's is a download endpoint that stops resolving once the
-            instance re-encodes, so most of the file would be URLs that open
-            an error in VLC. See IN_BROWSER_KINDS. */}
+            instance re-encodes, so most of the file would be URLs that open an
+            error in VLC. See IN_BROWSER_KINDS. */}
         {!watch && (
           <>
             <span>This playlist:</span>

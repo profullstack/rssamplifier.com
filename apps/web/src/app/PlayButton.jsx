@@ -36,6 +36,10 @@ export default function PlayButton({
       // so a page listing fifty episodes costs fifty attributes and no
       // components — the dock is the only client code on the site's hot paths.
       data-dock-play={track ? JSON.stringify(track) : undefined}
+      // The same src again, on its own, so the dock can flag the control for
+      // whatever it is playing without parsing the payload of every one of
+      // them. A listing of fifty episodes is fifty of these.
+      data-dock-src={track ? String(track.src ?? '') : undefined}
       data-lane={track ? lane : undefined}
       // "It is already playing in this page — take it with you." The dock reads
       // the position off the inline element rather than starting over.

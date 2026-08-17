@@ -87,7 +87,7 @@ test('a title too generic to group is marked as such, not left null', async () =
   assert.equal(rows[0].cluster_key, '');
 });
 
-test('the backfill keys old rows and then reports itself finished', async () => {
+test('the backfill walks to the end of the table and then says so', async () => {
   const f = await feed('backfill');
   await items(f.id, [
     'The first sufficiently long headline here',
@@ -96,38 +96,53 @@ test('the backfill keys old rows and then reports itself finished', async () => 
   ]);
 
   // Put the rows back the way they looked before the column existed.
-  await db.execute({
-    sql: `update feed_items set cluster_key = null where feed_id = ?`,
-    args: [f.id],
-  });
+  await db.execute(`update feed_items set cluster_key = null`);
 
-  const first = await q.backfillClusterKeys(db, 500);
-  assert.equal(first.scanned, 3);
-  assert.equal(first.keyed, 2, 'the generic title is scanned but not keyed');
+  // Walk the whole table in pages, exactly as the poller does.
+  let cursor = '';
+  let keyed = 0;
+  let passes = 0;
+  for (;;) {
+    const pass = await q.backfillClusterKeys(db, 2, cursor);
+    passes += 1;
+    keyed += pass.keyed;
+    if (pass.cursor === null) break;
+    cursor = pass.cursor;
+    assert.ok(passes < 100, 'the walk must terminate');
+  }
 
-  const { rows } = await db.execute({
-    sql: `select count(*) as n from feed_items where feed_id = ? and cluster_key is null`,
-    args: [f.id],
-  });
+  const { rows } = await db.execute(
+    `select count(*) as n from feed_items where cluster_key is null`,
+  );
   assert.equal(Number(rows[0].n), 0, 'nothing is left null');
+  assert.ok(keyed > 0, `keyed ${keyed} rows`);
 
-  // Self-terminating: a second pass has nothing to claim, which is how the
-  // poller knows to stop asking.
-  const second = await q.backfillClusterKeys(db, 500);
-  assert.equal(second.scanned, 0);
+  const generic = await db.execute({
+    sql: `select cluster_key from feed_items where title = 'Weeknotes' and feed_id = ?`,
+    args: [f.id],
+  });
+  assert.equal(generic.rows[0].cluster_key, '', 'a generic title is scanned but not keyed');
 });
 
-test('the backfill honours its batch size so it never holds a long write', async () => {
-  const f = await feed('batched');
+test('the cursor advances rather than repeating the same page', async () => {
+  const f = await feed('cursor');
   await items(
     f.id,
-    Array.from({ length: 10 }, (_, i) => `A sufficiently long headline number ${i}`),
+    Array.from({ length: 6 }, (_, i) => `A sufficiently long headline number ${i}`),
   );
-  await db.execute({
-    sql: `update feed_items set cluster_key = null where feed_id = ?`,
-    args: [f.id],
-  });
 
-  const pass = await q.backfillClusterKeys(db, 4);
-  assert.equal(pass.scanned, 4);
+  const first = await q.backfillClusterKeys(db, 3, '');
+  const second = await q.backfillClusterKeys(db, 3, first.cursor);
+
+  assert.equal(first.scanned, 3);
+  assert.ok(second.cursor > first.cursor, 'the walk moves forward');
+});
+
+test('a pass over already-keyed rows writes nothing', async () => {
+  const f = await feed('already');
+  await items(f.id, ['A sufficiently long headline for this one']);
+
+  // Rows keyed on the way in must not be rewritten by a re-walk after restart.
+  const pass = await q.backfillClusterKeys(db, 500, '');
+  assert.equal(pass.keyed, 0, 'nothing needed keying');
 });

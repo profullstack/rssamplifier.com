@@ -137,6 +137,7 @@ export default function RootLayout({ children }) {
               <a href="/signup">Sign up</a>
               {/* Like /account, unconditional: a signed-out visitor is sent to
                   sign in rather than being shown an empty shelf. */}
+              <a href="/following">Following</a>
               <a href="/favorites">Favorites</a>
               {/* Same argument as Favorites: unconditional, so the nav stays
                   the same on every page and none of them has to read a cookie
@@ -170,7 +171,8 @@ export default function RootLayout({ children }) {
               <a href="/crawlstats">Crawler status</a>
             </p>
             <p>
-              <a href="/about">About</a> · <a href="/privacy">Privacy</a> ·{' '}
+              <a href="/about">About</a> · <a href="/contact">Contact</a> ·{' '}
+              <a href="/privacy">Privacy</a> ·{' '}
               <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
                 Source on GitHub
               </a>

@@ -1,7 +1,8 @@
-import { q } from '@rssamplifier/db';
+import { accounts, q } from '@rssamplifier/db';
 import { SYNDICATION_FORMATS } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { currentUser } from '../../../lib/auth.js';
 import { AD_TEXT, adPlan } from '../../../lib/ads.js';
 import { IN_BROWSER_KINDS, PLAYABLE_KINDS, groupsWithFeeds } from '../../../lib/topicGroups.js';
 import { shareText } from '../../../lib/share.js';
@@ -76,11 +77,21 @@ export default async function TopicListing({ topic, counts, group = null, page =
     ? group.kinds.reduce((sum, kind) => sum + (counts[kind] ?? 0), 0)
     : topic.feedCount;
 
-  const rows = await q.feedsForTopic(client, topic.slug, {
-    limit: PAGE_SIZE,
-    offset: (page - 1) * PAGE_SIZE,
-    kinds: group?.kinds ?? null,
-  });
+  const [rows, user] = await Promise.all([
+    q.feedsForTopic(client, topic.slug, {
+      limit: PAGE_SIZE,
+      offset: (page - 1) * PAGE_SIZE,
+      kinds: group?.kinds ?? null,
+    }),
+    currentUser(),
+  ]);
+
+  // Only asked once we know there is someone to ask about. A signed-out visitor
+  // still gets the button — the endpoint sends them to sign in and back here —
+  // so this decides what it says rather than whether it appears.
+  const following = user
+    ? await accounts.isFollowingTopic(client, String(user.id), topic.slug, group?.segment ?? '')
+    : false;
 
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const ads = adPlan(rows.length, { first: 11, every: 24, max: 2 });
@@ -203,6 +214,25 @@ export default async function TopicListing({ topic, counts, group = null, page =
           are ways of taking this page somewhere else, and one row of quiet
           controls is better than two. */}
       <div className="detail-actions topic">
+        {/* Following a subject, not a publication. The extensions above hand this
+            page to a reader app; this hands it to /following, which is the same
+            river merged with everything else this account follows — and the only
+            one of the two that survives adding a second topic. A plain form, so
+            it works with JavaScript off. */}
+        <form className="follow-form" action="/api/follows/topics" method="post">
+          <input type="hidden" name="slug" value={topic.slug} />
+          {/* Present only on a sub-group, because '' is what the endpoint reads
+              as "the whole topic" and a hidden field carrying it says the same
+              thing less clearly. */}
+          {group && <input type="hidden" name="segment" value={group.segment} />}
+          <input type="hidden" name="action" value={following ? 'unfollow' : 'follow'} />
+          {/* Following is the quiet state: a thing already done should not shout
+              as loudly as the invitation to do it. */}
+          <button type="submit" className={following ? 'secondary-button' : ''}>
+            {following ? 'Following ✓' : 'Follow this topic'}
+          </button>
+        </form>
+
         <Share
           url={pageUrl}
           title={heading}

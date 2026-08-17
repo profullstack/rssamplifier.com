@@ -1,169 +1,102 @@
-'use client';
-
-import { useCallback, useEffect, useRef, useState } from 'react';
-
 import { runtime } from '../lib/player.js';
 
 /**
- * A playlist, playing.
+ * A playlist, as a running order for the docked player.
  *
- * The transport is one `<audio controls>` and nothing else. The browser's own
- * player already knows how to seek, buffer, survive a back navigation, keep
- * playing while the tab is hidden, and answer the OS media keys and the phone's
- * lock screen — a hand-built set of buttons has to reimplement all of that, in
- * JavaScript, on a site that otherwise ships almost none. What this component
- * adds is the one thing a lone `<audio>` cannot do: a queue. Pick a track, and
- * when it ends the next one starts.
+ * This used to be a player. It had `'use client'` at the top, an `<audio>` of
+ * its own, an index, and a queue — and every bit of that died the moment the
+ * reader clicked anything, because a component on a page cannot outlive the
+ * page. Press play on a topic's podcasts, open one of the shows, and the
+ * episode stopped. That is the one thing a playlist must not do.
  *
- * Every row below is a real `<a href="…mp3">` and the click handler is an
- * interception, not the mechanism. With JavaScript off — or before this
- * component has hydrated, which on a slow connection is the same thing — the
- * list is a page of links to audio files, and following one plays it in the
- * browser's own media viewer. That is a worse experience than the queue and an
- * enormously better one than the `.m3u`, which is a download that does nothing.
+ * So the transport moved out and up. The dock in the layout is mounted for the
+ * whole session, survives a soft navigation without gapping the audio, and
+ * rebuilds itself from sessionStorage after a real page load — see DockPlayer.
+ * What is left here is the list, which is the part that genuinely belongs to
+ * the page: fifty rows of server-rendered HTML, no client bundle, no hydration.
  *
- * `preload="none"` is load-bearing: a queue is fifty episodes and an episode is
- * tens of megabytes. Nothing is fetched until a reader asks for something.
+ * Every row is still a real `<a href="…mp3">`, and the dock's click handler is
+ * an interception rather than the mechanism. With JavaScript off — or before
+ * the dock has hydrated, which on a slow connection is the same thing —
+ * following a row plays the file in the browser's own media viewer, exactly as
+ * it did before. That is a worse experience than the queue and an enormously
+ * better one than the `.m3u`, which is a download that does nothing.
+ *
+ * The whole order rides on the `<ol>` as one attribute rather than on fifty
+ * buttons: the dock reads it off the ancestor when a row is picked, so pressing
+ * play on track nine queues ten through fifty behind it without the page
+ * repeating itself fifty times over.
  *
  * @param {{
- *   tracks: Array<{
+ *   entries: Array<{
  *     id: string,
  *     src: string,
- *     type: string|null,
  *     title: string,
  *     show: string|null,
- *     showHref: string|null,
  *     postHref: string|null,
  *     seconds: number|null,
+ *     dock: object|null,
+ *     lane: string,
  *   }>,
  *   label: string,
  * }} props
  */
-export default function PlaylistPlayer({ tracks, label }) {
-  const audioRef = useRef(null);
-  const [index, setIndex] = useState(0);
-  // Whether the reader has ever pressed play. Until they have, changing the
-  // selection must not start anything — the first track is *selected* on load
-  // so the transport has something to show, and a page that began playing on
-  // its own would be the rudest thing on the site.
-  const [started, setStarted] = useState(false);
-  const [playing, setPlaying] = useState(false);
+export default function PlaylistPlayer({ entries, label }) {
+  if (entries.length === 0) return null;
 
-  const current = tracks[index] ?? null;
-
-  const select = useCallback((next) => {
-    setIndex(next);
-    setStarted(true);
-  }, []);
-
-  // A new selection is a new file in the same element, so the element has to be
-  // told to go and get it: assigning `src` alone leaves some browsers playing
-  // the old buffer. Only autoplays once the reader has started, which is also
-  // what keeps this inside the user gesture the browser requires.
-  useEffect(() => {
-    const el = audioRef.current;
-    if (!el || !current) return;
-
-    el.load();
-    if (started) el.play().catch(() => setPlaying(false));
-  }, [current, started]);
-
-  const step = useCallback(
-    (by) => {
-      const next = index + by;
-      if (next < 0 || next >= tracks.length) return;
-      select(next);
-    },
-    [index, tracks.length, select],
-  );
-
-  // The lock screen, the OS media keys, and the little media widget in the
-  // browser's own toolbar. Twenty lines to make a web page behave like the
-  // podcast app the reader would otherwise have gone and opened.
-  useEffect(() => {
-    const session = globalThis.navigator?.mediaSession;
-    if (!session || !current) return undefined;
-
-    session.metadata = new globalThis.MediaMetadata({
-      title: current.title,
-      artist: current.show ?? '',
-      album: label,
-    });
-
-    session.setActionHandler('previoustrack', index > 0 ? () => step(-1) : null);
-    session.setActionHandler('nexttrack', index < tracks.length - 1 ? () => step(1) : null);
-
-    return () => {
-      session.setActionHandler('previoustrack', null);
-      session.setActionHandler('nexttrack', null);
-    };
-  }, [current, index, tracks.length, label, step]);
-
-  if (!current) return null;
+  // Only what the dock can actually carry, which since the dock learned to hold
+  // an iframe is very nearly everything — a YouTube or PeerTube row is now a
+  // stop on the running order rather than a gap in it. What still drops out is
+  // a row with no feed behind it to link back to.
+  const order = entries.map((entry) => entry.dock).filter(Boolean);
 
   return (
     <div className="playlist-player">
-      <div className="playlist-now" aria-live="polite">
-        <span className="eyebrow">{playing ? 'Playing' : 'Up next'}</span>
-        <strong title={current.title}>{current.title}</strong>
-        {current.show && (
-          <span className="show">
-            {current.showHref ? <a href={current.showHref}>{current.show}</a> : current.show}
-          </span>
-        )}
-      </div>
+      {/* Shown only where the dock is running, because it is the only place it
+          is true. Set from script by the dock itself, so a reader with
+          JavaScript off is not told about a player they do not have. */}
+      <p className="playlist-hint">
+        Pick anything below and it plays in the bar at the foot of the window —
+        and keeps playing while you go on browsing the directory.
+      </p>
 
-      <audio
-        ref={audioRef}
-        className="playlist-audio"
-        controls
-        preload="none"
-        src={current.src}
-        onPlay={() => {
-          setStarted(true);
-          setPlaying(true);
-        }}
-        onPause={() => setPlaying(false)}
-        // The queue, in one line. Nothing to advance to at the end of the last
-        // track, and stopping there is the right answer: looping a fifty-episode
-        // playlist back to the top is a decision the reader did not make.
-        onEnded={() => step(1)}
+      <ol
+        className="playlist-tracks"
+        aria-label={label}
+        data-dock-list={order.length > 0 ? JSON.stringify(order) : undefined}
       >
-        {current.type && <source src={current.src} type={current.type} />}
-        <a href={current.src} rel="noopener">
-          Download this episode
-        </a>
-      </audio>
-
-      <ol className="playlist-tracks">
-        {tracks.map((track, i) => (
-          <li
-            key={track.id}
-            className={i === index ? 'is-current' : undefined}
-            aria-current={i === index ? 'true' : undefined}
-          >
+        {entries.map((entry, i) => (
+          <li key={entry.id}>
             <a
-              href={track.src}
+              href={entry.src}
               className="playlist-pick"
-              onClick={(event) => {
-                // Let the reader keep every escape hatch a link has: a modified
-                // click, or a middle click, still opens the file itself.
-                if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-                event.preventDefault();
-                select(i);
-              }}
+              // Read by DockPlayer's delegated click handler, the same way every
+              // other play control on the site is.
+              data-dock-play={entry.dock ? JSON.stringify(entry.dock) : undefined}
+              // What the dock will call this once it is playing, which is not
+              // always the enclosure: a PeerTube row is listed at its download
+              // URL and played at its embed URL. The dock matches this against
+              // the track it holds, so it has to be the dock's spelling or the
+              // row never lights up.
+              data-dock-src={entry.dock ? entry.dock.src : undefined}
+              data-lane={entry.dock ? entry.lane : undefined}
             >
               <span className="playlist-num" aria-hidden="true">
-                {i === index && playing ? '▶' : i + 1}
+                {i + 1}
               </span>
-              <span className="playlist-title">{track.title}</span>
-              {track.show && <span className="playlist-show">{track.show}</span>}
-              {track.seconds && (
-                <span className="playlist-time">{runtime(track.seconds)}</span>
-              )}
+              {/* The marker for the row the dock is on. A second element rather
+                  than a swapped-out number, because the swap has to happen in
+                  CSS: the dock flags the row it is playing with an attribute,
+                  and the page it is playing from may not be this one. */}
+              <span className="playlist-live" aria-hidden="true">
+                ▶
+              </span>
+              <span className="playlist-title">{entry.title}</span>
+              {entry.show && <span className="playlist-show">{entry.show}</span>}
+              {entry.seconds && <span className="playlist-time">{runtime(entry.seconds)}</span>}
             </a>
-            {track.postHref && (
-              <a className="playlist-notes" href={track.postHref} rel="noopener nofollow">
+            {entry.postHref && (
+              <a className="playlist-notes" href={entry.postHref} rel="noopener nofollow">
                 Notes
               </a>
             )}

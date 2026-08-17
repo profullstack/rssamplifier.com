@@ -523,6 +523,49 @@ button:disabled {
   border-radius: 6px;
 }
 
+/* A post whose post is a picture — a comic strip, a photograph — where the
+   measure above is not a help but the whole problem.
+
+   42rem is 672px, chosen for a line of prose, and it was being applied to
+   pictures that are the thing the reader came for. A Wilde Life strip is
+   published at 700px and a Sister Claire page at 750, so both arrived shrunk;
+   a comic drawn wider than that arrives shrunk further. Nothing about a line
+   length has anything to say about how big a drawing should be.
+
+   So a picture is shown at the size it was drawn, and the only thing allowed
+   to shrink it is the window. It breaks out of the measure the prose keeps —
+   the caption under a strip is still prose and still wants 42rem — and stays
+   centred on the page while doing it, because `left: 50%` moves it to the
+   centre of a measure that is itself centred, and the translate then hangs it
+   evenly either side.
+
+   The gutter in the cap is doing real work: `100vw` counts a scrollbar it
+   cannot see, so a picture capped at exactly 100vw is one that puts a
+   horizontal scrollbar under every wide comic on a desktop.
+
+   The `max()` keeps a phone honest. There the window is narrower than the
+   column, so the cap alone would make every picture 16px narrower than the
+   paragraph under it — the measure is the floor, the window is the ceiling,
+   and on a phone they cross over.
+
+   No `margin-inline: auto` here, however much it looks like it belongs. Auto
+   margins centre a block image inside the measure, and the translate then
+   centres the already-centred result again — which is invisible on anything
+   wider than the column and pushes a small picture to the right-hand margin.
+
+   Never scaled *up*. Where the only picture we have is a feed's thumbnail,
+   131px of drawing stretched across a monitor is worse than a small picture,
+   and the honest fix for those is upstream — see `orphan` in feed/extract. */
+.reader-article.pictures img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: max(100%, calc(100vw - 2.5rem));
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 .reader-article a {
   color: var(--accent);
 }
@@ -632,8 +675,11 @@ button:disabled {
 
 /* Video docks the same way but needs a picture, so the bar becomes a column
    and the frame keeps 16:9 rather than being squashed into a transport's
-   height. Capped so a video never takes more than a third of the screen —
-   the post is still the thing being read. */
+   height. Still capped — the post is what is being read — but a third of the
+   screen was too mean a cap for anything with faces or text in it, and a
+   docked video is now something a reader watches rather than something they
+   keep an eye on. The reader who wants the smaller one has the thumbnail
+   button, which is the honest way to offer two sizes. */
 .episode-player.is-video {
   flex-direction: column;
   align-items: stretch;
@@ -641,23 +687,28 @@ button:disabled {
      wrong in a way that is invisible until it bites: a wrapping column with a
      height cap does not overflow, it starts a *second column*. The transport
      went into it — off the right-hand edge of the window on a wide screen,
-     above the picture instead of below it on a phone — so « » and the close
-     button were sitting somewhere nothing could click them. */
+     above the picture instead of below it on a phone — so « », the thumbnail
+     toggle and the close button sat where nothing could click them. Measured
+     at 1280×860: the controls began at x=1252 and ran to x=1419. */
   flex-wrap: nowrap;
   gap: 0.5rem;
-  max-height: 42vh;
+  max-height: 58vh;
 }
 
 .episode-video {
   width: 100%;
   aspect-ratio: 16 / 9;
-  max-height: 34vh;
+  max-height: 46vh;
   /* So the picture is what gives way when the box is tight — a long title
      wrapping onto a second line must not push the transport out of the dock. */
   min-height: 0;
   border: 0;
   border-radius: 8px;
   background: #000;
+  /* The poster is artwork of whatever shape the publisher had; the frame is
+     16:9. Contain rather than cover, so a square cover is letterboxed instead
+     of having its middle cropped out. */
+  object-fit: contain;
 }
 
 /* The video as the post rather than as an accompaniment: in the flow, at the
@@ -732,10 +783,56 @@ button:disabled {
     left: auto;
     right: 1.5rem;
     bottom: 1.5rem;
-    width: min(28rem, 40vw);
+    width: min(34rem, 46vw);
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 0.7rem;
+  }
+}
+
+/* The thumbnail. Not a third state so much as the old one kept: a video small
+   enough to sit in the corner of the eye while the reader gets on with
+   something else, without giving up the transport or the queue the way closing
+   the dock would. The controls stay at full size — a button that shrinks with
+   the picture is a button nobody can hit. */
+.episode-player.is-video.is-thumb {
+  max-height: none;
+}
+
+.episode-player.is-thumb .episode-video {
+  max-height: 6.5rem;
+  width: auto;
+  align-self: flex-start;
+}
+
+.episode-player.is-thumb .episode-meta strong {
+  max-width: 12rem;
+}
+
+/* Glyphs only once the picture is a thumbnail. Six labelled controls across a
+   20rem box wrap "Pop out" onto two lines and stand the whole row up twice as
+   tall as the video it belongs to; the titles still carry the words for a
+   tooltip and for anything reading the page aloud. */
+.episode-player.is-thumb .dock-controls .label {
+  display: none;
+}
+
+@media (min-width: 48rem) {
+  .episode-player.is-video.is-thumb:not(.is-inline) {
+    width: min(20rem, 32vw);
+  }
+}
+
+/* A docked video is taller than a docked scrubber, so the room reserved for it
+   at the foot of the page is too — but only where it is across the foot of the
+   page. Above 48rem it is a corner box and the page owes it nothing. */
+@media (max-width: 47.99rem) {
+  body:has(.episode-player.is-video:not(.is-inline):not(.is-thumb)) {
+    padding-bottom: calc(58vh + 2rem);
+  }
+
+  body:has(.episode-player.is-video:not(.is-inline):not(.is-thumb)) .toolbar {
+    bottom: calc(58vh + env(safe-area-inset-bottom));
   }
 }
 
@@ -800,33 +897,14 @@ body:has(.episode-player:not(.is-inline)) {
   cursor: default;
 }
 
-/* What is left of a running order the page handed over, where the link to the
-   reader's own queue sits when the queue is what is playing. Not a link,
-   because a topic's playlist is the page behind the dock rather than somewhere
-   else to go — so it is drawn as a label and not as a control. */
-.dock-count {
-  font-size: 0.82rem;
-  line-height: 1;
-  color: var(--muted);
-  padding: 0.35rem 0.2rem;
-  white-space: nowrap;
-}
-
-/* A watch playlist ships no transport of its own — the dock is the player, and
-   the list is the queue behind it. So there is nothing sticky to leave room
-   for, and the rows start where the lede ends. */
-.watch-playlist .playlist-tracks {
-  border-top: 1px solid var(--line);
-}
-
-/* The row the dock is on. Set from script, since the list is server rendered:
-   see the marking effect in DockPlayer. */
-.watch-playlist .playlist-tracks li.is-current .playlist-title {
-  font-weight: 600;
-}
-
-.watch-playlist .hint {
-  margin-top: 0.9rem;
+/* The video controls carry words as well as a glyph, because ⧉ and ▢ mean
+   nothing on their own. On a narrow screen the row is four buttons and a queue
+   link across the width of a phone, so the words go and the titles carry
+   them — the same trade the toolbar makes one screen up. */
+@media (max-width: 34rem) {
+  .dock-controls .label {
+    display: none;
+  }
 }
 
 /* One player, not two. While the roaming one is running, the page's own docked
@@ -2314,6 +2392,25 @@ select {
   margin: 0.25rem 0 0;
 }
 
+/* ------------------------------------------------------------- following
+ *
+ * The list of followed topics, on /following. A post-list whose rows carry the
+ * control that undoes them, so the label and its Unfollow sit on one line —
+ * .follow-form's own bottom margin is for a page where it is the call to
+ * action, and inside a list row it reads as a gap.
+ */
+
+.following-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.following-list .follow-form {
+  margin: 0;
+}
+
 /* ---- live progress -------------------------------------------------------
  *
  * The status pages report on work that takes minutes to hours. Numbers alone
@@ -2560,52 +2657,21 @@ select {
   margin: 0 0 2.4rem;
 }
 
-/* The transport follows the reader down the queue. Fifty episodes is a long
-   list, and a player that scrolls off the top leaves them with no way to pause
-   the thing they are hearing without going back up to find it. */
-.playlist-now,
-.playlist-audio {
-  position: sticky;
-  z-index: 20;
-  background: var(--bg);
-}
-
-.playlist-now {
-  top: 0;
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.55rem;
-  padding: 0.7rem 0 0.4rem;
-}
-
-.playlist-now strong {
-  font-family: var(--serif);
-  font-size: 1rem;
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.playlist-now .show {
+/* The playlist no longer carries its own transport — the dock at the foot of
+   the window does, and it is the only one that survives the reader clicking
+   something. This says so, and only where it is true: the attribute is set by
+   the dock itself, so a reader with JavaScript off is not promised a player
+   they do not have. */
+.playlist-hint {
+  margin: 0 0 1rem;
   font-family: var(--mono);
-  font-size: 0.76rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
   color: var(--muted);
 }
 
-.playlist-now .show a {
-  color: inherit;
-}
-
-.playlist-audio {
-  top: 3.2rem;
-  display: block;
-  width: 100%;
-  padding-bottom: 0.8rem;
-  border-bottom: 1px solid var(--line);
+html:not([data-dock]) .playlist-hint {
+  display: none;
 }
 
 .playlist-tracks {
@@ -2622,7 +2688,10 @@ select {
   border-bottom: 1px solid var(--line);
 }
 
-.playlist-tracks li.is-current {
+/* The row the dock is on. Flagged from the dock rather than from the page,
+   because the page no longer knows: the reader can start an episode here, walk
+   off into the directory, and come back to find the same list still marked. */
+.playlist-tracks li:has(> [data-dock-current]) {
   background: var(--accent-soft);
 }
 
@@ -2647,15 +2716,35 @@ select {
   background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
-.playlist-num {
+/* Both live in the first column, and exactly one of them shows: the track's
+   number, or the marker that says this is the one playing. Stacked in one cell
+   rather than swapped in script, so the grid never reflows when the dock moves
+   from one row to the next. */
+.playlist-num,
+.playlist-live {
+  grid-row: 1;
+  grid-column: 1;
   font-family: var(--mono);
   font-size: 0.78rem;
   color: var(--muted);
   text-align: right;
 }
 
-.playlist-tracks li.is-current .playlist-num {
+.playlist-live {
+  display: none;
   color: var(--accent);
+}
+
+.playlist-pick[data-dock-current] .playlist-num {
+  display: none;
+}
+
+.playlist-pick[data-dock-current] .playlist-live {
+  display: block;
+}
+
+.playlist-pick[data-dock-current] .playlist-title {
+  font-weight: 600;
 }
 
 .playlist-title {
@@ -2695,9 +2784,5 @@ select {
   .playlist-pick {
     grid-template-columns: 1.6rem minmax(0, 1fr) auto;
     gap: 0.15rem 0.5rem;
-  }
-
-  .playlist-audio {
-    top: 4.4rem;
   }
 }

@@ -57,6 +57,27 @@ export function splitStatements(sql) {
 }
 
 /**
+ * Errors that mean "this particular statement is already in place".
+ *
+ * libSQL runs one statement per call and there is no transaction around a
+ * migration file, so a file that fails halfway leaves its earlier statements
+ * applied — and, because the ledger row is only written once the whole file
+ * succeeds, the next boot runs that file again from the top.
+ *
+ * Before this, that was unrecoverable. `0019_item_clusters.sql` added a column
+ * and then built two indexes over 1.4M rows; the column landed, the index build
+ * did not, nothing was recorded, and every subsequent boot died on `duplicate
+ * column name: cluster_key` before it could reach the statement that had
+ * actually failed. The crawler stayed down until a human intervened.
+ *
+ * Treating "already there" as success makes a migration file resumable: the
+ * statements that landed are skipped, and the one that failed is retried. It is
+ * narrow on purpose — only DDL that creates something can report these, and
+ * every other error still stops the run.
+ */
+const ALREADY_APPLIED = /duplicate column name|already exists/i;
+
+/**
  * Apply every migration that has not run yet.
  *
  * Applied filenames are recorded in `_migrations`, so this is safe to run on
@@ -92,7 +113,13 @@ export async function migrate(client) {
 
     const sql = await readFile(join(MIGRATIONS_DIR, file), 'utf8');
     for (const statement of splitStatements(sql)) {
-      await db.execute(statement);
+      try {
+        await db.execute(statement);
+      } catch (err) {
+        // Anything else is a real failure and must still stop the run: leaving
+        // a half-applied schema recorded as done is worse than not booting.
+        if (!ALREADY_APPLIED.test(String(err?.message ?? err))) throw err;
+      }
     }
 
     await db.execute({
