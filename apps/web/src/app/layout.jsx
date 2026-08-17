@@ -112,6 +112,7 @@ export default function RootLayout({ children }) {
                   came to do, and everything after Search is a thing you do once
                   you already know the site. */}
               <a href="/blogs">Blogs</a>
+              <a href="/news">News</a>
               <a href="/podcasts">Podcasts</a>
               <a href="/music">Music</a>
               <a href="/videos">Videos</a>
@@ -152,7 +153,8 @@ export default function RootLayout({ children }) {
               account needed. Built by <a href="https://profullstack.com">Profullstack, Inc.</a>
             </p>
             <p>
-              Browse: <a href="/blogs">Blogs</a> · <a href="/podcasts">Podcasts</a> ·{' '}
+              Browse: <a href="/blogs">Blogs</a> · <a href="/news">News</a> ·{' '}
+              <a href="/podcasts">Podcasts</a> ·{' '}
               <a href="/music">Music</a> · <a href="/videos">Videos</a> ·{' '}
               <a href="/comics">Comics</a> · <a href="/lives">Live</a> ·{' '}
               <a href="/reels">Reels</a> · <a href="/topics">Topics</a>

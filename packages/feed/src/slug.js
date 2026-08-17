@@ -20,6 +20,7 @@ const RESERVED = new Set([
   // Next serves the static segment ahead of [slug] — but its own page would be
   // unreachable, which is worse for the blog than a -2 suffix.
   'blogs',
+  'news',
   'podcasts',
   'music',
   'videos',
