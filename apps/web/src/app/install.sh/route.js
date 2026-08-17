@@ -105,6 +105,8 @@ case ":\$PATH:" in
     ;;
 esac
 
+say ""
+say "Upgrade later with \\\`rssamp update\\\`, uninstall with \\\`rssamp remove\\\`."
 say "Docs: \$SITE/cli"
 `;
 }

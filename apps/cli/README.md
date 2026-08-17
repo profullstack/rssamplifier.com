@@ -9,7 +9,20 @@ curl -fsSL https://rssamplifier.com/install.sh | sh
 
 That drops one file at `~/.local/bin/rssamp`. Node 22 or newer is the only requirement — there are
 no dependencies, so there is nothing else to install and nothing to audit but the one file. Set
-`RSSAMP_BIN` to install elsewhere; uninstall by deleting `rssamp` and `rssamplifier`.
+`RSSAMP_BIN` to install elsewhere.
+
+It manages itself from there:
+
+```sh
+rssamp update        # pull the latest over itself
+rssamp remove        # show what uninstalling would delete
+rssamp remove --yes  # actually do it
+```
+
+`update` stages the download beside the target and renames it into place, so an interrupted upgrade
+leaves the working copy working. `remove` deletes the two binaries and nothing else — there is no
+config, cache or state anywhere. Neither touches a file it did not write, and both decline when run
+out of a checkout or an npm install rather than guessing.
 
 ## Start here
 
