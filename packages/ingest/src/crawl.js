@@ -116,7 +116,14 @@ export async function crawlFeed(db, feed) {
   }
 
   const sent = await q.upsertItems(db, id, resolved.feed.items);
-  const total = await q.countItems(db, id);
+
+  // Counting is only worth a round trip when the answer can have changed. Most
+  // crawls store nothing — the whole point of the backoff ladder is that a
+  // quiet feed is re-read rarely and finds nothing when it is — so this skips
+  // one of the eleven database round trips a crawl makes on the majority of
+  // them. A feed whose stored count has drifted is corrected by the next crawl
+  // that does store something, which recounts exactly.
+  const total = sent > 0 ? await q.countItems(db, id) : Number(feed.item_count ?? 0);
   await q.markCrawlSuccess(
     db,
     id,
@@ -170,20 +177,111 @@ export function groupByHost(feeds) {
   const byHost = new Map();
 
   for (const feed of feeds) {
-    let host;
-    try {
-      host = new URL(String(feed.feed_url)).hostname;
-    } catch {
-      // Unparseable URLs get their own bucket; resolveFeed will reject them
-      // individually rather than blocking a real host's queue.
-      host = String(feed.feed_url);
-    }
+    // Unparseable URLs get their own bucket, keyed by the raw string; resolveFeed
+    // rejects them individually rather than blocking a real host's queue.
+    const host = hostOf(feed);
     const queue = byHost.get(host);
     if (queue) queue.push(feed);
     else byHost.set(host, [feed]);
   }
 
   return [...byHost.values()];
+}
+
+/**
+ * How many feeds from any one host may enter a single batch.
+ *
+ * The number that decides whether the worker pool is busy or watching one
+ * worker grind. A host's feeds are crawled strictly in series — that is the
+ * politeness guarantee and it is not negotiable — so a batch that is half one
+ * host has a floor on its wall-clock that no amount of concurrency can lift.
+ *
+ * Eight is a little above what a single host can absorb inside one 60-second
+ * tick anyway (a crawl of a live feed averages ~9s against a network database),
+ * so this costs a well-behaved host nothing and stops a large one from renting
+ * the whole batch.
+ */
+export const PER_HOST_DEFAULT = 8;
+
+/**
+ * How many rows to read before choosing a batch from them.
+ *
+ * The cap above can only spread a batch across the hosts it was offered, so the
+ * selection has to see more rows than it will use. Three times over is enough
+ * for the observed shape and is a handful of extra kilobytes on one indexed
+ * read.
+ */
+const OVERREAD = 3;
+
+/**
+ * Choose a batch that is spread across hosts rather than dominated by one.
+ *
+ * This is the fix for the thing that actually limited the crawler. `crawlDue`
+ * gives each host's feeds to a single worker, in series, so the batch takes as
+ * long as its **largest host queue** rather than as long as its average one —
+ * and this directory is extremely skewed: in a 500-feed sample, 164 feeds were
+ * on `wavlake.com` and 76 on `archive.org`, so half the directory lives on two
+ * hosts. A 300-feed batch handed one worker a hundred feeds to walk through
+ * while the other twenty-three finished single-feed queues in seconds and
+ * exited. Measured throughput sat at about a third of what the same pool
+ * managed on a diverse batch.
+ *
+ * Two passes, and the second one is what makes this safe. The first takes up to
+ * `perHost` from each host in the order they came due. If that has not filled
+ * the batch — because the due set genuinely *is* one host, which happens when a
+ * bulk import comes due together — the second pass fills the rest in due order
+ * with the cap lifted. So a spread batch is chosen whenever the rows allow one,
+ * and a monolithic due set is still crawled at exactly the rate it was before
+ * rather than being throttled to `perHost`.
+ *
+ * @param {object[]} feeds candidate rows, already in due order
+ * @param {number} batchSize how many to return at most
+ * @param {number} [perHost]
+ * @returns {object[]}
+ */
+export function spreadHosts(feeds, batchSize, perHost = PER_HOST_DEFAULT) {
+  if (batchSize <= 0) return [];
+
+  const taken = [];
+  const counts = new Map();
+  const held = [];
+
+  for (const feed of feeds) {
+    if (taken.length >= batchSize) break;
+
+    const host = hostOf(feed);
+    const n = counts.get(host) ?? 0;
+
+    if (n < perHost) {
+      counts.set(host, n + 1);
+      taken.push(feed);
+    } else {
+      held.push(feed);
+    }
+  }
+
+  // Under-filled only because the cap held rows back. Better a batch that
+  // repeats a host than a batch that is mostly empty.
+  for (const feed of held) {
+    if (taken.length >= batchSize) break;
+    taken.push(feed);
+  }
+
+  return taken;
+}
+
+/**
+ * The host a feed's URL names, or the raw URL when it will not parse.
+ *
+ * @param {{ feed_url: unknown }} feed
+ * @returns {string}
+ */
+function hostOf(feed) {
+  try {
+    return new URL(String(feed.feed_url)).hostname;
+  } catch {
+    return String(feed.feed_url);
+  }
 }
 
 /**
@@ -196,6 +294,17 @@ export function groupByHost(feeds) {
  * domains, running hosts concurrently buys the throughput without ever sending
  * two overlapping requests to the same server.
  *
+ * Two things keep that concurrency real rather than nominal, and both exist
+ * because measurement said so:
+ *
+ *   * the batch is **spread across hosts** before it is run (see `spreadHosts`),
+ *     because half this directory lives on two domains and an unspread batch
+ *     gave one worker a hundred feeds while the rest went home;
+ *   * the queues are started **longest first**, which is the standard way to
+ *     keep the tail short: a five-feed queue picked up last is five feeds of
+ *     wall-clock added to the batch, and picked up first it is absorbed by the
+ *     workers that would otherwise be idle at the end.
+ *
  * `onEvent` is called once per feed as it settles, which is what makes a live
  * log possible: the return value only arrives when the whole batch is done, and
  * a batch is the thing somebody watching wants to see progress through. It is
@@ -206,13 +315,22 @@ export function groupByHost(feeds) {
  * @param {number} [batchSize]
  * @param {number} [concurrency] hosts crawled at once
  * @param {((event: { at: string, event: 'feed', status: 'ok'|'error', subject: string, slug: string|null, amount: number|null, detail: string|null, ms: number }) => void)|null} [onEvent]
- * @returns {Promise<{ crawled: number, failed: number, items: number }>} items being posts stored, not posts seen
+ * @param {{ perHost?: number }} [opts]
+ * @returns {Promise<{ crawled: number, failed: number, items: number, hosts: number }>} items being posts stored, not posts seen
  */
-export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = null) {
-  const due = await q.dueFeeds(db, batchSize);
-  if (due.length === 0) return { crawled: 0, failed: 0, items: 0 };
+export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = null, opts = {}) {
+  const perHost = Number(opts.perHost) > 0 ? Number(opts.perHost) : PER_HOST_DEFAULT;
 
-  const queues = groupByHost(due);
+  // Read more than will be used, so the spread has something to choose from.
+  // One indexed read either way; the extra rows are a few kilobytes.
+  const pool = await q.dueFeeds(db, batchSize * OVERREAD);
+  if (pool.length === 0) return { crawled: 0, failed: 0, items: 0, hosts: 0 };
+
+  const due = spreadHosts(pool, batchSize, perHost);
+
+  // Longest queue first. Whichever host is heaviest in this batch is the one
+  // that decides when the batch ends, so it must start at the beginning of it.
+  const queues = groupByHost(due).sort((a, b) => b.length - a.length);
   let crawled = 0;
   let failed = 0;
   // Posts actually stored this batch. The caller rolls this into the hourly
@@ -261,7 +379,10 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
   const workers = Math.max(1, Math.min(concurrency, queues.length));
   await Promise.all(Array.from({ length: workers }, worker));
 
-  return { crawled, failed, items };
+  // `hosts` is what says whether the spread is working: a batch of 300 feeds
+  // across 4 hosts cannot go faster than its biggest queue however many workers
+  // are pointed at it, and the number is otherwise invisible from outside.
+  return { crawled, failed, items, hosts: queues.length };
 }
 
 /**

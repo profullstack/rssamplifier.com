@@ -35,6 +35,12 @@ const batchSize = Number(env['POLL_BATCH_SIZE']) || 25;
 // is throughput, not pressure on any one server — crawlDue keeps a single host's
 // feeds strictly sequential regardless of this number.
 const concurrency = Number(env['POLL_CONCURRENCY']) || 8;
+// How many feeds from one host may enter a single batch. A host's feeds are
+// crawled strictly in series, so without a cap the largest host in the batch
+// sets the batch's wall-clock: half this directory lives on two domains, and an
+// unspread batch handed one worker a hundred feeds while the rest finished in
+// seconds. Raise it only alongside evidence that a host can absorb it.
+const perHost = Number(env['POLL_PER_HOST']) || 8;
 // Discovery candidates checked per tick. Smaller than the crawl batch on
 // purpose: each one is a cold site that may need three fetches to find a feed,
 // and unlike a crawl it is speculative work nobody is waiting on.
@@ -181,11 +187,12 @@ async function tick() {
     // stdout: they are the content of a log somebody is watching, and twenty-five
     // a minute forever is not what Railway's viewer is for. The tick summary
     // below is the durable record of the same work.
-    const { crawled, failed, items } = await crawlDue(
+    const { crawled, failed, items, hosts } = await crawlDue(
       db,
       batchSize,
       concurrency,
       publishLog ? recorder.record : null,
+      { perHost },
     );
     if (crawled || failed) {
       // The backlog is the number worth watching: crawled/failed only say the
@@ -194,6 +201,11 @@ async function tick() {
         crawled,
         failed,
         items,
+        // How many distinct hosts the batch touched. The number that says
+        // whether the worker pool had anything to do: `crawled` and `ms`
+        // together look identical for a batch spread over 80 hosts and one
+        // stuck behind 4, and only one of those is a problem worth fixing.
+        hosts,
         ms: Date.now() - started,
         due: await q.countDueFeeds(db),
       });
