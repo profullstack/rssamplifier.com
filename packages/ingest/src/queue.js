@@ -24,6 +24,15 @@ const CHUNK = 500;
 const DEFAULT_RATE = 240;
 
 /**
+ * How many variants of a colliding base are fetched up front.
+ *
+ * Deep enough to settle almost every collision in one query — see the live
+ * distribution quoted in `claimSlugs` — and shallow enough that the query stays
+ * small: at most this many candidates per colliding base.
+ */
+const PREFETCH_DEPTH = 6;
+
+/**
  * Queue one batch of a catalogue, checking only the keys this batch needs.
  *
  * The bulk sibling of {@link importFeeds}, for uploads that arrive in pieces.
@@ -143,13 +152,26 @@ async function claimSlugs(db, entries) {
   const bases = entries.map((entry) => uniqueSlug(entry.title, entry.url));
   const taken = await q.knownSlugs(db, [...new Set(bases)]);
 
-  // Bases already widened. Without this the widening query fires once per
-  // *entry* rather than once per base, and a batch of two thousand feeds that
-  // share a title — which is what a real subscription list looks like, and what
-  // every untitled feed on one host becomes — costs two thousand sequential
-  // round trips instead of one. Locally that is invisible; against Turso it is
-  // about eighty seconds per batch, and for a file under one batch it is the
-  // whole import, spent with the bar sitting at 100%.
+  // Every base in this batch that is already spoken for. Measured against the
+  // live directory, about one feed in twenty-five collides — so a batch of two
+  // thousand has of the order of eighty of them, and each one used to be its own
+  // sequential round trip at roughly 140ms. That is ten seconds a batch spent
+  // asking questions, and it grows as the directory fills, which is why an
+  // import gets slower the longer it runs.
+  const colliding = [...new Set(bases.filter((b) => taken.has(b)))];
+
+  // Ask for all of their variants at once. The depth is chosen from the live
+  // distribution rather than guessed: 9,263 bases have a second variant, 1,193 a
+  // third, and only 262 a fifth — so this settles all but a handful of bases in
+  // one query, and the handful fall through to the probe below.
+  if (colliding.length > 0) {
+    const candidates = [];
+    for (const base of colliding) {
+      for (let n = 2; n <= PREFETCH_DEPTH; n += 1) candidates.push(`${base}-${n}`);
+    }
+    for (const s of await q.knownSlugs(db, candidates)) taken.add(s);
+  }
+
   const widened = new Set();
 
   const out = [];
@@ -157,11 +179,16 @@ async function claimSlugs(db, entries) {
     let slug = bases[i];
 
     if (taken.has(slug)) {
-      if (!widened.has(bases[i])) {
+      slug = uniqueSlug(entries[i].title, entries[i].url, (s) => taken.has(s));
+
+      // The prefetch only proves a slug free up to its depth. Past that we have
+      // not asked, so a base this crowded — or one used many times within this
+      // batch — earns the full probe, once.
+      if (suffixOf(slug) > PREFETCH_DEPTH && !widened.has(bases[i])) {
         widened.add(bases[i]);
         for (const s of await q.takenSlugs(db, bases[i])) taken.add(s);
+        slug = uniqueSlug(entries[i].title, entries[i].url, (s) => taken.has(s));
       }
-      slug = uniqueSlug(entries[i].title, entries[i].url, (s) => taken.has(s));
     }
 
     taken.add(slug);
@@ -169,6 +196,17 @@ async function claimSlugs(db, entries) {
   }
 
   return out;
+}
+
+/**
+ * The `-N` on the end of a slug, or 1 when it has none.
+ *
+ * @param {string} slug
+ * @returns {number}
+ */
+function suffixOf(slug) {
+  const match = slug.match(/-(\d+)$/);
+  return match ? Number(match[1]) : 1;
 }
 
 /**
