@@ -8,6 +8,7 @@ import { lanesOffered, trackFor } from '../../lib/queue.js';
 import { shareText } from '../../lib/share.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
+import FollowButton from '../FollowButton.jsx';
 import PlayButton from '../PlayButton.jsx';
 import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
@@ -149,19 +150,18 @@ export default async function FeedPage({ params }) {
           with a feed you have just found and only one of them needs an
           account. */}
       <div className="detail-actions">
-        {/* A plain form, so following works with JavaScript off. A signed-out
-            reader is not shown a dead button: the endpoint sends them to sign in
-            and back here afterwards. */}
-        <form className="follow-form" action="/api/follows" method="post">
-          <input type="hidden" name="slug" value={String(feed.slug)} />
-          <input type="hidden" name="action" value={following ? 'unfollow' : 'follow'} />
-          {/* Following is the quiet state: it is a thing already done, and
-              styling it as loudly as the call to action would make every followed
-              blog shout. */}
-          <button type="submit" className={following ? 'secondary-button' : ''}>
-            {following ? 'Following ✓' : 'Follow'}
-          </button>
-        </form>
+        {/* A plain form underneath, so following works with JavaScript off, and
+            a click that lands flips the button in place rather than reloading
+            fifty posts. A signed-out reader is not shown a dead button: the
+            endpoint sends them to sign in and back here afterwards. */}
+        <FollowButton
+          endpoint="/api/follows"
+          slug={String(feed.slug)}
+          following={following}
+          signedIn={Boolean(user)}
+          next={`/${slug}`}
+          label="Follow"
+        />
 
         <Share
           url={pageUrl}
