@@ -50,6 +50,52 @@ export function isWatchable(post) {
 }
 
 /**
+ * Longer than this and the post is an article the media was attached to.
+ *
+ * Matches ARTICLE_TEXT in packages/feed/src/parse.js, which draws the same line
+ * one level up to decide what a whole feed is. Deliberately the same number:
+ * the two answers disagreeing is how a feed lands under /videos while its posts
+ * render as articles.
+ */
+const ARTICLE_TEXT = 1200;
+
+/**
+ * Is the media the post, or a file attached to one?
+ *
+ * `isWatchable` answers "is there a video to play", which is a question about
+ * the enclosure. This is the different question of whether the video is what
+ * the reader came for — and the two were conflated, so a post with a video on
+ * it was rendered as an episode: player, excerpt, "Watch on ↗", and the article
+ * the feed had shipped in full silently dropped. 1,369 posts in the directory
+ * carry both a video enclosure and a real article body; every one of them was
+ * being served with the article missing.
+ *
+ * Measured on the body rather than on the enclosure because that is the actual
+ * distinction. A show's notes are a paragraph; an article is an article.
+ *
+ * @param {{ audio_url?: unknown, audio_type?: unknown, url?: unknown }} post
+ * @param {unknown} contentHtml the post's own body, as the feed shipped it
+ * @returns {boolean}
+ */
+export function isEpisode(post, contentHtml) {
+  if (!mediaKind(post)) return false;
+  return textLength(contentHtml) < ARTICLE_TEXT;
+}
+
+/**
+ * How much prose some HTML carries, in characters.
+ *
+ * @param {unknown} html
+ * @returns {number}
+ */
+function textLength(html) {
+  return String(html ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().length;
+}
+
+/**
  * PeerTube's embed URL for a post, if that is what the post is.
  *
  * The enclosure a PeerTube feed publishes is not something to hand a `<video>`
