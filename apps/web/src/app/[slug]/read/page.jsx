@@ -6,7 +6,7 @@ import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/tr
 import { db } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { popularLanguages } from '../../../lib/languages.js';
-import { isWatchable, playableMedia } from '../../../lib/media.js';
+import { isEpisode, isWatchable, playableMedia } from '../../../lib/media.js';
 import { readerView } from '../../../lib/reader.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
@@ -198,6 +198,11 @@ export default async function ReaderPage({ params, searchParams }) {
   // translated article is one it can, so the frame gives way to it.
   const readable = Boolean(translated?.contentHtml);
 
+  // Whether the media is the post or a file attached to one. Judged on what the
+  // feed shipped rather than on what is being rendered, so the answer does not
+  // change when a reader asks for a translation.
+  const episode = isEpisode(post, source?.content_html ?? null);
+
   // The article we read off a page that refused to be framed — used only when
   // there is no translation to show in its place, since a translated body is
   // the same article in a language the reader asked for.
@@ -269,6 +274,7 @@ export default async function ReaderPage({ params, searchParams }) {
            */}
           <EpisodePlayer
             inline
+            attached={!episode}
             kind={media.kind}
             src={media.src}
             type={mediaType}
@@ -279,9 +285,16 @@ export default async function ReaderPage({ params, searchParams }) {
 
           {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
 
-          {/* The description, which for a video is show notes: links, chapters
-              and credits the player itself does not carry. */}
-          {article && !summary && (
+          {/* The body, whether it is show notes or a whole article.
+            *
+            * This was gated on `!summary`, and that gate was the bug: a feed
+            * that ships both a <description> and a full <content:encoded> — a
+            * WordPress blog, which is most of them — had the article thrown
+            * away and the two-line excerpt shown in its place. The reader had
+            * the post and refused to render it. There is no case where having
+            * an excerpt is a reason to withhold the text it is an excerpt of.
+            */}
+          {article && (
             <article
               className={`reader-article${translated ? ' translated' : ''}`}
               lang={translated ? (wanted ?? undefined) : undefined}
@@ -292,7 +305,7 @@ export default async function ReaderPage({ params, searchParams }) {
           {postUrl && (
             <p className="hint">
               <a href={postUrl} target="_blank" rel="noopener">
-                Watch on {hostOf(postUrl)} ↗
+                {episode ? 'Watch on' : 'Read the original on'} {hostOf(postUrl)} ↗
               </a>
             </p>
           )}
