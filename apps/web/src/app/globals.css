@@ -457,6 +457,21 @@ h2 {
   color: var(--muted);
 }
 
+/* What a result is, where it is not the obvious thing. A search result that is
+ * an episode or a track looks exactly like a blog post until it says so, and on
+ * a page where nine rows in ten really are blog posts, that is the whole
+ * difference between the directory looking like a blog index and looking like
+ * what it is. Blogs carry no tag — see kindLabel in the search page. */
+.kind-tag {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* ---------------------------------------------------------------- forms */
 
 .submit-box {
@@ -3018,22 +3033,28 @@ select {
 }
 
 /*
- * A topic's categories, as a row of chips.
+ * A topic's categories, and a search result set's, as a row of chips.
  *
  * Not the .categories grid the home page uses: that is seven full-width rows,
  * which on a topic page would push the listing the visitor came for below the
  * fold to show them eight links they may not need. A chip row costs one line,
  * wraps on a narrow screen, and reads as a filter — which is what it is.
+ *
+ * /search wears the same row under the name .result-groups, sharing the styling
+ * rather than copying it: the two are the same control over a different set,
+ * and a visitor who has learned the chips on a topic page has learned them.
  */
 
-.topic-groups {
+.topic-groups,
+.result-groups {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
   margin: 0 0 1.5rem;
 }
 
-.topic-groups a {
+.topic-groups a,
+.result-groups a {
   display: inline-flex;
   align-items: baseline;
   gap: 0.4rem;
@@ -3048,12 +3069,14 @@ select {
     border-color 0.15s ease;
 }
 
-.topic-groups a:hover {
+.topic-groups a:hover,
+.result-groups a:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
 }
 
-.topic-groups a span {
+.topic-groups a span,
+.result-groups a span {
   font-family: var(--mono);
   font-size: 0.72rem;
   color: var(--muted);
@@ -3062,13 +3085,15 @@ select {
 /* The page you are on. Kept as a link rather than a span so the row stays one
  * shape while you move along it, and so reloading the current filter still
  * works from the keyboard. */
-.topic-groups a.is-current {
+.topic-groups a.is-current,
+.result-groups a.is-current {
   background: var(--accent-soft);
   border-color: var(--accent);
   font-weight: 600;
 }
 
-.topic-groups a.is-current span {
+.topic-groups a.is-current span,
+.result-groups a.is-current span {
   color: var(--ink);
 }
 

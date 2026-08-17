@@ -2,6 +2,8 @@ import { q } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import { AD_MREC, AD_TEXT, adPlan } from '../../lib/ads.js';
+import { CATEGORIES } from '../../lib/categories.js';
+import { filtersWithHits, searchFilter, searchHref, totalHits } from '../../lib/searchFilters.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import Thumb, { Avatar } from '../Thumb.jsx';
@@ -12,24 +14,51 @@ export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Search',
-  description: 'Full-text search across every blog and post in the directory.',
+  description: 'Full-text search across every blog, podcast, channel and post in the directory.',
 };
 
 /**
- * @param {{ searchParams: Promise<{ q?: string }> }} props
+ * What one result is, for the label on its row.
+ *
+ * The entry noun rather than the feed noun — a result is an episode, not a
+ * podcast. Blogs are left unlabelled on purpose: they are nine rows in ten, so
+ * labelling them says nothing, and labelling only the others is what makes an
+ * episode stand out in a column of writing.
+ *
+ * @param {unknown} category
+ * @returns {string|null}
+ */
+function kindLabel(category) {
+  const kind = String(category ?? '');
+  if (!kind || kind === 'blog') return null;
+  return CATEGORIES[kind]?.entry ?? null;
+}
+
+/**
+ * @param {{ searchParams: Promise<{ q?: string, kind?: string }> }} props
  */
 export default async function SearchPage({ searchParams }) {
   const params = await searchParams;
   const query = (params.q ?? '').trim();
 
+  // Which slice of the results is being asked for. An unknown kind reads as no
+  // filter at all, so a mistyped URL still searches.
+  const filter = searchFilter(params.kind);
+
   let blogs = [];
   let posts = [];
+  let counts = { posts: {}, feeds: {} };
 
   if (query) {
     const client = db();
-    [blogs, posts] = await Promise.all([
-      q.searchFeeds(client, query, 20),
-      q.searchItems(client, query, 40),
+    [blogs, posts, counts] = await Promise.all([
+      q.searchFeeds(client, query, 20, 'all', filter?.kinds ?? null),
+      q.searchItems(client, query, 40, 'all', filter?.kinds ?? null),
+      // Counted over the whole match set rather than over the rows below, which
+      // is the entire point of the row of filters: it can only say there are
+      // 1,521 matching podcast episodes if it looked past the forty blog posts
+      // that outranked them.
+      q.searchKindCounts(client, query),
     ]);
   }
 
@@ -43,10 +72,20 @@ export default async function SearchPage({ searchParams }) {
   const found = blogs.length > 0 || posts.length > 0;
   const postAds = adPlan(posts.length, { first: 8, every: 20, max: 2, formats: [AD_TEXT] });
 
+  const filters = query ? filtersWithHits(counts) : [];
+  const total = totalHits(counts);
+
+  // The two section headings follow the filter: under Podcasts, a list of shows
+  // is not "Blogs" and a list of episodes is not "Posts".
+  const feedsHeading = filter ? filter.heading : 'Blogs';
+  const postsHeading = filter ? filter.item[0].toUpperCase() + filter.item.slice(1) : 'Posts';
+
   return (
     <>
       <h1>Search</h1>
-      <p className="lede">Across every post we have collected.</p>
+      <p className="lede">
+        Across every post we have collected — writing, episodes, tracks and video alike.
+      </p>
 
       <form className="submit-box" method="get" action="/search">
         <input
@@ -56,10 +95,41 @@ export default async function SearchPage({ searchParams }) {
           placeholder="agentic coding, rss, self-hosting…"
           aria-label="Search query"
         />
+        {/* The filter rides along with the next query rather than being reset by
+            it: somebody narrowed to podcasts and then searched again is still
+            looking for podcasts. The row below is how they get back out. */}
+        {filter && <input type="hidden" name="kind" value={filter.segment} />}
         <div className="submit-actions">
           <button type="submit">Search</button>
         </div>
       </form>
+
+      {/* What matched, by category. This is the answer to "why is this all
+          blogs?" — it is not, and each of these says how much of it is not.
+          Only filters with something behind them are offered, and the row is
+          skipped entirely when everything landed in one category, where it
+          would be a single link back to the page you are on. */}
+      {filters.length > 1 && (
+        <nav className="result-groups" aria-label="Results by category">
+          <a
+            href={searchHref(query)}
+            aria-current={filter ? undefined : 'page'}
+            className={filter ? undefined : 'is-current'}
+          >
+            All <span>{total.toLocaleString('en-US')}</span>
+          </a>
+          {filters.map(({ group, count }) => (
+            <a
+              key={group.segment}
+              href={searchHref(query, group.segment)}
+              aria-current={group.segment === filter?.segment ? 'page' : undefined}
+              className={group.segment === filter?.segment ? 'is-current' : undefined}
+            >
+              {group.heading} <span>{count.toLocaleString('en-US')}</span>
+            </a>
+          ))}
+        </nav>
+      )}
 
       {/*
        * Directly under the box, above the results: the sponsored-result
@@ -70,17 +140,30 @@ export default async function SearchPage({ searchParams }) {
 
       {query && blogs.length === 0 && posts.length === 0 && (
         <p className="empty">
-          Nothing for &ldquo;{query}&rdquo;. Try{' '}
-          <a href={kagi} rel="noopener">
-            Kagi
-          </a>{' '}
-          instead.
+          {filter ? (
+            <>
+              Nothing under {filter.heading.toLowerCase()} for &ldquo;{query}&rdquo;.{' '}
+              <a href={searchHref(query)}>Search everything</a>, or try{' '}
+              <a href={kagi} rel="noopener">
+                Kagi
+              </a>
+              .
+            </>
+          ) : (
+            <>
+              Nothing for &ldquo;{query}&rdquo;. Try{' '}
+              <a href={kagi} rel="noopener">
+                Kagi
+              </a>{' '}
+              instead.
+            </>
+          )}
         </p>
       )}
 
       {blogs.length > 0 && (
         <>
-          <h2>Blogs</h2>
+          <h2>{feedsHeading}</h2>
           <div className="feed-list">
             {blogs.map((b) => (
               <a className="feed-row" key={String(b.slug)} href={`/${b.slug}`}>
@@ -98,7 +181,7 @@ export default async function SearchPage({ searchParams }) {
 
       {posts.length > 0 && (
         <>
-          <h2>Posts</h2>
+          <h2>{postsHeading}</h2>
           {posts.flatMap((p, i) => {
             // A result goes to our reader, not straight off the site: the post
             // is framed with the toolbar still on screen, and the way out to
@@ -109,6 +192,7 @@ export default async function SearchPage({ searchParams }) {
               : null;
 
             const thumb = postThumb(p);
+            const label = kindLabel(p.category);
 
             const entry = (
               <article
@@ -121,6 +205,7 @@ export default async function SearchPage({ searchParams }) {
                 {p.summary && <p>{p.summary}</p>}
                 <time>
                   <a href={`/${p.feed_slug}`}>{p.feed_title}</a>
+                  {label && <span className="kind-tag">{label}</span>}
                 </time>
               </article>
             );

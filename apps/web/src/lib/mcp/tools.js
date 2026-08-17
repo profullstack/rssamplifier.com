@@ -50,11 +50,17 @@ export const TOOLS = [
     name: 'search',
     title: 'Search the directory',
     description:
-      'Full-text search across every post and blog in the directory. Returns matching blogs and matching individual posts, each with the identifiers read_post needs. Use mode="any" to match any one of the terms rather than all of them — useful when a thing goes by several names.',
+      'Full-text search across every post and blog in the directory. Returns matching blogs and matching individual posts, each with the identifiers read_post needs. Use mode="any" to match any one of the terms rather than all of them — useful when a thing goes by several names. The directory is mostly blogs, so the best-ranked results for anything are usually blog posts: every reply counts the whole match set by category under `categories`, and `kind` asks for one of them — the podcast episodes on a subject rather than the writing.',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'What to search for.' },
+        kind: {
+          type: 'string',
+          enum: q.KINDS,
+          description:
+            'Only results from feeds of this category. Omit for all of them, and read `categories` in the reply to see what the other kinds hold.',
+        },
         mode: {
           type: 'string',
           enum: ['all', 'any'],
@@ -76,23 +82,36 @@ export const TOOLS = [
 
       const mode = args?.mode === 'any' ? 'any' : 'all';
       const limit = bounded(args?.limit, 30, 1, 100);
+      const kinds = q.normalizeKinds(args?.kind);
       const client = db();
 
-      const [blogs, posts] = await Promise.all([
-        q.searchFeeds(client, query, limit, mode),
-        q.searchItems(client, query, limit, mode),
+      const [blogs, posts, counts] = await Promise.all([
+        q.searchFeeds(client, query, limit, mode, kinds),
+        q.searchItems(client, query, limit, mode, kinds),
+        q.searchKindCounts(client, query, mode),
       ]);
 
       return {
         query,
         mode,
+        kind: kinds?.[0] ?? null,
+        // Both halves of the match set, by category, counted in full rather
+        // than over the page of results above — which is what makes this worth
+        // returning: it is the only thing in the reply that knows about the
+        // episodes and tracks the ranking pushed off the end.
+        categories: q.KINDS.map((kind) => ({
+          kind,
+          posts: counts.posts[kind] ?? 0,
+          feeds: counts.feeds[kind] ?? 0,
+        })).filter((row) => row.posts > 0 || row.feeds > 0),
         blogs: blogs.map((b) => ({
           slug: b.slug,
           title: b.title,
           description: b.description,
+          category: b.category,
           page: `${siteUrl()}/${b.slug}`,
         })),
-        posts: posts.map(post),
+        posts: posts.map((p) => ({ ...post(p), category: p.category ?? null })),
       };
     },
   },
