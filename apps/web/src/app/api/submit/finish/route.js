@@ -35,8 +35,34 @@ export async function POST(req) {
   const access = await checkUploadAccess(client, id, ipHashOf(req));
   if (!access.ok) return json({ ok: false, error: access.error }, access.status);
 
-  const progress = await q.submissionProgress(client, id);
   const email = normalizeEmail(body?.email);
+  const staged = await q.countImportEntries(client, id);
+
+  // A staged upload is not finished, it is handed over. Marking it ready is
+  // what releases it to the poller, and it is the last thing the tab has to do
+  // — everything after this happens whether anyone is watching or not.
+  if (staged > 0) {
+    await q.markImportReady(client, id, {
+      entries_total: Math.max(0, Math.floor(Number(body?.total ?? staged)) || staged),
+      rejected_count: Math.max(0, Math.floor(Number(body?.invalid ?? 0)) || 0),
+      notify_email: email,
+    });
+
+    return json({
+      ok: true,
+      submissionId: id,
+      staged,
+      queued: 0,
+      pending: staged,
+      statusUrl: `${siteUrl()}/submissions/${id}`,
+      statusPath: `/submissions/${id}`,
+    });
+  }
+
+  // Nothing staged means this went through the older path that queued as it
+  // went, or the file held no feeds at all. Both are settled by counting what
+  // actually landed.
+  const progress = await q.submissionProgress(client, id);
 
   await q.completeSubmission(client, id, {
     accepted_count: 0,

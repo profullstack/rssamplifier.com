@@ -6,6 +6,7 @@ import {
   notifyFinishedDiscoveries,
   drainDiscoveryQueue,
   drainDiscoveryKeywords,
+  drainImport,
 } from '@rssamplifier/ingest';
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 import { findFeedCard } from '@rssamplifier/feed';
@@ -267,6 +268,27 @@ async function tick() {
       } catch (err) {
         log('discovery-topics-error', { message: String(err?.message ?? err) });
       }
+    }
+
+    // An upload hands over its list and leaves; this is where the list becomes
+    // feeds. One slice a tick rather than a whole submission, so a very large
+    // catalogue cannot hold the crawl above hostage while it queues — the two
+    // share the process and the import is the one that can wait.
+    try {
+      const drained = await drainImport(db);
+      if (drained.ran) {
+        log('import-drain', {
+          submission: drained.submissionId,
+          queued: drained.queued,
+          skipped: drained.skipped,
+          remaining: drained.remaining,
+          finished: drained.finished,
+        });
+      }
+    } catch (err) {
+      // One bad slice must not take the crawl down with it; the entries are
+      // still staged, so the next tick tries again.
+      log('import-drain-error', { message: String(err?.message ?? err) });
     }
 
     // Queued submissions finish long after the upload, so the daemon that
