@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 
+import { feedCredits } from './identity.js';
 import { KIND_BLOG, KIND_NEWS, KIND_PODCAST, KIND_MUSIC, KIND_VIDEO } from './kinds.js';
 import { hasPlaylistHeader, parsePlaylist, playlistExtension } from './playlist.js';
 
@@ -1071,6 +1072,7 @@ function parseRss(ch, feedUrl = '') {
     ),
     categories: categories(ch),
     kind: kindOfChannel(ch, raw),
+    credits: feedCredits(ch, raw, 'rss', feedUrl),
     items,
   };
 }
@@ -1113,6 +1115,7 @@ function parseAtom(feed, feedUrl = '') {
     imageUrl: absoluteImage(text(feed.logo) || text(feed.icon), siteUrl || feedUrl),
     categories: categories(feed),
     kind,
+    credits: feedCredits(feed, entries, 'atom', feedUrl),
     items,
   };
 }
@@ -1153,6 +1156,7 @@ function parseRdf(rdf, feedUrl = '') {
     // RSS 1.0 keeps the channel and the items as siblings, so the channel tags
     // and the items are read from different objects.
     kind: kindOfChannel(ch, raw),
+    credits: feedCredits(ch, raw, 'rdf', feedUrl),
     items,
   };
 }
@@ -1213,6 +1217,7 @@ function parseJsonFeed(raw, feedUrl = '') {
     // namespace. It has no equivalent of `podcast:medium`, so a JSON Feed can
     // only reach the music category by curation.
     kind: j._itunes ? KIND_PODCAST : video ? KIND_VIDEO : KIND_BLOG,
+    credits: feedCredits(j, j.items, 'json', j.home_page_url ?? ''),
     items,
   };
 }

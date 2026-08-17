@@ -1,6 +1,7 @@
 import { connect, migrate, q, accounts, alerts } from '@rssamplifier/db';
 import {
   crawlDue,
+  enrichDue,
   notifyFinishedSubmissions,
   notifyFinishedDiscoveries,
   drainDiscoveryQueue,
@@ -76,6 +77,26 @@ const clusterBatch = Number(env['CLUSTER_BACKFILL_BATCH']) || 500;
 // eight hours, and the walk is a bounded indexed read either way.
 const clusterIntervalMs = (Number(env['CLUSTER_BACKFILL_SECONDS']) || 10) * 1000;
 
+// Feeds looked at for authorship per pass, and how often a pass runs.
+//
+// Deliberately the smallest batch in this file. Each feed costs three to five
+// fetches of somebody's blog, and unlike a crawl those pages are not a machine
+// interface — they are the site itself. Five a minute walks the whole
+// directory in about a week, which is far faster than people change where they
+// can be found, and slow enough that no publisher notices us doing it.
+const authorBatch = Number(env['AUTHOR_BATCH_SIZE']) || 5;
+const authorIntervalMs = (Number(env['AUTHOR_INTERVAL_SECONDS']) || 60) * 1000;
+// How long before a feed is looked at again. Long, because the answer changes
+// when somebody redesigns their blog or joins a new network, not weekly.
+const authorRecheckDays = Number(env['AUTHOR_RECHECK_DAYS']) || 90;
+// Whether to spend requests proving a rel="me" link points back. Off by
+// default: it triples the cost of an author who has three profiles, and the
+// unverified link is still the right link almost every time.
+const authorVerify = env['AUTHOR_VERIFY'] === '1' || env['AUTHOR_VERIFY'] === 'true';
+// Enrichment can be turned off outright without redeploying the crawler, which
+// is the switch to reach for if a site ever objects to the extra fetches.
+const authorEnabled = env['AUTHOR_ENRICH'] !== '0' && env['AUTHOR_ENRICH'] !== 'false';
+
 // Accounts considered per alert pass, and how often a pass runs. Its own timer
 // for the same reason the card and cluster passes have one: a tick spends
 // minutes inside the crawl, and work queued behind that only happens if the
@@ -114,6 +135,10 @@ let backfilling = false;
 // The same guard for the card pass, which makes outbound requests and so must
 // never be allowed to stack.
 let carding = false;
+// Guards the enrichment pass against overlapping itself. A batch of five feeds
+// that each need four fetches of a slow server can outlast its own interval.
+let enriching = false;
+
 // And for the alert pass, where stacking would be worse than wasteful: two
 // overlapping passes read the same watermark and would send the same digest
 // twice.
@@ -191,11 +216,18 @@ async function tick() {
     // phases: keywords still to search, then the sites those searches turn up.
     // Both run after the crawl — an indexed blog going stale matters more than
     // finding a new one.
+    // `amount` is set alongside each event's own fields rather than instead of
+    // them: the log's amount column is what /crawlstats reads to decide whether a
+    // job is moving, and a summary line that leaves it null reports a busy worker
+    // as a stalled one. The named field stays in the payload, so the wording in
+    // the live log is unchanged.
     const searched = await drainDiscoveryKeywords(db, keywordBatch);
-    if (searched.searched || searched.failed || searched.fatal) log('discovery-search', searched);
+    if (searched.searched || searched.failed || searched.fatal) {
+      log('discovery-search', { ...searched, amount: searched.searched });
+    }
 
     const discovered = await drainDiscoveryQueue(db, discoveryBatch);
-    if (discovered.checked) log('discovery', discovered);
+    if (discovered.checked) log('discovery', { ...discovered, amount: discovered.checked });
 
     // Sources fill the queue the drain above empties. Checked on a long timer
     // and rate-limited to one source per pass: each is a request to somebody
@@ -316,7 +348,11 @@ async function backfillTick() {
       // Logged on every pass that read anything, not only ones that wrote.
       // A silent worker and an absent one are indistinguishable, which is the
       // mistake that hid this the first time.
-      log('cluster-backfill', { scanned: filled.scanned, keyed: filled.keyed });
+      log('cluster-backfill', {
+        scanned: filled.scanned,
+        keyed: filled.keyed,
+        amount: filled.keyed,
+      });
     }
   } catch (err) {
     log('cluster-backfill-error', { message: String(err?.message ?? err) });
@@ -381,7 +417,13 @@ async function cardTick() {
     }
 
     const coverage = await q.cardCoverage(db);
-    log('cards', { looked: feeds.length, found, cards, pending: coverage.pending });
+    log('cards', {
+      looked: feeds.length,
+      found,
+      cards,
+      pending: coverage.pending,
+      amount: feeds.length,
+    });
   } catch (err) {
     log('card-tick-error', { message: String(err?.message ?? err) });
   } finally {
@@ -407,10 +449,23 @@ async function alertTick() {
 
   try {
     const result = await deliverAlerts(db, { users: alertUsers });
-    // Only when something happened. The steady state is a pass that examines a
-    // handful of accounts and finds nothing, and a line every two minutes
-    // saying so is not a log.
-    if (result.items || result.failed) log('alerts', result);
+
+    // Logged whenever there was anybody to consider, and not only when
+    // something was sent — which is the opposite of the rule the card pass
+    // above follows, for a reason worth stating.
+    //
+    // The steady state of this pass is finding nothing: most hours, nobody any
+    // account follows publishes anything. A job that writes a line only on the
+    // interesting minutes is indistinguishable on /crawlstats from a job that
+    // has died, and "has the sender stopped?" is exactly the question this
+    // feature makes worth asking. One line every couple of minutes — and only
+    // on a deployment where somebody has switched alerts on at all — is a fair
+    // price for that being answerable.
+    //
+    // `amount` is the field /crawlstats reads as a job's throughput, so what
+    // goes in it is what this job should be measured by: posts alerted about,
+    // not accounts looked at, which is flat whatever happens.
+    if (result.users) log('alerts', { ...result, amount: result.items });
   } catch (err) {
     log('alert-error', { message: String(err?.message ?? err) });
   } finally {
@@ -418,20 +473,54 @@ async function alertTick() {
   }
 }
 
+/**
+ * Find out who writes the feeds, one small batch at a time.
+ *
+ * On its own timer for the reason the cluster backfill is: anything placed
+ * after the crawl inside `tick()` only runs when the process survives the
+ * crawl, and a pass that needs a week of steady progress cannot depend on
+ * that. It is also the slowest work in the daemon per unit — several fetches
+ * of one publisher's site — so keeping it off the crawl's clock means a slow
+ * blog delays nothing but the next author.
+ */
+async function enrichTick() {
+  if (!authorEnabled || stopping) return;
+  if (enriching) return;
+  enriching = true;
+
+  try {
+    const result = await enrichDue(db, authorBatch, {
+      verify: authorVerify,
+      recheckDays: authorRecheckDays,
+      onEvent: publishLog ? recorder.record : null,
+    });
+    // Silent when nothing was due, which is the steady state once the
+    // directory has been walked and before anything is old enough to recheck.
+    if (result.feeds) log('authors', result);
+  } catch (err) {
+    log('authors-error', { message: String(err?.message ?? err) });
+  } finally {
+    enriching = false;
+  }
+}
+
 const timer = setInterval(tick, intervalMs);
 const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
 const cardTimer = setInterval(cardTick, cardIntervalMs);
 const alertTimer = setInterval(alertTick, alertIntervalMs);
+const enrichTimer = setInterval(enrichTick, authorIntervalMs);
 void tick();
 void backfillTick();
 void cardTick();
 void alertTick();
+void enrichTick();
 
 log('started', {
   intervalSeconds: intervalMs / 1000,
   batchSize,
   concurrency,
   discoveryBatch,
+  authorBatch: authorEnabled ? authorBatch : 0,
   // Said out loud on boot, because a deployment missing the VAPID pair looks
   // exactly like one where nobody has switched browser alerts on — and the two
   // are a config change apart.
@@ -448,6 +537,7 @@ function shutdown(signal) {
   clearInterval(timer);
   clearInterval(backfillTimer);
   clearInterval(cardTimer);
+  clearInterval(enrichTimer);
   clearInterval(alertTimer);
 
   // Recorded before the buffer is closed, so the live log's last line is the
@@ -457,7 +547,7 @@ function shutdown(signal) {
 
   const deadline = Date.now() + 20_000;
   const wait = setInterval(() => {
-    if (!running || Date.now() > deadline) {
+    if ((!running && !enriching) || Date.now() > deadline) {
       clearInterval(wait);
       // Whatever the last batch logged is still in memory: two seconds of lines
       // is exactly what a 20-second drain would otherwise throw away.
