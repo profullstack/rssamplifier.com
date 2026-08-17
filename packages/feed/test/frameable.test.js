@@ -17,6 +17,55 @@ test('X-Frame-Options DENY and SAMEORIGIN both block us', () => {
   assert.equal(framingVerdict({ xFrameOptions: 'sameorigin' }, US).frameable, false);
 });
 
+test('a header sent twice is read as two values, not one unrecognised one', () => {
+  // What open.audio actually answers: DENY from the application and SAMEORIGIN
+  // from the proxy in front of it. fetch joins duplicate headers with a comma,
+  // and comparing that whole string against each keyword recognised none of
+  // them — so a page refusing framing twice over was called unrecognised and
+  // framed anyway, which is the blank rectangle this module exists to prevent.
+  const verdict = framingVerdict({ xFrameOptions: 'DENY, SAMEORIGIN' }, US);
+  assert.equal(verdict.frameable, false);
+  assert.equal(verdict.reason, 'x-frame-options-deny');
+
+  assert.equal(framingVerdict({ xFrameOptions: 'SAMEORIGIN, SAMEORIGIN' }, US).frameable, false);
+  assert.equal(framingVerdict({ xFrameOptions: 'sameorigin,deny' }, US).frameable, false);
+
+  // A value nobody recognises is still the optimistic case: the reader would
+  // rather try to frame a page than refuse one over a typo.
+  assert.equal(framingVerdict({ xFrameOptions: 'nonsense, drivel' }, US).frameable, true);
+  // ...but one refusal among the nonsense is still a refusal.
+  assert.equal(framingVerdict({ xFrameOptions: 'nonsense, DENY' }, US).frameable, false);
+});
+
+test('one CSP policy refusing beats another allowing', () => {
+  // Two Content-Security-Policy headers arrive joined by a comma the same way.
+  // Both are enforced by the browser, so the strict one decides. Read as a
+  // single policy, the second policy's sources look like extra sources of the
+  // first and the refusal disappears.
+  assert.equal(
+    framingVerdict({ contentSecurityPolicy: "frame-ancestors 'none', frame-ancestors *" }, US)
+      .frameable,
+    false,
+  );
+  assert.equal(
+    framingVerdict({ contentSecurityPolicy: "frame-ancestors *, frame-ancestors 'none'" }, US)
+      .frameable,
+    false,
+  );
+  // Two policies that both allow us still allow us.
+  assert.equal(
+    framingVerdict({ contentSecurityPolicy: 'frame-ancestors *, frame-ancestors https://rssamplifier.com' }, US)
+      .frameable,
+    true,
+  );
+  // A policy that says nothing about framing does not veto one that does.
+  assert.equal(
+    framingVerdict({ contentSecurityPolicy: "default-src 'self', frame-ancestors *" }, US)
+      .frameable,
+    true,
+  );
+});
+
 test('obsolete ALLOW-FROM is treated as a refusal rather than a guess', () => {
   const verdict = framingVerdict({ xFrameOptions: 'ALLOW-FROM https://example.com' }, US);
   assert.equal(verdict.frameable, false);
