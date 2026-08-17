@@ -1,5 +1,11 @@
 import { parseOpml } from '@rssamplifier/feed';
 
+// The same reading of an `<outline>` tag the uploader does in the browser. Two
+// copies would be two answers to "what does &amp; mean in an attribute", and
+// this page exists to show the submitter what they submitted — disagreeing with
+// the thing that imported it is the one way it can be wrong.
+import { attrOf, decodeXml, outlineTags } from './opml-scan.js';
+
 /**
  * How much of a submission's input is kept.
  *
@@ -106,29 +112,18 @@ function scanOutlines(xml) {
   const seen = new Set();
   const found = [];
 
-  for (const match of xml.matchAll(/<outline\b[^>]*>/gi)) {
-    const tag = match[0];
-    const url = attr(tag, 'xmlUrl');
+  for (const tag of outlineTags(xml)) {
+    const url = attrOf(tag, 'xmlUrl');
     if (!url) continue;
 
     const key = url.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
 
-    found.push({ url, title: attr(tag, 'text') ?? attr(tag, 'title') });
+    found.push({ url, title: attrOf(tag, 'text') ?? attrOf(tag, 'title') });
   }
 
   return found;
-}
-
-/**
- * @param {string} tag
- * @param {string} name
- * @returns {string|null}
- */
-function attr(tag, name) {
-  const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`, 'i'));
-  return match ? decode(match[1]) : null;
 }
 
 /**
@@ -138,21 +133,5 @@ function attr(tag, name) {
  */
 function tagText(xml, name) {
   const match = xml.match(new RegExp(`<${name}>([^<]*)</${name}>`, 'i'));
-  return match ? decode(match[1].trim()) || null : null;
-}
-
-/**
- * The five entities XML defines. Nothing else, because this is naming a file on
- * a status page, not rendering a document.
- *
- * @param {string} value
- * @returns {string}
- */
-function decode(value) {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&');
+  return match ? decodeXml(match[1].trim()) || null : null;
 }

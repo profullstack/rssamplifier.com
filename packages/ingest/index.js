@@ -8,6 +8,7 @@ export {
   refreshFeedKeywords,
 } from './src/crawl.js';
 export { importFeeds, importOpml } from './src/import.js';
+export { queueFeeds } from './src/queue.js';
 export {
   notifyFinishedSubmissions,
   sendSubmissionEmail,

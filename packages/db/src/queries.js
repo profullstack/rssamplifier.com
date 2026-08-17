@@ -1722,6 +1722,97 @@ export async function existingFeedKeys(db, pageSize = 5000) {
 }
 
 /**
+ * Which of these feed URLs the directory already holds.
+ *
+ * The scoped counterpart to {@link existingFeedKeys}. That one reads the whole
+ * table, which is right when a single process imports a whole catalogue in one
+ * go — the read is amortised over every row of the file. It is exactly wrong
+ * for an upload that arrives as a few hundred separate HTTP requests: each one
+ * would re-read fifty thousand rows to check two thousand URLs, and the cost
+ * grows with the directory rather than with the upload.
+ *
+ * Matched on the exact stored string rather than a lowercased one, so the
+ * unique index on feed_url can answer it. That is also the only comparison that
+ * means anything here: the index is what `insertFeedsBulk` conflicts against,
+ * so a URL this misses is a URL the insert would have dropped anyway.
+ *
+ * @param {Client} db
+ * @param {string[]} urls normalized feed URLs
+ * @returns {Promise<Set<string>>} the subset that already exists
+ */
+export async function knownFeedUrls(db, urls) {
+  return lookupIn(db, 'select feed_url from feeds where feed_url in', urls, (url) => url);
+}
+
+/**
+ * Which of these slugs are already claimed.
+ *
+ * @param {Client} db
+ * @param {string[]} slugs
+ * @returns {Promise<Set<string>>}
+ */
+export async function knownSlugs(db, slugs) {
+  return lookupIn(db, 'select slug from feeds where slug in', slugs, (slug) => slug);
+}
+
+/**
+ * Run one `where x in (…)` lookup over a list of any length.
+ *
+ * SQLite has a ceiling on bound parameters per statement, and a batch import
+ * hands us a couple of thousand keys at a time, so the list is asked for in
+ * pages. Five hundred is well under every version's limit and still turns a
+ * two-thousand-key check into four round trips rather than two thousand.
+ *
+ * @param {Client} db
+ * @param {string} prefix SQL up to and including `in`
+ * @param {string[]} values
+ * @param {(value: unknown) => string} key how a returned row maps back to the set
+ * @returns {Promise<Set<string>>}
+ */
+async function lookupIn(db, prefix, values, key) {
+  const found = new Set();
+  const page = 500;
+
+  for (let i = 0; i < values.length; i += page) {
+    const slice = values.slice(i, i + page);
+    if (slice.length === 0) break;
+
+    const { rows } = await db.execute({
+      sql: `${prefix} (${slice.map(() => '?').join(', ')})`,
+      args: slice,
+    });
+    for (const row of rows) found.add(key(String(Object.values(row)[0])));
+  }
+
+  return found;
+}
+
+/**
+ * The IP hash a submission was made from, for deciding who may add to it.
+ *
+ * An upload that arrives in hundreds of separate requests has to name the
+ * submission it belongs to, and a submission id is a public URL — it is printed
+ * on the status page. That is fine for reading and wrong for writing, so a
+ * batch is only accepted from the address that opened the submission.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @returns {Promise<{ ip_hash: string|null, created_at: string }|null>}
+ */
+export async function submissionOwner(db, id) {
+  const { rows } = await db.execute({
+    sql: 'select ip_hash, created_at from submissions where id = ? limit 1',
+    args: [id],
+  });
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    ip_hash: row.ip_hash == null ? null : String(row.ip_hash),
+    created_at: String(row.created_at),
+  };
+}
+
+/**
  * The YouTube channels the directory already indexes.
  *
  * Discovery normally starts from a list somebody else maintains. This one

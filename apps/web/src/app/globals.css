@@ -2987,6 +2987,37 @@ select {
 }
 
 /*
+ * The upload half of the same wait.
+ *
+ * An import is two stages — the file being read and sent, then the feeds being
+ * crawled — and the second already had a bar. This is the first, built from the
+ * same pieces so that arriving at /submissions/<id> reads as the next screen of
+ * one process rather than a different feature. Only the frame differs: it sits
+ * under the form it belongs to, so it is boxed off from it rather than floating
+ * as the page's own heading.
+ */
+
+.upload-live {
+  margin: 1.25rem 0 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+/* Smaller than the status page's, which is the largest thing on its screen.
+ * Here the form above it is still the subject. */
+.upload-live .live-percent {
+  font-size: 1.9rem;
+}
+
+.upload-live .live-log {
+  max-height: 11rem;
+}
+
+.upload-live .submit-actions {
+  margin-top: 1rem;
+}
+
+/*
  * A topic's categories, as a row of chips.
  *
  * Not the .categories grid the home page uses: that is seven full-width rows,
