@@ -1680,6 +1680,18 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
  * `on conflict do nothing` covers both unique columns, so a re-run of the same
  * catalogue is a no-op rather than an error.
  *
+ * One statement with many rows of `values`, rather than many statements in one
+ * batch. Both are a single round trip, so the difference is invisible against
+ * local SQLite — and it is most of the wall-clock of a real import. Measured on
+ * a throwaway Turso database in the production region: 500 rows as 500
+ * statements takes ~7.1s, and the same 500 rows as one statement takes ~0.69s.
+ * Ten times, for a change that alters no behaviour. Turso appears to settle each
+ * write statement in a batch separately; a single statement is one unit of work
+ * however many rows it carries.
+ *
+ * The chunking that calls this stays at 500, which is what keeps the parameter
+ * count (nine per row, so 4,500) comfortably inside SQLite's limit.
+ *
  * @param {Client} db
  * @param {Array<{ slug: string, feed_url: string, site_url?: string|null, title: string, next_fetch_at: string, submission_id?: string|null }>} feeds
  * @returns {Promise<number>} rows actually inserted
@@ -1688,15 +1700,17 @@ export async function insertFeedsBulk(db, feeds) {
   if (feeds.length === 0) return 0;
 
   const now = nowIso();
-  const statements = feeds.map((f) => ({
+  const row = `(?, ?, ?, ?, ?, null, null, null, null, '[]', 'pending', null, null, null, 0,
+                60, ?, 0, ?, ?, ?)`;
+
+  const result = await db.execute({
     sql: `insert into feeds
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
        categories, status, last_fetched_at, last_success_at, last_error, error_count,
        fetch_interval_minutes, next_fetch_at, item_count, submission_id, created_at, updated_at)
-      values (?, ?, ?, ?, ?, null, null, null, null, '[]', 'pending', null, null, null, 0,
-              60, ?, 0, ?, ?, ?)
+      values ${feeds.map(() => row).join(', ')}
       on conflict do nothing`,
-    args: [
+    args: feeds.flatMap((f) => [
       newId(),
       f.slug,
       f.feed_url,
@@ -1706,11 +1720,10 @@ export async function insertFeedsBulk(db, feeds) {
       f.submission_id ?? null,
       now,
       now,
-    ],
-  }));
+    ]),
+  });
 
-  const results = await db.batch(statements, 'write');
-  return results.reduce((n, r) => n + Number(r.rowsAffected ?? 0), 0);
+  return Number(result.rowsAffected ?? 0);
 }
 
 /**
