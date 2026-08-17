@@ -13,6 +13,11 @@ export const dynamic = 'force-dynamic';
  * reads is built without them. The long tail is not hidden, it is per-feed —
  * every feed's own topics are on its page and in /api/feeds/{slug}.
  *
+ * `?q=` searches the index. Without it there are forty thousand topics ordered
+ * by how many feeds carry them, so the only way to reach a specific subject was
+ * to page through the whole rollup — which made "what does this directory have
+ * about homelabs" an expensive question to ask from outside.
+ *
  * @param {Request} req
  */
 export async function GET(req) {
@@ -20,15 +25,17 @@ export async function GET(req) {
   const limit = clamp(url.searchParams.get('limit'), 200, 1000);
   const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
   const minFeeds = clamp(url.searchParams.get('min'), 2, 100, 2);
+  const query = (url.searchParams.get('q') ?? '').trim() || null;
 
   const client = db();
   const [rows, total] = await Promise.all([
-    q.listTopics(client, { limit, offset, minFeeds }),
-    q.countTopics(client, minFeeds),
+    q.listTopics(client, { limit, offset, minFeeds, query }),
+    q.countTopics(client, minFeeds, query),
   ]);
 
   return json({
     total,
+    query,
     limit,
     offset,
     minFeeds,
@@ -38,6 +45,9 @@ export async function GET(req) {
       feedCount: Number(t.feed_count ?? 0),
       page: `${siteUrl()}/topics/${encodeURIComponent(String(t.slug))}`,
       feeds: `${siteUrl()}/api/topics/${encodeURIComponent(String(t.slug))}`,
+      // The subscription list for this topic, which is the artifact a reader or
+      // another tool actually consumes.
+      opml: `${siteUrl()}/opml?topic=${encodeURIComponent(String(t.slug))}`,
     })),
   });
 }

@@ -107,6 +107,28 @@ export default async function Home() {
         ))}
       </nav>
 
+      {/* Below the categories on purpose: browsing is what most visitors came
+          to do, and the terminal is for the minority who would rather not be
+          here at all. One line, so it costs the scroll almost nothing. */}
+      <section className="install-strip">
+        <div>
+          <p className="eyebrow">Prefer a terminal?</p>
+          <p>
+            Find feeds by subject, search every post and export OPML from the command line — or
+            from a script, or an agent already driving a shell.
+          </p>
+        </div>
+        <div>
+          <pre className="code-block">
+            <code>{`curl -fsSL ${siteUrl()}/install.sh | sh`}</code>
+          </pre>
+          <p className="install-links">
+            <a href="/cli">Documentation</a> · <a href="/mcp">MCP server</a> ·{' '}
+            <a href="/llms.txt">llms.txt</a>
+          </p>
+        </div>
+      </section>
+
       <h2>
         Recently added <span className="pill">{total} blogs</span>
       </h2>

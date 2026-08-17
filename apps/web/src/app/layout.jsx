@@ -198,9 +198,22 @@ export default function RootLayout({ children }) {
               <a href="/reels">Reels</a> · <a href="/topics">Topics</a>
             </p>
             <p>
-              Machine-readable: <a href="/mcp">MCP server</a> · <a href="/api/feeds">JSON API</a> ·{' '}
-              <a href="/opml">OPML</a> · <a href="/llms.txt">llms.txt</a> ·{' '}
-              <a href="/crawlstats">Crawler status</a>
+              Machine-readable: <a href="/mcp">MCP server</a> · <a href="/cli">CLI</a> ·{' '}
+              <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}
+              <a href="/llms.txt">llms.txt</a> · <a href="/crawlstats">Crawler status</a>
+            </p>
+            {/* The install command itself, not just a link to it. Somebody who
+                scrolled to the bottom of a feed page is exactly the person who
+                would rather have the directory in their terminal, and making
+                them visit a page to find one line is a step that loses most of
+                them. */}
+            <p className="footer-install">
+              <span>Install the CLI:</span>{' '}
+              {/* One interpolated string rather than three children: React
+                  separates adjacent text nodes with comment markers, and a
+                  command people are meant to select and copy should be one
+                  text node. */}
+              <code>{`curl -fsSL ${siteUrl()}/install.sh | sh`}</code>
             </p>
             <p>
               <a href="/about">About</a> · <a href="/contact">Contact</a> ·{' '}

@@ -42,8 +42,9 @@ is not a search engine for the whole web.
 - \`GET ${base}/api/feeds/{slug}\` — one blog: metadata plus recent items.
 - \`GET ${base}/topics/{keyword}.json\` — everything published on a topic, as a
   JSON Feed. Also available as \`.rss\`, \`.atom\`, \`.m3u\` and \`.pls\`.
-- \`GET ${base}/opml\` — the whole directory as a subscription list, or one
-  category with \`?kind=\`.
+- \`GET ${base}/api/topics?q=\` — search the topic index for a subject.
+- \`GET ${base}/opml\` — the whole directory as a subscription list, one
+  category with \`?kind=\`, or one subject with \`?topic=\`.
 - \`GET ${base}/search?q=\` — search the directory.
 
 ## Model Context Protocol
@@ -51,6 +52,14 @@ is not a search engine for the whole web.
 If you would rather call than crawl, there is an MCP server at \`${base}/mcp\`
 (Streamable HTTP, no key, no sign-up). It exposes the same directory as tools,
 and serves llms.txt as a resource.
+
+## From a shell
+
+If you are already driving a terminal, \`curl -fsSL ${base}/install.sh | sh\`
+installs a single-file CLI: \`rssamp topics <query>\` to find a subject,
+\`rssamp topic <keyword>\` for the feeds on it, \`rssamp urls --topic <keyword>\`
+for their feed URLs one per line. Everything takes \`--json\`. Docs at
+\`${base}/cli\`.
 
 ## Adding a feed
 

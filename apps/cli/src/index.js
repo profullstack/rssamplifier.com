@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * rssamplifier CLI.
  *
@@ -7,33 +8,156 @@
  *
  * Zero dependencies: argument parsing and output formatting are small enough to
  * own, and a CLI people install globally should not drag a tree behind it.
+ *
+ * One file, deliberately. The installer at /install.sh downloads this exact
+ * source and drops it on PATH — no build step, no tarball, no npm. That only
+ * works while everything the program needs is in here, so this file imports
+ * nothing but node: builtins, and does so lazily where it can.
+ *
+ * It is both a module and a program: the tests import {@link run}, and the
+ * shebang plus the guard at the bottom make the same file executable.
  */
+
+import { pathToFileURL } from 'node:url';
+
+export const VERSION = '0.2.0';
 
 const DEFAULT_API = 'https://rssamplifier.com';
 
-const HELP = `rssamplifier — the open RSS directory, from your terminal
+/**
+ * Every command, in the order they are worth learning.
+ *
+ * This array is the single source of truth: `--help` is rendered from it, and
+ * so is the table on /cli. A command documented in one place and not the other
+ * is therefore impossible, which is the same trick the MCP page plays with its
+ * tool list.
+ *
+ * @typedef {{ name: string, usage: string, summary: string, detail: string,
+ *   options?: string[], examples?: string[] }} Command
+ * @type {Command[]}
+ */
+export const COMMANDS = [
+  {
+    name: 'search',
+    usage: 'search <query>',
+    summary: 'Search every indexed post and blog',
+    detail:
+      'Full-text search across the directory. Returns matching blogs and matching posts, with a reader URL for each post so you can read it without leaving the site.',
+    options: ['--limit <n>', '--json'],
+    examples: ['rssamp search "agentic coding"', 'rssamp search homelab --limit 5 --json'],
+  },
+  {
+    name: 'topics',
+    usage: 'topics [query]',
+    summary: 'Find subjects the directory covers',
+    detail:
+      'The topic index, ranked by how many feeds cover each subject. With a query it searches that index — exact match first, then subjects starting with the term, then subjects containing it. This is the command to reach for first: a topic is how you get from "I want to read about X" to a list of feeds worth subscribing to.',
+    options: ['--limit <n>', '--min <n>', '--json'],
+    examples: ['rssamp topics homelab', 'rssamp topics --min 50 --limit 40'],
+  },
+  {
+    name: 'topic',
+    usage: 'topic <keyword>',
+    summary: 'The feeds filed under one subject',
+    detail:
+      "Every feed on a topic, strongest first — a publisher's own category outranks a phrase counted out of its writing. The keyword is normalised the way the site normalises it, so \"Home Lab\", \"home-lab\" and \"homelab\" all land on the same topic.",
+    options: ['--limit <n>', '--group <name>', '--json'],
+    examples: ['rssamp topic homelab', 'rssamp topic physics --group podcasts'],
+  },
+  {
+    name: 'urls',
+    usage: 'urls',
+    summary: 'One feed URL per line',
+    detail:
+      'The plainest possible output: feed URLs, one to a line, ready to pipe into another tool. Takes the same filters as `opml`, so `--topic` is the useful form — the whole directory is fifty thousand lines and almost never what you want.',
+    options: ['--topic <keyword>', '--kind <kind>', '--limit <n>'],
+    examples: ['rssamp urls --topic homelab', 'rssamp urls --kind podcast --limit 100'],
+  },
+  {
+    name: 'opml',
+    usage: 'opml [> feeds.opml]',
+    summary: 'Export a subscription list',
+    detail:
+      'An OPML subscription list any feed reader can import. Unfiltered it is the entire directory, which is a large file and a strange thing to subscribe to; `--topic` is the cut most people want.',
+    options: ['--topic <keyword>', '--kind <kind>', '--limit <n>'],
+    examples: ['rssamp opml --topic homelab > homelab.opml', 'rssamp opml --kind podcast'],
+  },
+  {
+    name: 'list',
+    usage: 'list',
+    summary: 'Browse the directory, newest first',
+    detail: 'The directory itself, most recently added first, with a total at the top.',
+    options: ['--limit <n>', '--offset <n>', '--kind <kind>', '--json'],
+    examples: ['rssamp list --limit 20', 'rssamp list --kind video'],
+  },
+  {
+    name: 'show',
+    usage: 'show <slug>',
+    summary: 'One blog and its recent posts',
+    detail:
+      'Everything the directory knows about one feed: where it lives, how many posts it has, what it was last seen publishing.',
+    options: ['--json'],
+    examples: ['rssamp show technotim-live'],
+  },
+  {
+    name: 'submit',
+    usage: 'submit <url|file.opml> …',
+    summary: 'Add blogs to the directory',
+    detail:
+      'Give it a site, a feed, several of either, or an OPML file to upload. We find the feed, read it and give the blog a permanent page. No account needed; submissions share the web form’s budget of twenty an hour per address.',
+    options: ['--json'],
+    examples: ['rssamp submit example.com', 'rssamp submit subscriptions.opml'],
+  },
+];
+
+/** @type {string[]} */
+const COMMAND_NAMES = COMMANDS.map((c) => c.name);
+
+/**
+ * The global options, documented once because they apply everywhere.
+ *
+ * @type {{ flag: string, detail: string }[]}
+ */
+export const GLOBAL_OPTIONS = [
+  { flag: '--api <url>', detail: `API base. Default ${DEFAULT_API}, or $RSSAMP_API.` },
+  { flag: '--json', detail: 'Raw JSON, for piping into jq or handing to an agent.' },
+  { flag: '--limit <n>', detail: 'Cap the number of results.' },
+  { flag: '--offset <n>', detail: 'Skip results, for paging.' },
+  { flag: '-h, --help', detail: 'This text.' },
+  { flag: '-v, --version', detail: 'Print the version.' },
+];
+
+/**
+ * `--help`, rendered from {@link COMMANDS}.
+ *
+ * @returns {string}
+ */
+export function helpText() {
+  const width = Math.max(...COMMANDS.map((c) => c.usage.length));
+
+  const commands = COMMANDS.map((c) => `  rssamp ${c.usage.padEnd(width)}  ${c.summary}`).join('\n');
+  const options = GLOBAL_OPTIONS.map(
+    (o) => `  ${o.flag.padEnd(width + 2)}  ${o.detail}`,
+  ).join('\n');
+
+  return `rssamplifier — the open RSS directory, from your terminal
 
 Usage
-  rssamp submit <url|file.opml> [more…]   Add blogs to the directory
-  rssamp search <query>                   Search every indexed post
-  rssamp list [--limit N] [--offset N]    List blogs in the directory
-  rssamp show <slug>                      One blog and its recent posts
-  rssamp opml [> feeds.opml]              Export the whole directory as OPML
+${commands}
 
 Options
-  --api <url>     API base (default: ${DEFAULT_API}, or $RSSAMP_API)
-  --json          Raw JSON output, for piping into jq or an agent
-  --limit <n>     Cap results
-  --offset <n>    Skip results
-  -h, --help      This text
-  -v, --version   Print version
+${options}
 
 Examples
-  rssamp submit example.com
-  rssamp submit subscriptions.opml
+  rssamp topics homelab
+  rssamp urls --topic homelab > homelab.txt
+  rssamp opml --topic homelab > homelab.opml
   rssamp search "agentic coding" --json | jq '.posts[0]'
-  rssamp opml > feeds.opml
 `;
+}
+
+/** Kept as a constant for callers that had it before helpText() existed. */
+const HELP = helpText();
 
 /**
  * Parse argv into a command, positional args and flags.
@@ -101,6 +225,55 @@ export function truncate(text, max) {
 }
 
 /**
+ * The feed URLs in an OPML document.
+ *
+ * A regex rather than a parser because the only OPML this ever reads is the one
+ * the directory generates: every outline is on its own line and every attribute
+ * is escaped by the same function. Pointing it at arbitrary OPML would be a
+ * mistake, which is why nothing here accepts OPML from anywhere else.
+ *
+ * @param {string} opml
+ * @returns {string[]}
+ */
+export function feedUrlsFromOpml(opml) {
+  const urls = [];
+  for (const match of String(opml).matchAll(/xmlUrl="([^"]*)"/g)) {
+    const url = unescapeXml(match[1]);
+    if (url) urls.push(url);
+  }
+  return urls;
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function unescapeXml(value) {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    // Ampersand last: doing it first would turn "&amp;lt;" into "<".
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * The query string shared by `opml` and `urls`.
+ *
+ * @param {Record<string, string|boolean>} flags
+ * @returns {string}
+ */
+function exportQuery(flags) {
+  const params = new URLSearchParams();
+  if (typeof flags.topic === 'string') params.set('topic', flags.topic);
+  if (typeof flags.kind === 'string') params.set('kind', flags.kind);
+  if (flags.limit && flags.limit !== true) params.set('limit', String(flags.limit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
+/**
  * @param {string} url
  * @param {RequestInit} [init]
  * @returns {Promise<any>}
@@ -110,7 +283,7 @@ async function request(url, init) {
     ...init,
     headers: {
       accept: 'application/json',
-      'user-agent': 'rssamplifier-cli',
+      'user-agent': `rssamplifier-cli/${VERSION}`,
       ...(init?.headers ?? {}),
     },
   });
@@ -130,6 +303,18 @@ async function request(url, init) {
 }
 
 /**
+ * Fetch a non-JSON document — OPML, mostly.
+ *
+ * @param {string} url
+ * @returns {Promise<string>}
+ */
+async function requestText(url) {
+  const res = await fetch(url, { headers: { 'user-agent': `rssamplifier-cli/${VERSION}` } });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.text();
+}
+
+/**
  * Run the CLI.
  *
  * @param {string[]} argv
@@ -143,11 +328,11 @@ export async function run(argv, io = {}) {
   const { command, args, flags } = parseArgs(argv);
 
   if (flags.version) {
-    log('0.1.0');
+    log(VERSION);
     return 0;
   }
   if (flags.help || !command || command === 'help') {
-    log(HELP);
+    log(helpText());
     return command || flags.help ? 0 : 1;
   }
 
@@ -228,10 +413,100 @@ export async function run(argv, io = {}) {
         return 0;
       }
 
+      case 'topics': {
+        const url = new URL(`${base}/api/topics`);
+        const query = args.join(' ').trim();
+        if (query) url.searchParams.set('q', query);
+        if (flags.limit) url.searchParams.set('limit', String(flags.limit));
+        else if (query) url.searchParams.set('limit', '30');
+        if (flags.min) url.searchParams.set('min', String(flags.min));
+
+        const body = await request(url.toString());
+
+        if (asJson) {
+          log(JSON.stringify(body, null, 2));
+          return 0;
+        }
+
+        if (!body.topics?.length) {
+          log(query ? `No topics matching "${query}".` : 'No topics yet.');
+          // Nothing found is not an error — an agent asking about a subject the
+          // directory does not cover wants a clean empty answer, not a failure
+          // it has to distinguish from a broken request.
+          return 0;
+        }
+
+        log(
+          query
+            ? `${body.total} topics matching "${query}"\n`
+            : `${body.total} topics in the directory\n`,
+        );
+        for (const t of body.topics) {
+          const count = `${t.feedCount}`.padStart(6);
+          log(`${count} feeds  ${t.slug}`);
+        }
+        log(`\nNext: rssamp topic ${body.topics[0].slug}`);
+        return 0;
+      }
+
+      case 'topic': {
+        const keyword = args.join(' ').trim();
+        if (!keyword) {
+          err('topic: give a keyword — try `rssamp topics <query>` to find one');
+          return 1;
+        }
+
+        const url = new URL(`${base}/api/topics/${encodeURIComponent(keyword)}`);
+        if (flags.limit) url.searchParams.set('limit', String(flags.limit));
+        if (typeof flags.group === 'string') url.searchParams.set('group', flags.group);
+
+        const body = await request(url.toString());
+
+        if (asJson) {
+          log(JSON.stringify(body, null, 2));
+          return 0;
+        }
+
+        log(`${body.keyword} — ${body.total} feeds\n`);
+        for (const f of body.feeds ?? []) {
+          log(`  ${truncate(f.title, 52).padEnd(52)}  ${f.feedUrl ?? f.page}`);
+        }
+
+        const groups = (body.groups ?? []).map((g) => `${g.group} (${g.feedCount})`);
+        if (groups.length > 1) log(`\nGroups: ${groups.join(', ')}`);
+        log(`\nSubscribe: ${base}/opml?topic=${encodeURIComponent(body.slug)}`);
+        return 0;
+      }
+
+      case 'urls': {
+        const opml = await requestText(`${base}/opml${exportQuery(flags)}`);
+        const urls = feedUrlsFromOpml(opml);
+
+        if (asJson) {
+          log(JSON.stringify(urls, null, 2));
+          return 0;
+        }
+
+        for (const url of urls) log(url);
+        // An empty list here almost always means a topic that does not exist,
+        // and silently printing nothing reads as "this topic has no feeds".
+        if (urls.length === 0) {
+          err('no feeds matched — check the topic or kind');
+          return 1;
+        }
+        return 0;
+      }
+
+      case 'opml': {
+        log(await requestText(`${base}/opml${exportQuery(flags)}`));
+        return 0;
+      }
+
       case 'list': {
         const url = new URL(`${base}/api/feeds`);
         if (flags.limit) url.searchParams.set('limit', String(flags.limit));
         if (flags.offset) url.searchParams.set('offset', String(flags.offset));
+        if (typeof flags.kind === 'string') url.searchParams.set('kind', flags.kind);
 
         const body = await request(url.toString());
 
@@ -273,18 +548,9 @@ export async function run(argv, io = {}) {
         return 0;
       }
 
-      case 'opml': {
-        const res = await fetch(`${base}/opml`, {
-          headers: { 'user-agent': 'rssamplifier-cli' },
-        });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-        log(await res.text());
-        return 0;
-      }
-
       default:
         err(`Unknown command: ${command}\n`);
-        err(HELP);
+        err(helpText());
         return 1;
     }
   } catch (e) {
@@ -293,4 +559,12 @@ export async function run(argv, io = {}) {
   }
 }
 
-export { HELP, DEFAULT_API };
+export { HELP, DEFAULT_API, COMMAND_NAMES };
+
+// Run when executed directly, stay quiet when imported. This is what lets the
+// installer treat this file as the whole program while the tests still import
+// pieces of it. process.argv[1] is absent when node is fed a script on stdin,
+// hence the guard rather than a bare comparison.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await run(process.argv.slice(2));
+}
