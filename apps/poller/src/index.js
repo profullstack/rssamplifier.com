@@ -6,7 +6,7 @@ import {
   drainDiscoveryQueue,
   drainDiscoveryKeywords,
 } from '@rssamplifier/ingest';
-import { runDueSources } from '@rssamplifier/discover';
+import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 
 /**
  * Feed crawler daemon.
@@ -49,11 +49,16 @@ const topicsIntervalMs = (Number(env['TOPICS_REFRESH_SECONDS']) || 900) * 1000;
 // own per-source schedules — a hand-maintained list is re-read daily, not
 // hourly — so this only decides how often that schedule is consulted.
 const sourceIntervalMs = (Number(env['DISCOVERY_SOURCE_INTERVAL_SECONDS']) || 1800) * 1000;
+// How often the directory goes looking for more of what it already covers.
+// Daily, because each pass spends search credits against a shared account and
+// the supply of topics worth searching grows at the speed of the crawler.
+const topicSearchIntervalMs = (Number(env['DISCOVERY_TOPIC_INTERVAL_SECONDS']) || 86400) * 1000;
 
 let running = false;
 let stopping = false;
 let lastPurge = 0;
 let lastSources = 0;
+let lastTopicSearch = 0;
 let lastTopics = 0;
 
 /**
@@ -107,6 +112,19 @@ async function tick() {
       } catch (err) {
         // A source being unreachable must not stop the crawl loop.
         log('discovery-source-error', { message: String(err?.message ?? err) });
+      }
+    }
+
+    // The directory searching for more of what it already covers. A no-op
+    // without a search key, and a no-op once every shared topic has been
+    // searched once — both are ordinary states, so neither is logged.
+    if (Date.now() - lastTopicSearch > topicSearchIntervalMs) {
+      lastTopicSearch = Date.now();
+      try {
+        const topics = await discoverFromOwnTopics(db);
+        if (topics.ran) log('discovery-topics', { keywords: topics.keywords, runId: topics.runId });
+      } catch (err) {
+        log('discovery-topics-error', { message: String(err?.message ?? err) });
       }
     }
 

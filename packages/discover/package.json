@@ -7,12 +7,16 @@
   "exports": {
     ".": "./index.js"
   },
-  "files": ["index.js", "src"],
+  "files": [
+    "index.js",
+    "src"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@rssamplifier/db": "workspace:*",
-    "@rssamplifier/feed": "workspace:*"
+    "@rssamplifier/feed": "workspace:*",
+    "@rssamplifier/ingest": "workspace:*"
   }
 }
