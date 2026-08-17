@@ -10,6 +10,7 @@ import {
   trackFrom,
   wantsPlayer,
 } from '../src/lib/player.js';
+import { dockable } from '../src/lib/queue.js';
 
 /**
  * A request for a playlist, as one kind of client or another would make it.
@@ -214,10 +215,15 @@ test('a playlist row carries the handles its queue button needs', () => {
   assert.deepEqual(entry.lanes, ['listen', 'read']);
 });
 
-test('a row the dock cannot play is still a row you can keep', () => {
+test('a row the dock cannot drive is still a row you can keep', () => {
   // The point of the distinction: queueing and playing are different questions
-  // about a post, and reading dockability as "queueable" would leave every
+  // about a post, and reading drivability as "queueable" would leave every
   // YouTube entry on a playlist with no way to save it.
+  //
+  // Written when an embed had no dock payload at all. The dock carries one now
+  // — see dockCarries — so what this asserts is the part that did not change:
+  // the queue handles are there whatever the player can do with the row, and
+  // `dockable` is still the answer to what it can do.
   const entry = playlistEntry({
     item_id: 'it_10',
     guid: 'g3',
@@ -229,7 +235,7 @@ test('a row the dock cannot play is still a row you can keep', () => {
     feed_title: 'A Channel',
   });
 
-  assert.equal(entry.dock, null);
+  assert.equal(dockable(entry.dock.kind), false);
   assert.equal(entry.lane, 'watch');
   assert.equal(entry.itemId, 'it_10');
   assert.deepEqual(entry.lanes, ['watch', 'read']);
