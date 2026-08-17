@@ -503,6 +503,122 @@ export async function feedsForTopic(db, slug, opts = {}) {
 }
 
 /**
+ * How many of a topic's feeds a river is allowed to draw from.
+ *
+ * This is a latency budget, not a taste judgement, and it is the single number
+ * that decides whether a topic feed answers. Measured against production:
+ * `physics` carries 128 feeds and `ai` carries 5,426, and the honest query —
+ * every item from every feed on the topic, newest first — takes **274 seconds**
+ * on the large one. Capped to the 200 strongest feeds and bounded by a date it
+ * answers in about 100ms, on the same data, for topics of every size.
+ *
+ * The feeds that get cut are the weakest matches: a blog that mentioned the
+ * word twice, not one that is filed under it. Ordering is the same as the topic
+ * page's, so the river is drawn from the feeds at the top of that page.
+ */
+const TOPIC_RIVER_FEEDS = 200;
+
+/**
+ * How far back a topic river looks.
+ *
+ * A river is what a topic is publishing, so a window is the right shape and not
+ * only a cheap one — but it is also load-bearing for the query plan. Bounding
+ * `published_at` lets SQLite seek into `feed_items_feed_pub_idx` per feed
+ * instead of reading every item those feeds ever published and sorting the
+ * pile, which is the difference between 100ms and ten seconds.
+ *
+ * Two years rather than two months: the directory holds a great many blogs that
+ * post twice a year, and a topic that returned nothing because its writers are
+ * unhurried would read as broken.
+ */
+const TOPIC_RIVER_DAYS = 730;
+
+/**
+ * Recent posts from across a topic, newest first.
+ *
+ * This is the topic as a *river* — what the feeds filed under it have published
+ * — which is a different question from `feedsForTopic`, the directory listing of
+ * who those feeds are. The syndication endpoints are built on this one; the
+ * topic page is built on the other.
+ *
+ * Rows carry their publication (`feed_title`, `feed_slug`, `feed_url`) because
+ * every consumer needs it: RSS puts it in `<source>`, a playlist puts it in the
+ * entry title, and a reader shown sixty posts from a hundred blogs cannot tell
+ * who wrote what without it.
+ *
+ * @param {Client} db
+ * @param {string} slug
+ * @param {{ limit?: number, feedCap?: number, days?: number }} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function itemsForTopic(db, slug, opts = {}) {
+  const { limit = 50, feedCap = TOPIC_RIVER_FEEDS, days = TOPIC_RIVER_DAYS } = opts;
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+  const { rows } = await db.execute({
+    sql: `with picked as (
+            select k.feed_id from feed_keywords k
+            join feeds f on f.id = k.feed_id and f.status <> 'dead'
+            where k.slug = ?
+            order by case k.source when 'category' then 0 else 1 end, k.count desc
+            limit ?
+          )
+          select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
+                 i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds,
+                 f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
+          from feed_items i
+          join feeds f on f.id = i.feed_id
+          where i.feed_id in (select feed_id from picked)
+            and i.published_at >= ?
+          order by i.published_at desc
+          limit ?`,
+    args: [slug, feedCap, since, limit],
+  });
+  return rows;
+}
+
+/**
+ * The playable media a topic has, newest first.
+ *
+ * Separate from itemsForTopic rather than a filter on it, for one reason that
+ * only shows up in the playlist formats: an item parsed out of an `.m3u` or a
+ * radio `.pls` has **no published date at all** — the format has no field for
+ * one — so the river's date window, which is what makes it fast, excludes
+ * exactly the entries a playlist most wants. This orders `nulls last` and takes
+ * the date filter off, and pays for it by filtering on `audio_url` instead,
+ * which cuts the row count enough to stay inside a couple of seconds.
+ *
+ * @param {Client} db
+ * @param {string} slug
+ * @param {{ limit?: number, feedCap?: number }} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function mediaForTopic(db, slug, opts = {}) {
+  const { limit = 100, feedCap = TOPIC_RIVER_FEEDS } = opts;
+
+  const { rows } = await db.execute({
+    sql: `with picked as (
+            select k.feed_id from feed_keywords k
+            join feeds f on f.id = k.feed_id and f.status <> 'dead'
+            where k.slug = ?
+            order by case k.source when 'category' then 0 else 1 end, k.count desc
+            limit ?
+          )
+          select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
+                 i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds,
+                 f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
+          from feed_items i
+          join feeds f on f.id = i.feed_id
+          where i.feed_id in (select feed_id from picked)
+            and i.audio_url is not null
+          order by i.published_at desc nulls last, i.created_at desc
+          limit ?`,
+    args: [slug, feedCap, limit],
+  });
+  return rows;
+}
+
+/**
  * The topics index, from the rollup.
  *
  * @param {Client} db

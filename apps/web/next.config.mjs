@@ -10,6 +10,29 @@ const nextConfig = {
   // `next start` instead: a larger image, but one that actually starts.
   images: { remotePatterns: [{ protocol: 'https', hostname: '**' }] },
 
+  async rewrites() {
+    return [
+      // A topic, as a file extension on the topic's own URL:
+      // /topics/physics.rss, .atom, .json, .m3u, .pls — and .xml, because that
+      // is what half the web calls an RSS feed.
+      //
+      // A rewrite rather than a route of its own, because Next cannot put a
+      // page.jsx and a route.js in the same segment and /topics/[keyword] is
+      // already the page. The extension is stripped here and handed to the
+      // handler as a segment, so the reader sees the pretty URL and the
+      // handler sees a normal dynamic route.
+      //
+      // The extension list is duplicated from SYNDICATION_FORMATS in
+      // @rssamplifier/feed and cannot import it: next.config is evaluated
+      // before the workspace is resolvable. Adding a format means editing both,
+      // and the syndication test asserts the two lists agree.
+      {
+        source: '/topics/:slug.:format(rss|atom|json|xml|m3u|pls)',
+        destination: '/api/topics/:slug/feed/:format',
+      },
+    ];
+  },
+
   async redirects() {
     return [
       // www → apex, permanently, keeping the path and query.

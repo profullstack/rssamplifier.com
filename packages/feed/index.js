@@ -1,5 +1,16 @@
 export { slugify, isReserved, uniqueSlug } from './src/slug.js';
 export { parseOpml, buildOpml, opmlHead, opmlOutline, opmlFoot } from './src/opml.js';
+export {
+  SYNDICATION_FORMATS,
+  buildSyndication,
+  buildRss,
+  buildAtom,
+  buildJsonFeed,
+  buildM3u,
+  buildPls,
+  playable,
+  rfc822,
+} from './src/syndicate.js';
 export { parseFeed, summarize } from './src/parse.js';
 export { KIND_BLOG, KIND_PODCAST, KIND_MUSIC, KIND_VIDEO, KIND_LIVE } from './src/kinds.js';
 export {

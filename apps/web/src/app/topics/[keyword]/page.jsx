@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { q } from '@rssamplifier/db';
-import { topicSlug } from '@rssamplifier/feed';
+import { SYNDICATION_FORMATS, topicSlug } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { AD_TEXT, adPlan } from '../../../lib/ads.js';
@@ -11,6 +11,34 @@ import { pageNumber } from '../../CategoryIndex.jsx';
 export const dynamic = 'force-dynamic';
 
 const PAGE_SIZE = 60;
+
+/**
+ * The extensions this page is also available as, in the order they are offered.
+ *
+ * Ordered by how likely a visitor is to want one rather than alphabetically:
+ * the three feed formats first, then the two playlists, which only make sense
+ * on a topic that has media in it.
+ *
+ * `.xml` is a supported alias for `.rss` and is deliberately not listed — it is
+ * the same document under a second name, and offering both invites the question
+ * of how they differ.
+ */
+const OFFERED_FORMATS = ['rss', 'atom', 'json', 'm3u', 'pls'];
+
+/**
+ * What each extension is, for the link's title attribute.
+ *
+ * The links themselves are the bare extension: it is what the reader is going
+ * to type or paste, it is short enough to sit in one subtle row, and ".rss"
+ * needs no more explanation than that to the people who want it.
+ */
+const FORMAT_TITLES = {
+  rss: 'RSS 2.0 — recent posts on this topic',
+  atom: 'Atom 1.0 — recent posts on this topic',
+  json: 'JSON Feed 1.1 — recent posts on this topic',
+  m3u: 'M3U playlist — the playable media on this topic',
+  pls: 'PLS playlist — the playable media on this topic',
+};
 
 /**
  * Read the keyword out of the URL as a topic slug.
@@ -34,10 +62,24 @@ export async function generateMetadata({ params }) {
   const topic = await q.topicBySlug(db(), slugOf(keyword));
   if (!topic) return { title: 'Not found' };
 
+  const page = `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}`;
+
   return {
     title: topic.keyword,
     description: `${topic.feedCount} blogs and podcasts in the RSS Amplifier directory write about ${topic.keyword}.`,
-    alternates: { canonical: `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}` },
+    alternates: {
+      canonical: page,
+      // Autodiscovery, which is how a browser extension or a reader offers to
+      // subscribe from the page itself rather than making somebody find the
+      // link. Only the two XML formats go here: `types` renders
+      // `<link rel="alternate">`, and a reader that follows an unexpected type
+      // reports a broken feed.
+      types: {
+        'application/rss+xml': [{ url: `${page}.rss`, title: `${topic.keyword} — RSS` }],
+        'application/atom+xml': [{ url: `${page}.atom`, title: `${topic.keyword} — Atom` }],
+        'application/feed+json': [{ url: `${page}.json`, title: `${topic.keyword} — JSON Feed` }],
+      },
+    },
   };
 }
 
@@ -91,6 +133,27 @@ export default async function TopicPage({ params, searchParams }) {
         {topic.feedCount === 1
           ? 'One feed in the directory covers this.'
           : `${topic.feedCount} feeds in the directory cover this.`}
+      </p>
+
+      {/* This page, as something to subscribe to. Kept to the bare extensions
+          and set quietly under the heading: a reader who wants a feed knows
+          what ".rss" means and is scanning for exactly that, and everyone else
+          should be able to read past it without it competing with the list. */}
+      <p className="format-links">
+        <span>Subscribe:</span>
+        {OFFERED_FORMATS.map((ext) => (
+          <a
+            key={ext}
+            href={`/topics/${encodeURIComponent(topic.slug)}.${ext}`}
+            title={FORMAT_TITLES[ext]}
+            // The advisory type a reader uses to decide it can handle the link
+            // before following it. Without the charset: the attribute takes a
+            // MIME type, and the parameter belongs on the response header.
+            type={SYNDICATION_FORMATS.get(ext)?.type.split(';')[0]}
+          >
+            {`.${ext}`}
+          </a>
+        ))}
       </p>
 
       <Ad format={AD_TEXT} />
@@ -148,10 +211,14 @@ export default async function TopicPage({ params, searchParams }) {
         </nav>
       )}
 
+      {/* The feed links above are the posts; this one is the directory listing
+          — who covers the topic, rather than what they published. Two different
+          documents, so both are offered and both say which they are. */}
       <p className="hint">
         Machine-readable:{' '}
-        <a href={`/api/topics/${encodeURIComponent(topic.slug)}`}>JSON</a> ·{' '}
-        <a href="/topics">all topics</a>
+        <a href={`/api/topics/${encodeURIComponent(topic.slug)}`}>this list of feeds, as JSON</a> ·{' '}
+        <a href={`/topics/${encodeURIComponent(topic.slug)}.json`}>their recent posts, as JSON Feed</a>{' '}
+        · <a href="/topics">all topics</a>
       </p>
 
       <AdBanner />

@@ -368,6 +368,34 @@ button:disabled {
   }
 }
 
+/* The row of output formats under a topic heading: .rss .atom .json .m3u .pls.
+   Monospace because they are file extensions and read as such, and held at the
+   muted colour so the row sits under the heading without competing with it —
+   the people who want a feed are scanning for exactly this and will find it,
+   and everyone else reads straight past. The accent arrives on hover, which is
+   where it is useful. */
+.format-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: -1.4rem 0 1.8rem;
+}
+
+.format-links a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.format-links a:hover {
+  color: var(--accent);
+  border-bottom-color: currentColor;
+}
+
 /* ---------------------------------------------------------------- misc */
 
 .pill {
