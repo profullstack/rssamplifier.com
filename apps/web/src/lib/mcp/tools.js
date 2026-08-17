@@ -101,7 +101,7 @@ export const TOOLS = [
     name: 'list_feeds',
     title: 'List feeds',
     description:
-      'Page through the whole directory, newest first. Narrow to one category with kind: blog, podcast, music, video, comic, live or reel. The category is decided from the feed document on every crawl, never from what the submitter claimed.',
+      'Page through the whole directory, newest first. Narrow to one category with kind: blog, news, podcast, music, video, comic, live or reel. The category is decided from the feed document on every crawl, never from what the submitter claimed.',
     inputSchema: {
       type: 'object',
       properties: {

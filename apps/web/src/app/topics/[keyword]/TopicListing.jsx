@@ -3,9 +3,11 @@ import { SYNDICATION_FORMATS } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { AD_TEXT, adPlan } from '../../../lib/ads.js';
-import { groupsWithFeeds } from '../../../lib/topicGroups.js';
+import { PLAYABLE_KINDS, groupsWithFeeds } from '../../../lib/topicGroups.js';
+import { shareText } from '../../../lib/share.js';
 import Ad from '../../Ad.jsx';
 import AdBanner from '../../AdBanner.jsx';
+import Share from '../../Share.jsx';
 
 /** Feeds per page. Matches the category pages. */
 export const PAGE_SIZE = 60;
@@ -85,12 +87,29 @@ export default async function TopicListing({ topic, counts, group = null, page =
   const groups = groupsWithFeeds(counts);
   const what = group ? `the ${group.noun} on this topic` : 'this topic';
 
+  // Whether there is anything here to press play on. A sub-group says so
+  // outright; the whole topic is asked the same question of its counts, because
+  // a topic covered entirely by blogs has an `.m3u` that is legitimately empty
+  // and a "Play" link on it would lead to a transport with nothing in it.
+  const playlists = group
+    ? group.playlists
+    : [...PLAYABLE_KINDS].some((kind) => (counts[kind] ?? 0) > 0);
+
+  // Named once and used three times over: as the heading, as the title a share
+  // sheet shows, and inside the blurb that gets pasted.
+  const heading = group ? `${topic.keyword}: ${group.heading.toLowerCase()}` : topic.keyword;
+  const lede =
+    total === 1
+      ? `One ${group ? group.one : 'feed'} in the directory covers this.`
+      : `${total} ${group ? group.noun : 'feeds'} in the directory cover this.`;
+  const pageUrl = `${siteUrl()}${base}`;
+
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
     name: group ? `${topic.keyword} — ${group.heading}` : topic.keyword,
     about: { '@type': 'Thing', name: topic.keyword },
-    url: `${siteUrl()}${base}`,
+    url: pageUrl,
     hasPart: rows.slice(0, 20).map((f) => ({
       '@type': f.category === 'podcast' ? 'PodcastSeries' : 'Blog',
       name: f.title,
@@ -114,12 +133,8 @@ export default async function TopicListing({ topic, counts, group = null, page =
           <a href="/topics">Topic</a>
         )}
       </p>
-      <h1>{group ? `${topic.keyword}: ${group.heading.toLowerCase()}` : topic.keyword}</h1>
-      <p className="lede">
-        {total === 1
-          ? `One ${group ? group.one : 'feed'} in the directory covers this.`
-          : `${total} ${group ? group.noun : 'feeds'} in the directory cover this.`}
-      </p>
+      <h1>{heading}</h1>
+      <p className="lede">{lede}</p>
 
       {/* The topic's other categories. Shown on the sub-group pages too, so
           moving between them never costs a trip back through the topic — which
@@ -152,6 +167,15 @@ export default async function TopicListing({ topic, counts, group = null, page =
           what ".rss" means and is scanning for exactly that, and everyone else
           should be able to read past it without it competing with the list. */}
       <p className="format-links">
+        {/* Before the extensions, because it is the one on this row that most
+            readers want and the only one that works where they are standing. A
+            browser cannot play an `.m3u`, so the playlist links below are for
+            handing to a player app; this is the same queue, here. */}
+        {playlists && (
+          <a className="play-link" href={`${base}/play`}>
+            ▶ Play
+          </a>
+        )}
         <span>Subscribe:</span>
         {formatsFor(group).map((ext) => (
           <a
@@ -167,6 +191,18 @@ export default async function TopicListing({ topic, counts, group = null, page =
           </a>
         ))}
       </p>
+
+      {/* Sat with the subscribe links rather than up beside the heading: both
+          are ways of taking this page somewhere else, and one row of quiet
+          controls is better than two. */}
+      <div className="detail-actions topic">
+        <Share
+          url={pageUrl}
+          title={heading}
+          text={shareText({ title: heading, summary: lede, url: pageUrl })}
+          textLabel="Copy topic"
+        />
+      </div>
 
       <Ad format={AD_TEXT} />
 

@@ -1,4 +1,5 @@
 export { newToken, hashToken, safeEqual } from './src/tokens.js';
+export { newApiKey, apiKeyFromRequest, looksLikeApiKey } from './src/apikey.js';
 export {
   SESSION_COOKIE,
   startSession,

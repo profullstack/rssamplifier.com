@@ -53,12 +53,36 @@ const encoder = new TextEncoder();
 /**
  * Format one SSE frame.
  *
+ * `id` is the protocol's own cursor: the browser remembers the last id it saw
+ * and sends it back as `Last-Event-ID` when EventSource reconnects, so a stream
+ * that sets it resumes without the page having to track anything. Only digits
+ * are accepted — an id containing a newline would end the field early and
+ * corrupt the frame, and every id we issue is a row number.
+ *
  * @param {string} event
  * @param {unknown} data
+ * @param {number|string|null} [id]
  * @returns {Uint8Array}
  */
-export function frame(event, data) {
-  return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+export function frame(event, data, id = null) {
+  const cursor = id == null ? '' : String(id);
+  const prefix = /^\d+$/.test(cursor) ? `id: ${cursor}\n` : '';
+
+  return encoder.encode(`${prefix}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+/**
+ * Format one line of a plain-text stream.
+ *
+ * The same loop below serves `curl` as well as the browser: an SSE frame is
+ * unreadable in a terminal, and a log is the one thing people expect to be able
+ * to pipe into grep.
+ *
+ * @param {string} text
+ * @returns {Uint8Array}
+ */
+export function line(text) {
+  return encoder.encode(`${String(text).replace(/[\r\n]+/g, ' ')}\n`);
 }
 
 /**
@@ -77,16 +101,36 @@ export const SSE_HEADERS = {
 };
 
 /**
+ * The same, for a stream a terminal can read.
+ *
+ * `no-transform` matters more here than it does above: a proxy that gzips this
+ * is free to buffer a window's worth of it, and a log that arrives in lumps is
+ * not a live log.
+ */
+export const TEXT_STREAM_HEADERS = {
+  'content-type': 'text/plain; charset=utf-8',
+  'cache-control': 'no-cache, no-transform',
+  connection: 'keep-alive',
+  'x-accel-buffering': 'no',
+  'access-control-allow-origin': '*',
+};
+
+/**
  * Run a polling loop as an SSE response.
  *
  * `poll` is called every tick and returns the frames to send plus whether the
  * work is finished; returning `done` ends the stream after those frames, so the
  * last update always goes out before the close.
  *
+ * `headers` and `end` are what let the same loop serve a plain-text tail: the
+ * shape of a frame and of the closing line are the only things that differ
+ * between a browser's EventSource and somebody's `curl -N`.
+ *
  * @param {(first: boolean) => Promise<{ frames: Uint8Array[], done: boolean }>} poll
+ * @param {{ headers?: Record<string, string>, end?: (reason: object) => Uint8Array|null }} [opts]
  * @returns {Response}
  */
-export function stream(poll) {
+export function stream(poll, { headers = SSE_HEADERS, end = (reason) => frame('end', reason) } = {}) {
   let cancelled = false;
 
   const body = new ReadableStream({
@@ -107,13 +151,13 @@ export function stream(poll) {
           if (cancelled) break;
 
           if (done) {
-            controller.enqueue(frame('end', { reason: 'complete' }));
+            enqueue(controller, end({ reason: 'complete' }));
             break;
           }
 
           if (Date.now() > deadline) {
             // Not an error: the client reconnects from its cursor.
-            controller.enqueue(frame('end', { reason: 'reconnect' }));
+            enqueue(controller, end({ reason: 'reconnect' }));
             break;
           }
 
@@ -122,7 +166,7 @@ export function stream(poll) {
       } catch (err) {
         // A failed query should say so rather than look like a finished run.
         if (!cancelled) {
-          controller.enqueue(frame('end', { reason: 'error', message: String(err?.message ?? err) }));
+          enqueue(controller, end({ reason: 'error', message: String(err?.message ?? err) }));
         }
       } finally {
         try {
@@ -139,7 +183,17 @@ export function stream(poll) {
     },
   });
 
-  return new Response(body, { headers: SSE_HEADERS });
+  return new Response(body, { headers });
+}
+
+/**
+ * Send a chunk, unless the caller decided this stream has nothing to close with.
+ *
+ * @param {ReadableStreamDefaultController} controller
+ * @param {Uint8Array|null} chunk
+ */
+function enqueue(controller, chunk) {
+  if (chunk) controller.enqueue(chunk);
 }
 
 /**

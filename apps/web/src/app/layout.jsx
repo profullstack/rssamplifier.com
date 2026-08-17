@@ -1,6 +1,7 @@
 import './globals.css';
 
 import { siteUrl } from '../lib/db.js';
+import DockPlayer from './DockPlayer.jsx';
 import ServiceWorker from './ServiceWorker.jsx';
 import Script from "next/script";
 
@@ -40,12 +41,64 @@ export const viewport = {
 };
 
 /**
+ * Who the site is and what it is, once, for every page.
+ *
+ * The pages already describe *themselves* — a feed page carries Blog, the
+ * indexes carry CollectionPage — but nothing said what the site as a whole is
+ * or who publishes it, so an agent reading one page had no way to attribute it.
+ * These two nodes are stable across the site, so they belong in the layout
+ * rather than being restated per page; the per-page JSON-LD stays where it is
+ * and the @id here is what those pages can be understood to belong to.
+ *
+ * The SearchAction is the useful half: it tells an agent that /search?q= is the
+ * way in, instead of leaving it to crawl the indexes a page at a time.
+ */
+function siteJsonLd() {
+  const url = siteUrl();
+
+  return {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'Organization',
+        '@id': `${url}/#organization`,
+        name: 'Profullstack, Inc.',
+        url: 'https://profullstack.com',
+      },
+      {
+        '@type': 'WebSite',
+        '@id': `${url}/#website`,
+        name: 'RSS Amplifier',
+        description:
+          'An open, agent-friendly directory of independent blogs, podcasts, music and video feeds.',
+        url,
+        inLanguage: 'en',
+        publisher: { '@id': `${url}/#organization` },
+        potentialAction: {
+          '@type': 'SearchAction',
+          target: {
+            '@type': 'EntryPoint',
+            urlTemplate: `${url}/search?q={search_term_string}`,
+          },
+          'query-input': 'required name=search_term_string',
+        },
+      },
+    ],
+  };
+}
+
+/**
  * @param {{ children: React.ReactNode }} props
  */
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(siteJsonLd()) }}
+        />
+
         <a className="skip-link" href="#main">
           Skip to content
         </a>
@@ -60,6 +113,7 @@ export default function RootLayout({ children }) {
                   came to do, and everything after Search is a thing you do once
                   you already know the site. */}
               <a href="/blogs">Blogs</a>
+              <a href="/news">News</a>
               <a href="/podcasts">Podcasts</a>
               <a href="/music">Music</a>
               <a href="/videos">Videos</a>
@@ -84,6 +138,10 @@ export default function RootLayout({ children }) {
               {/* Like /account, unconditional: a signed-out visitor is sent to
                   sign in rather than being shown an empty shelf. */}
               <a href="/favorites">Favorites</a>
+              {/* Same argument as Favorites: unconditional, so the nav stays
+                  the same on every page and none of them has to read a cookie
+                  to draw it. */}
+              <a href="/queue">Queue</a>
               <a href="/account">Account</a>
             </nav>
           </div>
@@ -100,7 +158,8 @@ export default function RootLayout({ children }) {
               account needed. Built by <a href="https://profullstack.com">Profullstack, Inc.</a>
             </p>
             <p>
-              Browse: <a href="/blogs">Blogs</a> · <a href="/podcasts">Podcasts</a> ·{' '}
+              Browse: <a href="/blogs">Blogs</a> · <a href="/news">News</a> ·{' '}
+              <a href="/podcasts">Podcasts</a> ·{' '}
               <a href="/music">Music</a> · <a href="/videos">Videos</a> ·{' '}
               <a href="/comics">Comics</a> · <a href="/lives">Live</a> ·{' '}
               <a href="/reels">Reels</a> · <a href="/topics">Topics</a>
@@ -110,8 +169,20 @@ export default function RootLayout({ children }) {
               <a href="/opml">OPML</a> · <a href="/llms.txt">llms.txt</a> ·{' '}
               <a href="/crawlstats">Crawler status</a>
             </p>
+            <p>
+              <a href="/about">About</a> · <a href="/privacy">Privacy</a> ·{' '}
+              <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
+                Source on GitHub
+              </a>
+            </p>
           </div>
         </footer>
+
+        {/* The player, in the layout rather than in a page, because that is the
+            difference between one that follows you around the directory and one
+            that dies with the post you started it from. It renders nothing at
+            all until a page hands it something to play. */}
+        <DockPlayer />
 
         <ServiceWorker />
 

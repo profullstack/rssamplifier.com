@@ -783,6 +783,261 @@ body:has(.episode-player:not(.is-inline)) {
   padding-bottom: 9rem;
 }
 
+/* ------------------------------------------------------ the roaming player */
+
+/* The dock is the page player one level up: same fixed strip, same class, so
+   everything above about docking, video corners and the toolbar's offset
+   applies to it unchanged. What it adds is what a player that outlives the post
+   needs — a way back to what is playing, and the queue's controls. */
+.dock-player .episode-meta strong a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.dock-player .episode-meta strong a:hover {
+  color: var(--accent);
+}
+
+.dock-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.dock-controls button,
+.dock-controls a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dock-controls button:hover:not(:disabled),
+.dock-controls a:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.dock-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* One player, not two. While the roaming one is running, the page's own docked
+   transport stands down — it is the same file, and a reader who hits play on
+   the wrong one gets the episode twice, half a second apart.
+
+   Keyed on an attribute the player sets from script, so a reader with
+   JavaScript off is left with exactly the player they have always had rather
+   than losing it to a component that never ran. */
+html[data-dock] .episode-player.page-docked {
+  display: none;
+}
+
+/* ...and the room reserved for it goes back when it does. A hidden element
+   still matches :has(), so without these two the toolbar would float above a
+   gap on any post whose player has stood down and whose dock is empty — which
+   is precisely the state a reader is in the moment they close the dock. */
+html[data-dock] body:has(.episode-player.page-docked):not(:has(.dock-player)) .toolbar {
+  bottom: calc(1.5rem + env(safe-area-inset-bottom));
+}
+
+html[data-dock] body:has(.episode-player.page-docked):not(:has(.dock-player)) {
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+}
+
+/* An inline player whose media has been handed to the dock, and the offer to
+   hand it over — both gone once it is gone, since the post is now playing at
+   the foot of the window. */
+.episode-player[data-handed-over],
+.episode-player[data-handed-over] + .dock-handoff {
+  display: none;
+}
+
+.dock-handoff {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 1.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.dock-handoff:hover {
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------- queue */
+
+/* The controls that put a post in a lane. Same pill as the reaction buttons in
+   the reader — they sit next to them, and they are the same kind of thing. */
+.queue-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.queue-button,
+.entry-actions .play-button,
+.queue-controls button,
+.queue-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.queue-button:hover,
+.entry-actions .play-button:hover,
+.queue-controls button:hover:not(:disabled),
+.queue-play:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.queue-button.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.queue-controls button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Under each post in a blog's archive: play it, or line it up. Quiet enough
+   that fifty of them down a page do not read as fifty calls to action. */
+.entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.lane-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0 0 1.5rem;
+}
+
+.lane-tabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.9rem;
+  text-decoration: none;
+  color: var(--muted);
+}
+
+.lane-tabs a.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.lane-tabs .count {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.queue-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The position, shown rather than left implicit in the layout: order is the
+   entire point of a queue. */
+.queue-index {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  padding-top: 0.25rem;
+  min-width: 1.4rem;
+}
+
+.queue-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.queue-title {
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.queue-title:hover {
+  color: var(--accent);
+}
+
+.queue-body .meta {
+  margin: 0.2rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.queue-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.queue-clear {
+  margin-top: 1.2rem;
+}
+
+@media (max-width: 40rem) {
+  /* On a phone the controls go under the post rather than beside it: four pills
+     and a title in one row leaves the title two words wide. */
+  .queue-entry {
+    flex-wrap: wrap;
+  }
+
+  .queue-controls {
+    width: 100%;
+    padding-left: 2.2rem;
+  }
+}
+
 /* ----------------------------------------------------------------- topics */
 
 /* The topics index. A wrapped row of links rather than a list: three hundred
@@ -1249,6 +1504,12 @@ select {
   border-color: var(--muted);
 }
 
+/* The buttons are disabled for the moment a vote is in flight, which is short
+   enough that fading them would read as a flicker. Only the cursor says so. */
+.post-actions button:disabled {
+  cursor: default;
+}
+
 /* A cast vote and a saved like both read as "on": same treatment, so the state
    is legible at a glance without reading the label. */
 .post-actions button.on {
@@ -1283,6 +1544,146 @@ select {
 .post-actions .hint {
   margin: 0;
   font-size: 0.82rem;
+}
+
+/* ---------------------------------------------------------------- share
+ *
+ * A <details> wearing the same pill as everything else in the reactions row,
+ * with the panel floated out of the flow so opening it never pushes the post
+ * down the page. On a narrow screen it stops floating and simply takes the
+ * width it needs — a 20rem panel anchored to a button near the right edge is
+ * how you end up with a field nobody can read.
+ */
+
+.share {
+  position: relative;
+  display: inline-block;
+}
+
+.share > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  line-height: 1;
+  list-style: none;
+  user-select: none;
+}
+
+/* Safari draws its own triangle unless told twice. */
+.share > summary::-webkit-details-marker {
+  display: none;
+}
+
+.share > summary:hover,
+.share[open] > summary {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.share-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  width: 20rem;
+  max-width: min(20rem, calc(100vw - 2.5rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 12%);
+}
+
+.share-url {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+}
+
+.share-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.share-buttons button {
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.share-buttons button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Holds its line whether or not it is saying anything, so confirming a copy
+   does not make the panel grow under the cursor. */
+.share-said {
+  margin: 0;
+  min-height: 1.1rem;
+  font-size: 0.78rem;
+  line-height: 1.1;
+  color: var(--accent);
+}
+
+/* Follow and share on one line, on a feed page and a topic page alike. */
+.detail-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 0 1.75rem;
+}
+
+.detail-actions .follow-form {
+  margin: 0;
+}
+
+/* The topic page's row follows the subscribe links, which carry their own
+   generous bottom margin already. */
+.detail-actions.topic {
+  margin: -1.2rem 0 1.6rem;
+}
+
+@media (max-width: 34rem) {
+  /* Anchored to the left of a button that may itself sit near the right edge,
+     a floating panel runs off screen. Below this width it stops floating: the
+     open control claims the whole row — both rows it appears in wrap — and the
+     panel spans the column, where nothing can push it out of view. */
+  .share[open] {
+    display: block;
+    width: 100%;
+  }
+
+  .share-panel {
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin-top: 0.5rem;
+  }
 }
 
 /* ------------------------------------------------------------ languages */
@@ -1521,6 +1922,108 @@ select {
   max-width: 28rem;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/*
+ * The live log.
+ *
+ * Built on .live-log, which the two queue pages already use, with the
+ * differences a crawler log needs: it is twice as tall because it never ends,
+ * and a failure is coloured rather than muted — on a submission's log a failed
+ * feed is one line of a finished story, and here it is the reason somebody
+ * opened the page.
+ */
+
+.crawl-log-panel {
+  margin: 1.2rem 0 2rem;
+}
+
+.crawl-log-head {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.crawl-log-state {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.crawl-log-state.is-live {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.crawl-log-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.crawl-log-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+.crawl-log-button {
+  /* Pushed to the end of the row: it is the only control that changes what the
+   * stream does, and it should not sit among the labels. */
+  margin-left: auto;
+  font: inherit;
+  color: inherit;
+  padding: 0.2rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.crawl-log-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.crawl-log-empty {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 0.9rem 0 0;
+}
+
+/*
+ * Written as .live-log.crawl-log, not .crawl-log, and it has to stay that way:
+ * the .live-log rules these override are further down this file, so at equal
+ * specificity they win on source order. The first version of this block was
+ * ignored outright, which showed up as failures rendering plain and successful
+ * crawls rendering coloured — precisely backwards.
+ */
+
+.live-log.crawl-log {
+  max-height: 30rem;
+}
+
+.live-log.crawl-log .is-bad span {
+  color: var(--accent);
+}
+
+.live-log.crawl-log .is-good span {
+  /* The overwhelming majority of lines. Left as body text: colouring the normal
+   * case is the same as colouring nothing, and it would drown the failures. */
+  color: inherit;
+}
+
+.live-log.crawl-log .crawl-log-ms {
+  color: var(--muted);
+  font-style: normal;
 }
 
 /* ---------------------------------------------------------------- charts */
@@ -2045,4 +2548,160 @@ select {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.78rem;
+}
+
+/* ---------------------------------------------------------------- playlist player */
+
+/* The one link on the formats row that works in the browser reading it. Given
+   the accent and a little weight so it does not read as a sixth extension. */
+.format-links .play-link {
+  color: var(--accent);
+  font-weight: 600;
+  border-bottom-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.playlist-player {
+  margin: 0 0 2.4rem;
+}
+
+/* The transport follows the reader down the queue. Fifty episodes is a long
+   list, and a player that scrolls off the top leaves them with no way to pause
+   the thing they are hearing without going back up to find it. */
+.playlist-now,
+.playlist-audio {
+  position: sticky;
+  z-index: 20;
+  background: var(--bg);
+}
+
+.playlist-now {
+  top: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding: 0.7rem 0 0.4rem;
+}
+
+.playlist-now strong {
+  font-family: var(--serif);
+  font-size: 1rem;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.playlist-now .show {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.playlist-now .show a {
+  color: inherit;
+}
+
+.playlist-audio {
+  top: 3.2rem;
+  display: block;
+  width: 100%;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.playlist-tracks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: track;
+}
+
+.playlist-tracks li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.playlist-tracks li.is-current {
+  background: var(--accent-soft);
+}
+
+/* The row is a link to the file, so the whole of it is the target rather than
+   the title alone — including the empty space to the right of a short one. */
+.playlist-pick {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.2rem 0.7rem;
+  padding: 0.6rem 0.4rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* On the row rather than on the link inside it, so hovering matches the band
+   the current track is drawn with. Highlighting only the link left the "Notes"
+   column outside it and the row looking half-lit. */
+.playlist-tracks li:hover {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.playlist-num {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: right;
+}
+
+.playlist-tracks li.is-current .playlist-num {
+  color: var(--accent);
+}
+
+.playlist-title {
+  font-family: var(--serif);
+  font-size: 0.95rem;
+}
+
+.playlist-show {
+  grid-column: 2;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.playlist-time {
+  grid-row: 1;
+  grid-column: 3;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.playlist-notes {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0 0.6rem;
+}
+
+.playlist-notes:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 34rem) {
+  .playlist-pick {
+    grid-template-columns: 1.6rem minmax(0, 1fr) auto;
+    gap: 0.15rem 0.5rem;
+  }
+
+  .playlist-audio {
+    top: 4.4rem;
+  }
 }

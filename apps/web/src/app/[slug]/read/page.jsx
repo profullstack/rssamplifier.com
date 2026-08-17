@@ -1,19 +1,23 @@
 import { notFound } from 'next/navigation';
-import { q, reactions, translations } from '@rssamplifier/db';
+import { q, queue, reactions, translations } from '@rssamplifier/db';
 import { sanitizeHtml } from '@rssamplifier/feed';
 import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/translate';
 
-import { db } from '../../../lib/db.js';
+import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { popularLanguages } from '../../../lib/languages.js';
 import { isEpisode, isPicture, isWatchable, playableMedia } from '../../../lib/media.js';
 import { readerView } from '../../../lib/reader.js';
+import { lanesOffered, trackFor } from '../../../lib/queue.js';
+import { shareText } from '../../../lib/share.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
 import EpisodePlayer from '../../EpisodePlayer.jsx';
 import LanguageBar from '../../LanguageBar.jsx';
+import PlayButton from '../../PlayButton.jsx';
 import PostActions from '../../PostActions.jsx';
+import QueueButton from '../../QueueButton.jsx';
 import ReaderToolbar from '../../ReaderToolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -129,12 +133,24 @@ export default async function ReaderPage({ params, searchParams }) {
   const user = await currentUser();
   const userId = user ? String(user.id) : null;
 
-  const [score, mine, thread, languages] = await Promise.all([
+  const [score, mine, thread, languages, queued] = await Promise.all([
     reactions.scoreFor(client, itemId),
     userId ? reactions.reactionFor(client, userId, itemId) : { liked: false, vote: 0 },
     reactions.commentsFor(client, itemId),
     popularLanguages(),
+    // Which lanes already hold this post, so the button says "Queued" rather
+    // than offering to add it a second time. Asked only when there is somebody
+    // to ask about.
+    userId ? queue.lanesForItems(client, userId, [itemId]) : {},
   ]);
+
+  /** @type {('read'|'listen'|'watch')[]} */
+  const inQueue = queued[itemId] ?? [];
+
+  // What the roaming player can carry away from this page. Null for a YouTube
+  // or PeerTube post — those play in their own iframe, which cannot be started,
+  // seeked or resumed from outside it.
+  const track = trackFor(post, { slug, feedTitle: String(feed.title) });
 
   // The URL wins over the stored preference, so a link someone was sent lands
   // in the language it names; with nothing in the URL the account's own choice
@@ -244,6 +260,26 @@ export default async function ReaderPage({ params, searchParams }) {
   const body = extracted?.html ?? article;
   const pictures = String(feed.kind ?? '') === 'comic' || isPicture(body);
 
+  // Where this post lives, absolute, because a shared link is pasted somewhere
+  // that has no idea what host it came from.
+  //
+  // The language rides along only when the URL asked for it. `wanted` also
+  // carries the account's own reading preference, and a reader who set theirs
+  // to Swedish should not be sending everyone they know a Swedish link.
+  const asIn = normalizeLang(lang);
+  const shareHref =
+    `${siteUrl()}/${slug}/read?p=${encodeURIComponent(String(post.guid))}` +
+    (asIn ? `&lang=${encodeURIComponent(asIn)}` : '');
+
+  // The gist, in whatever language the page is being read in, falling back to
+  // the body when the feed shipped no summary — a post with nothing but a
+  // headline still shares fine, it just shares as a headline and a link.
+  const blurb = shareText({
+    title,
+    summary: summary ?? article ?? extracted?.html ?? '',
+    url: shareHref,
+  });
+
   return (
     <div className="reader">
       <div className="reader-head">
@@ -289,6 +325,23 @@ export default async function ReaderPage({ params, searchParams }) {
           liked={mine.liked}
           vote={mine.vote}
           signedIn={Boolean(userId)}
+          shareUrl={shareHref}
+          shareTitle={title}
+          shareText={blurb}
+        />
+
+        {/* Save it for later, in the lane it belongs to. A media post offers
+            both its own lane and the read lane, because show notes and the
+            episode are two different intentions about the same post. Back to
+            this exact view afterwards, translation and all. */}
+        <QueueButton
+          slug={slug}
+          guid={String(post.guid)}
+          lanes={lanesOffered(post)}
+          queued={inQueue}
+          next={`/${slug}/read?p=${encodeURIComponent(String(post.guid))}${
+            wanted ? `&lang=${encodeURIComponent(wanted)}` : ''
+          }`}
         />
       </div>
 
@@ -318,6 +371,22 @@ export default async function ReaderPage({ params, searchParams }) {
             seconds={post.audio_seconds ? Number(post.audio_seconds) : null}
             feedTitle={String(feed.title)}
           />
+
+          {/* Take it with you. The video is the post here, so it plays in the
+              column rather than in the corner — but a reader who wants to keep
+              browsing should not have to choose between the video and the rest
+              of the directory. Only for a file we hold a player for: an embed
+              cannot be moved, paused or resumed from outside its own frame. */}
+          {track && (
+            <PlayButton
+              track={track}
+              lane="watch"
+              href={postUrl ?? `/${slug}`}
+              className="dock-handoff"
+              label="Keep playing while I browse"
+              resume
+            />
+          )}
 
           {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
 
@@ -473,6 +542,20 @@ export default async function ReaderPage({ params, searchParams }) {
                 feedTitle={String(feed.title)}
               />
 
+              {/* The same offer the video branch makes, for the same reason:
+                  this player is in the page because the post is the audio, and
+                  wanting to keep listening is not a reason to stay put. */}
+              {track && (
+                <PlayButton
+                  track={track}
+                  lane="listen"
+                  href={postUrl ?? `/${slug}`}
+                  className="dock-handoff"
+                  label="Keep playing while I browse"
+                  resume
+                />
+              )}
+
               {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
 
               {/* Show notes, or an article the audio came attached to.
@@ -575,6 +658,10 @@ export default async function ReaderPage({ params, searchParams }) {
           title={title}
           seconds={post.audio_seconds ? Number(post.audio_seconds) : null}
           feedTitle={String(feed.title)}
+          // Handed to the roaming player, which takes it over whenever it is
+          // idle and hides this one. With JavaScript off nothing takes it and
+          // this is the docked player the reader has always had.
+          offer={track}
         />
       )}
 

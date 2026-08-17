@@ -1,12 +1,18 @@
 import { notFound } from 'next/navigation';
-import { q, accounts } from '@rssamplifier/db';
+import { q, accounts, queue } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { adPlan } from '../../lib/ads.js';
+import { lanesOffered, trackFor } from '../../lib/queue.js';
+import { shareText } from '../../lib/share.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
+import PlayButton from '../PlayButton.jsx';
+import QueueButton from '../QueueButton.jsx';
+import Share from '../Share.jsx';
 import Toolbar from '../Toolbar.jsx';
+import { CATEGORIES } from '../CategoryIndex.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +26,9 @@ export async function generateMetadata({ params }) {
 
   return {
     title: String(feed.title),
-    description: feed.description ? String(feed.description) : `Latest posts from ${feed.title}.`,
+    description: feed.description
+      ? String(feed.description)
+      : `Latest ${(CATEGORIES[String(feed.category)] ?? CATEGORIES.blog).item} from ${feed.title}.`,
     alternates: { canonical: `${siteUrl()}/${slug}` },
   };
 }
@@ -45,9 +53,18 @@ export default async function FeedPage({ params }) {
   ]);
 
   // Only asked once we know there is someone to ask about.
-  const following = user
-    ? await accounts.isFollowing(client, String(user.id), String(feed.id))
-    : false;
+  const [following, queued] = user
+    ? await Promise.all([
+        accounts.isFollowing(client, String(user.id), String(feed.id)),
+        // One statement for the whole page. Asking per post would be fifty
+        // round trips to decide what fifty buttons say.
+        queue.lanesForItems(
+          client,
+          String(user.id),
+          posts.map((p) => String(p.id)),
+        ),
+      ])
+    : [false, /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({})];
 
   // A blog page is the longest read on the site — up to fifty summaries — so it
   // is the one place a rectangle earns its keep, sat in the flow where somebody
@@ -58,20 +75,38 @@ export default async function FeedPage({ params }) {
 
   const podcast = feed.category === 'podcast';
 
+  // What this feed's own category calls itself, so the page agrees with the
+  // directory it was filed in. Falls back to Blogs for a category this build
+  // has never heard of — a row written by a newer deploy, say — because an
+  // eyebrow linking nowhere is worse than one that is merely unspecific.
+  const category = CATEGORIES[String(feed.category)] ?? CATEGORIES.blog;
+
+  // This page, absolute, and deliberately ours rather than the blog's own site:
+  // sharing from here should land somebody on the archive, the follow button
+  // and the reader, which is the part they cannot get to from the blog.
+  const pageUrl = `${siteUrl()}/${slug}`;
+
   // A podcast described as a Blog is wrong in the one place a machine reads
   // this page, so the type and the property that carries the entries both
   // follow the feed's kind. The entries themselves are the same rows either
   // way — what differs is what they are called.
+  // An article is not a blog post and a newsroom is not a Blog, so news gets
+  // its own pair too. Everything else keeps the blog shape, which is what the
+  // overwhelming majority of the directory is.
+  const news = feed.category === 'news';
+  const entryType = podcast ? 'PodcastEpisode' : news ? 'NewsArticle' : 'BlogPosting';
+  const entryProp = podcast || news ? 'hasPart' : 'blogPost';
+
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': podcast ? 'PodcastSeries' : 'Blog',
+    '@type': podcast ? 'PodcastSeries' : news ? 'NewsMediaOrganization' : 'Blog',
     name: feed.title,
     description: feed.description ?? undefined,
     url: feed.site_url ?? `${siteUrl()}/${feed.slug}`,
     webFeed: String(feed.feed_url),
     keywords: topics.length ? topics.map((t) => String(t.keyword)).join(', ') : undefined,
-    [podcast ? 'hasPart' : 'blogPost']: posts.slice(0, 20).map((p) => ({
-      '@type': podcast ? 'PodcastEpisode' : 'BlogPosting',
+    [entryProp]: posts.slice(0, 20).map((p) => ({
+      '@type': entryType,
       [podcast ? 'name' : 'headline']: p.title,
       url: p.url ?? undefined,
       datePublished: p.published_at ?? undefined,
@@ -91,7 +126,7 @@ export default async function FeedPage({ params }) {
           page that says which category it was filed under, so it may as well be
           the way back to the rest of that category. */}
       <p className="eyebrow">
-        <a href={podcast ? '/podcasts' : '/blogs'}>{podcast ? 'Podcast' : 'Blog'}</a>
+        <a href={category.path}>{category.one[0].toUpperCase() + category.one.slice(1)}</a>
       </p>
       <h1>{feed.title}</h1>
       {feed.description && <p className="lede">{feed.description}</p>}
@@ -106,23 +141,38 @@ export default async function FeedPage({ params }) {
           RSS feed ↗
         </a>
         <span>
-          {feed.item_count} {podcast ? 'episodes' : 'posts'}
+          {feed.item_count} {category.item}
         </span>
       </div>
 
-      {/* A plain form, so following works with JavaScript off. A signed-out
-          reader is not shown a dead button: the endpoint sends them to sign in
-          and back here afterwards. */}
-      <form className="follow-form" action="/api/follows" method="post">
-        <input type="hidden" name="slug" value={String(feed.slug)} />
-        <input type="hidden" name="action" value={following ? 'unfollow' : 'follow'} />
-        {/* Following is the quiet state: it is a thing already done, and
-            styling it as loudly as the call to action would make every followed
-            blog shout. */}
-        <button type="submit" className={following ? 'secondary-button' : ''}>
-          {following ? 'Following ✓' : 'Follow'}
-        </button>
-      </form>
+      {/* Follow and share, side by side, because they are the two things to do
+          with a feed you have just found and only one of them needs an
+          account. */}
+      <div className="detail-actions">
+        {/* A plain form, so following works with JavaScript off. A signed-out
+            reader is not shown a dead button: the endpoint sends them to sign in
+            and back here afterwards. */}
+        <form className="follow-form" action="/api/follows" method="post">
+          <input type="hidden" name="slug" value={String(feed.slug)} />
+          <input type="hidden" name="action" value={following ? 'unfollow' : 'follow'} />
+          {/* Following is the quiet state: it is a thing already done, and
+              styling it as loudly as the call to action would make every followed
+              blog shout. */}
+          <button type="submit" className={following ? 'secondary-button' : ''}>
+            {following ? 'Following ✓' : 'Follow'}
+          </button>
+        </form>
+
+        <Share
+          url={pageUrl}
+          title={String(feed.title)}
+          text={shareText({ title: feed.title, summary: feed.description, url: pageUrl })}
+          // Named by the feed's own category rather than by the podcast/not
+          // split the button arrived with: this branch is the one that made
+          // "blog" wrong for a newsroom, and the table already holds the word.
+          textLabel={`Copy ${category.one}`}
+        />
+      </div>
 
       {/* What this feed writes about, and the way across to everyone else who
           writes about it. Sat under the follow button rather than up in the
@@ -156,15 +206,20 @@ export default async function FeedPage({ params }) {
         </p>
       )}
 
-      <h2>{podcast ? 'Latest episodes' : 'Latest posts'}</h2>
+      <h2>Latest {category.item}</h2>
 
       {posts.length === 0 ? (
         <p className="empty">
-          {podcast ? 'No episodes' : 'No posts'} collected yet — the crawler will pick this up
-          shortly.
+          No {category.item} collected yet — the crawler will pick this up shortly.
         </p>
       ) : (
         posts.flatMap((p, i) => {
+          // What the roaming player could carry, if anything: null for a post
+          // with no enclosure, and for a YouTube or PeerTube one, which plays
+          // only inside its own frame on its own page.
+          const track = trackFor(p, { slug, feedTitle: String(feed.title) });
+          const lanes = lanesOffered(p);
+
           const entry = (
             <article className="entry" key={String(p.guid)}>
               <h3>
@@ -182,6 +237,30 @@ export default async function FeedPage({ params }) {
                 {formatDate(p.published_at)}
                 {p.author ? ` · ${p.author}` : ''}
               </time>
+
+              {/* Queue it from the archive, rather than having to open every
+                  episode to line one up. The play control is here for the same
+                  reason: on a podcast's page, "play this one now" is the thing
+                  a visitor came to do, and it now starts in a player that
+                  survives them wandering off to the next blog. */}
+              <div className="entry-actions">
+                {track && (
+                  <PlayButton
+                    track={track}
+                    lane={lanes[0]}
+                    href={`/${slug}/read?p=${encodeURIComponent(String(p.guid))}`}
+                  />
+                )}
+
+                <QueueButton
+                  slug={slug}
+                  guid={String(p.guid)}
+                  lanes={lanes}
+                  queued={queued[String(p.id)] ?? []}
+                  next={`/${slug}`}
+                  compact
+                />
+              </div>
             </article>
           );
 

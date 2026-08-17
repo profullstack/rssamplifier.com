@@ -21,5 +21,6 @@ export async function GET(req, { params }) {
     format,
     group,
     limit: new URL(req.url).searchParams.get('limit'),
+    req,
   });
 }
