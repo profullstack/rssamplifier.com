@@ -523,6 +523,49 @@ button:disabled {
   border-radius: 6px;
 }
 
+/* A post whose post is a picture — a comic strip, a photograph — where the
+   measure above is not a help but the whole problem.
+
+   42rem is 672px, chosen for a line of prose, and it was being applied to
+   pictures that are the thing the reader came for. A Wilde Life strip is
+   published at 700px and a Sister Claire page at 750, so both arrived shrunk;
+   a comic drawn wider than that arrives shrunk further. Nothing about a line
+   length has anything to say about how big a drawing should be.
+
+   So a picture is shown at the size it was drawn, and the only thing allowed
+   to shrink it is the window. It breaks out of the measure the prose keeps —
+   the caption under a strip is still prose and still wants 42rem — and stays
+   centred on the page while doing it, because `left: 50%` moves it to the
+   centre of a measure that is itself centred, and the translate then hangs it
+   evenly either side.
+
+   The gutter in the cap is doing real work: `100vw` counts a scrollbar it
+   cannot see, so a picture capped at exactly 100vw is one that puts a
+   horizontal scrollbar under every wide comic on a desktop.
+
+   The `max()` keeps a phone honest. There the window is narrower than the
+   column, so the cap alone would make every picture 16px narrower than the
+   paragraph under it — the measure is the floor, the window is the ceiling,
+   and on a phone they cross over.
+
+   No `margin-inline: auto` here, however much it looks like it belongs. Auto
+   margins centre a block image inside the measure, and the translate then
+   centres the already-centred result again — which is invisible on anything
+   wider than the column and pushes a small picture to the right-hand margin.
+
+   Never scaled *up*. Where the only picture we have is a feed's thumbnail,
+   131px of drawing stretched across a monitor is worse than a small picture,
+   and the honest fix for those is upstream — see `orphan` in feed/extract. */
+.reader-article.pictures img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: max(100%, calc(100vw - 2.5rem));
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 .reader-article a {
   color: var(--accent);
 }
