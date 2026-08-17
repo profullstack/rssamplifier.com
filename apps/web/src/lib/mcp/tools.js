@@ -4,7 +4,7 @@ import { submitCatalogue, hashIp } from '@rssamplifier/ingest';
 
 import { db, siteUrl } from '../db.js';
 import { readerView } from '../reader.js';
-import { RAW_INPUT_LIMIT } from '../submitted.js';
+import { clampRawInput } from '../submitted.js';
 import { clip, plainText } from './text.js';
 
 /**
@@ -533,7 +533,7 @@ export const TOOLS = [
       await q.insertSubmission(client, {
         id: submissionId,
         kind: urls.length > 1 ? 'list' : 'url',
-        raw_input: urls.join('\n').slice(0, RAW_INPUT_LIMIT),
+        raw_input: clampRawInput(urls.join('\n')),
         ip_hash: ipHash,
         user_agent: ctx.header('user-agent')?.slice(0, 300) ?? null,
       });
