@@ -34,6 +34,9 @@ importers:
       '@rssamplifier/ingest':
         specifier: workspace:*
         version: link:../../packages/ingest
+      '@rssamplifier/notify':
+        specifier: workspace:*
+        version: link:../../packages/notify
 
   apps/web:
     dependencies:
@@ -55,6 +58,9 @@ importers:
       '@rssamplifier/mail':
         specifier: workspace:*
         version: link:../../packages/mail
+      '@rssamplifier/notify':
+        specifier: workspace:*
+        version: link:../../packages/notify
       '@rssamplifier/search':
         specifier: workspace:*
         version: link:../../packages/search
@@ -138,6 +144,15 @@ importers:
         version: link:../search
 
   packages/mail: {}
+
+  packages/notify:
+    dependencies:
+      '@rssamplifier/db':
+        specifier: workspace:*
+        version: link:../db
+      '@rssamplifier/mail':
+        specifier: workspace:*
+        version: link:../mail
 
   packages/search: {}
 

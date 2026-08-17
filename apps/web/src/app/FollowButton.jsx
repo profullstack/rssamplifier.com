@@ -32,6 +32,7 @@ import { useEffect, useState } from 'react';
  *   next: string,
  *   label: string,
  *   followingLabel?: string,
+ *   onChange?: (following: boolean) => void,
  * }} props
  */
 export default function FollowButton({
@@ -43,6 +44,7 @@ export default function FollowButton({
   next,
   label,
   followingLabel = 'Following ✓',
+  onChange,
 }) {
   const [on, setOn] = useState(following);
   const [busy, setBusy] = useState(false);
@@ -51,6 +53,20 @@ export default function FollowButton({
   // a client-side navigation to another topic reuses this component, and the
   // previous topic's state would otherwise outlive the previous topic.
   useEffect(() => setOn(following), [endpoint, slug, segment, following]);
+
+  /**
+   * Set the button's state and tell whoever is listening.
+   *
+   * The listener is the alerts bell, which only exists while this is on: a
+   * reader who has just followed something should be offered the bell there and
+   * then, without the page reload that this component exists to avoid.
+   *
+   * @param {boolean} value
+   */
+  function apply(value) {
+    setOn(value);
+    onChange?.(value);
+  }
 
   /** @param {React.FormEvent<HTMLFormElement>} event */
   async function onSubmit(event) {
@@ -67,7 +83,7 @@ export default function FollowButton({
     // that the button reacts to the finger, and the response reconciles a
     // moment later with whatever the server actually recorded.
     const wanted = !on;
-    setOn(wanted);
+    apply(wanted);
 
     try {
       const res = await fetch(endpoint, {
@@ -94,14 +110,14 @@ export default function FollowButton({
       const body = await res.json();
       if (typeof body?.following !== 'boolean') throw new Error('follows: unexpected body');
 
-      setOn(body.following);
+      apply(body.following);
       setBusy(false);
     } catch {
       // Put the guess back and let the browser do it the old way, so a click is
       // never silently lost. The reload replaces this component, so `busy`
       // stays set on purpose — a second click during the navigation would post
       // the same action twice.
-      setOn(following);
+      apply(following);
       form.submit();
     }
   }

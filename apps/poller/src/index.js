@@ -1,4 +1,4 @@
-import { connect, migrate, q, accounts } from '@rssamplifier/db';
+import { connect, migrate, q, accounts, alerts } from '@rssamplifier/db';
 import {
   crawlDue,
   notifyFinishedSubmissions,
@@ -8,6 +8,7 @@ import {
 } from '@rssamplifier/ingest';
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 import { findFeedCard } from '@rssamplifier/feed';
+import { deliverAlerts, vapidConfig } from '@rssamplifier/notify';
 
 import { createRecorder, toEntry } from './log.js';
 
@@ -75,6 +76,16 @@ const clusterBatch = Number(env['CLUSTER_BACKFILL_BATCH']) || 500;
 // eight hours, and the walk is a bounded indexed read either way.
 const clusterIntervalMs = (Number(env['CLUSTER_BACKFILL_SECONDS']) || 10) * 1000;
 
+// Accounts considered per alert pass, and how often a pass runs. Its own timer
+// for the same reason the card and cluster passes have one: a tick spends
+// minutes inside the crawl, and work queued behind that only happens if the
+// process lives long enough to reach it — which, on a day of deploys, it does
+// not. Two minutes rather than one because an alert is not a race: the point is
+// to be told within a few minutes, and halving the delay would double the
+// number of digests a busy topic produces.
+const alertUsers = Number(env['ALERT_BATCH_SIZE']) || 25;
+const alertIntervalMs = (Number(env['ALERT_INTERVAL_SECONDS']) || 120) * 1000;
+
 // Whether the daemon's log is also written to the database, where /crawlstats
 // can stream it. On by default; an operator debugging against a production
 // database from a laptop can turn it off so their own runs stay out of the
@@ -103,6 +114,10 @@ let backfilling = false;
 // The same guard for the card pass, which makes outbound requests and so must
 // never be allowed to stack.
 let carding = false;
+// And for the alert pass, where stacking would be worse than wasteful: two
+// overlapping passes read the same watermark and would send the same digest
+// twice.
+let alerting = false;
 let lastPurge = 0;
 let lastSources = 0;
 let lastTopicSearch = 0;
@@ -245,6 +260,11 @@ async function tick() {
       // that would grow by six figures a week if nobody swept it.
       const lines = await q.pruneCrawlLog(db);
       if (lines) log('purged-log', { rows: lines });
+
+      // What has already been alerted about. A working set, not a history —
+      // nothing consults a row past the re-alert window.
+      const told = await alerts.pruneAlertSent(db);
+      if (told) log('purged-alerts', { rows: told });
     }
   } catch (err) {
     log('crawl-error', { message: String(err?.message ?? err) });
@@ -369,14 +389,54 @@ async function cardTick() {
   }
 }
 
+/**
+ * Tell people about the posts they asked to be told about.
+ *
+ * The crawl above is what makes this possible and also what makes it need its
+ * own timer: a pass runs against the rows the crawl has just written, and
+ * anything scheduled *after* a crawl on this process only happens when the crawl
+ * finishes early enough — which on a busy tick it does not.
+ *
+ * Never allowed to overlap itself. Two passes reading the same watermark would
+ * each decide the same posts were new, and the second one's digest would be a
+ * duplicate that nothing downstream could take back.
+ */
+async function alertTick() {
+  if (stopping || alerting) return;
+  alerting = true;
+
+  try {
+    const result = await deliverAlerts(db, { users: alertUsers });
+    // Only when something happened. The steady state is a pass that examines a
+    // handful of accounts and finds nothing, and a line every two minutes
+    // saying so is not a log.
+    if (result.items || result.failed) log('alerts', result);
+  } catch (err) {
+    log('alert-error', { message: String(err?.message ?? err) });
+  } finally {
+    alerting = false;
+  }
+}
+
 const timer = setInterval(tick, intervalMs);
 const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
 const cardTimer = setInterval(cardTick, cardIntervalMs);
+const alertTimer = setInterval(alertTick, alertIntervalMs);
 void tick();
 void backfillTick();
 void cardTick();
+void alertTick();
 
-log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency, discoveryBatch });
+log('started', {
+  intervalSeconds: intervalMs / 1000,
+  batchSize,
+  concurrency,
+  discoveryBatch,
+  // Said out loud on boot, because a deployment missing the VAPID pair looks
+  // exactly like one where nobody has switched browser alerts on — and the two
+  // are a config change apart.
+  push: Boolean(vapidConfig()),
+});
 
 /**
  * Shut down cleanly so Railway's SIGTERM does not sever an in-flight crawl.
@@ -388,6 +448,7 @@ function shutdown(signal) {
   clearInterval(timer);
   clearInterval(backfillTimer);
   clearInterval(cardTimer);
+  clearInterval(alertTimer);
 
   // Recorded before the buffer is closed, so the live log's last line is the
   // daemon saying it stopped rather than the log simply going quiet — which is
