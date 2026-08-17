@@ -1,6 +1,7 @@
 import { AD_TEXT } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
 import Toolbar from '../Toolbar.jsx';
+import Uploader from './Uploader.jsx';
 
 export const metadata = {
   title: 'Submit a blog',
@@ -28,51 +29,53 @@ export default async function SubmitPage({ searchParams }) {
         list, no fee.
       </p>
 
-      {params.error && (
+      {params.error === 'large' ? (
         <p className="notice">
-          We could not find a feed at that address. Check the URL, or paste the feed or playlist
-          link directly.
+          That file is too big to send in one piece. The uploader below reads it in your browser and
+          sends the feeds a few thousand at a time instead, which has no size limit worth the name —
+          but it needs JavaScript. With JavaScript off, split the file, or post the feeds to{' '}
+          <code>/api/submit</code> yourself.
         </p>
+      ) : (
+        params.error && (
+          <p className="notice">
+            We could not find a feed at that address. Check the URL, or paste the feed or playlist
+            link directly.
+          </p>
+        )
       )}
 
-      <form className="submit-box" action="/api/submit" method="post">
-        <p className="eyebrow">One per line</p>
-        <textarea
-          name="input"
-          rows={5}
-          defaultValue={shared}
-          placeholder={'example.com\nanotherblog.net/feed.xml\nnetlabel.example/album.m3u'}
-          aria-label="URLs to submit"
-          required
-        />
-        <div className="submit-actions">
-          <button type="submit">Add to the directory</button>
-        </div>
-      </form>
-
-      <form className="submit-box" action="/api/submit" method="post" encType="multipart/form-data">
-        <p className="eyebrow">Or upload an OPML file</p>
-        <input type="file" name="opml" accept=".opml,.xml,text/xml" aria-label="OPML file" />
-        <p className="hint">
-          Any size. The first 100 are added while you wait and the rest are queued for the crawler,
-          so a catalogue of tens of thousands is fine — you will get a status page to watch.
-        </p>
-        <input
-          type="email"
-          name="email"
-          placeholder="you@example.com — optional, we will email you when it finishes"
-          aria-label="Email me when the import finishes"
-        />
-        <div className="submit-actions">
-          <button type="submit">Import subscriptions</button>
-        </div>
-      </form>
+      {/*
+       * Both forms live in the client component now, and they are still plain
+       * forms: same action, same method, same behaviour with JavaScript off.
+       * What it adds is the reading and batching that make a very large file
+       * importable at all — see Uploader for why that cannot be done at the
+       * server end.
+       */}
+      <Uploader shared={shared} />
 
       <h2>For agents</h2>
       <p>Same endpoint, JSON in and JSON out:</p>
       <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/submit \\
   -H 'content-type: application/json' \\
   -d '{"urls":["example.com","another.blog"]}'`}</pre>
+
+      <p>
+        A catalogue too large to post in one request goes in the same way the uploader sends it —
+        open a submission, add batches of feeds to it, then close it:
+      </p>
+      <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/submit/begin \\
+  -H 'content-type: application/json' \\
+  -d '{"kind":"opml","sample":"<opml>…"}'
+# → {"submissionId":"…","maxEntriesPerBatch":5000}
+
+curl -X POST https://rssamplifier.com/api/submit/batch \\
+  -H 'content-type: application/json' \\
+  -d '{"submissionId":"…","offset":0,"entries":[{"url":"example.com/feed.xml"}]}'
+
+curl -X POST https://rssamplifier.com/api/submit/finish \\
+  -H 'content-type: application/json' \\
+  -d '{"submissionId":"…"}'`}</pre>
 
       {/*
        * The only ad on the funnel, and it is below everything: both forms, the

@@ -11,6 +11,23 @@ export const maxDuration = 300;
 const RATE_LIMIT = 20;
 
 /**
+ * The largest file this endpoint will read in one piece.
+ *
+ * It reads the upload into a string and then parses it into a document tree, so
+ * its memory cost is several times the size of the file — a 117 MB catalogue is
+ * hundreds of thousands of nodes held at once, in a web process that is also
+ * serving every other visitor. The browser gives up on the upload long before
+ * that finishes, so the work is not merely expensive but wasted, and the only
+ * thing it reliably achieves is taking the site down for everyone else.
+ *
+ * Anything larger belongs on /submit, which reads the file in the browser and
+ * sends the feeds in batches — no request in that flow is ever more than a few
+ * hundred kilobytes. Ten megabytes leaves the whole Kagi small-web catalogue
+ * (7.4 MB, 47,000 feeds) inside the direct path.
+ */
+const INLINE_UPLOAD_LIMIT = Number(process.env['SUBMIT_INLINE_BYTES'] ?? 10_000_000) || 10_000_000;
+
+/**
  * Split a paste into candidate URLs.
  *
  * People separate them with newlines, commas or spaces depending on where they
@@ -43,6 +60,16 @@ export async function POST(req) {
     req.headers.get('x-real-ip') ||
     null;
   const ipHash = hashIp(ip, process.env['IP_HASH_SALT']);
+
+  // Checked against the declared length before the body is read, as well as
+  // against the file itself afterwards. Reading a 117 MB multipart body costs
+  // the memory whether or not we then refuse it, and the header is the only
+  // chance to refuse it for free. The slack covers the multipart envelope and
+  // the other fields, which are a few hundred bytes at most.
+  const declared = Number(req.headers.get('content-length') ?? 0);
+  if (Number.isFinite(declared) && declared > INLINE_UPLOAD_LIMIT + 65_536) {
+    return tooLarge(req, declared);
+  }
 
   if (ipHash && (await q.submissionCount(client, ipHash)) >= RATE_LIMIT) {
     return json({ ok: false, error: 'rate-limited', retryAfterSeconds: 3600 }, 429);
@@ -79,6 +106,7 @@ export async function POST(req) {
       email = normalizeEmail(form.get('email'));
 
       if (file && typeof file !== 'string' && file.size > 0) {
+        if (file.size > INLINE_UPLOAD_LIMIT) return tooLarge(req, file.size);
         kind = 'opml';
         raw = await file.text();
         opml = raw;
@@ -161,6 +189,36 @@ export async function POST(req) {
     submissionId,
     statusUrl,
   });
+}
+
+/**
+ * Refuse an upload this endpoint cannot read in one piece.
+ *
+ * A browser is sent back to the form, because the answer is not "your file is
+ * wrong" but "use the uploader on that page" — which is what the form does by
+ * itself when JavaScript is on, so anyone who lands here has it off and needs
+ * telling in words. An agent gets the size it exceeded and the endpoints that
+ * take a file of that size instead.
+ *
+ * @param {Request} req
+ * @param {number} bytes
+ * @returns {Response}
+ */
+function tooLarge(req, bytes) {
+  if ((req.headers.get('accept') ?? '').includes('text/html')) {
+    return new Response(null, { status: 303, headers: { location: '/submit?error=large' } });
+  }
+
+  return json(
+    {
+      ok: false,
+      error: 'file-too-large',
+      bytes,
+      maxBytes: INLINE_UPLOAD_LIMIT,
+      use: ['/api/submit/begin', '/api/submit/batch', '/api/submit/finish'],
+    },
+    413,
+  );
 }
 
 /**
