@@ -22,15 +22,57 @@ export const metadata = {
     statusBarStyle: 'default',
   },
   icons: {
-    // Two sizes rather than one: a browser tab picks the 192 and downscales it,
-    // while an install prompt and the task switcher want the 512.
+    // Pre-cut at every size that gets asked for, rather than one big file the
+    // client downscales. A tab is 16 or 32 physical pixels: handed the 512 it
+    // renders the mark as mud, and handed the 1254px source artwork it spends
+    // 450kB of the first paint's budget on a 16px square. The install prompt and
+    // the task switcher are the ones that actually want the large end.
     icon: [
-      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/icon.png', sizes: '512x512', type: 'image/png' },
+      { url: '/icons/favicon-16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/icons/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/icons/icon-48x48.png', sizes: '48x48', type: 'image/png' },
+      { url: '/icons/icon-128x128.png', sizes: '128x128', type: 'image/png' },
+      { url: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-256x256.png', sizes: '256x256', type: 'image/png' },
+      { url: '/icons/icon-384x384.png', sizes: '384x384', type: 'image/png' },
+      { url: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png' },
     ],
-    // Opaque and pre-sized, because iOS composites a home-screen icon on white
-    // and rounds the corners itself — a transparent PNG comes out ringed.
-    apple: [{ url: '/apple-icon.png', sizes: '180x180', type: 'image/png' }],
+    // The .ico stays listed *and* sits at the site root, because the two are
+    // different requests: this link serves a browser that reads the markup, and
+    // the root copy serves everything that asks for /favicon.ico without ever
+    // having parsed a page — feed readers, link unfurlers, an old bookmark bar.
+    shortcut: [{ url: '/favicon.ico', type: 'image/x-icon' }],
+    // All nine are recut from /apple-icon.png rather than from the favicon
+    // artwork, because a home-screen icon is a different drawing of the same
+    // mark. iOS composites it on its own ground and rounds the corners itself,
+    // so it wants what that file already is — opaque on #fbfaf8, and inset far
+    // enough that the rounding does not clip the megaphone. The favicon cuts
+    // above are transparent and edge-to-edge, which is right for a 16px tab and
+    // wrong here. The small end is not dead weight either: an iPhone old enough
+    // to ask for the 57 takes the *first* apple-touch-icon it can use rather
+    // than the best fit, which is why this list runs largest to smallest.
+    apple: [
+      { url: '/icons/apple-touch-icon-180x180.png', sizes: '180x180', type: 'image/png' },
+      { url: '/icons/apple-touch-icon-152x152.png', sizes: '152x152', type: 'image/png' },
+      { url: '/icons/apple-touch-icon-144x144.png', sizes: '144x144', type: 'image/png' },
+      { url: '/icons/apple-touch-icon-120x120.png', sizes: '120x120', type: 'image/png' },
+      { url: '/icons/apple-touch-icon-114x114.png', sizes: '114x114', type: 'image/png' },
+      { url: '/icons/apple-touch-icon-76x76.png', sizes: '76x76', type: 'image/png' },
+      { url: '/icons/apple-touch-icon-72x72.png', sizes: '72x72', type: 'image/png' },
+      { url: '/icons/apple-touch-icon-60x60.png', sizes: '60x60', type: 'image/png' },
+      { url: '/icons/apple-touch-icon-57x57.png', sizes: '57x57', type: 'image/png' },
+    ],
+  },
+  // The tags Next has no field for. Chromium reads the unprefixed
+  // mobile-web-app-capable and warns about the apple- one that `appleWebApp`
+  // above emits, so both are wanted rather than either; the msapplication trio
+  // is what a pinned tile on Windows reads, and TileColor is repeated here
+  // because the tile is drawn before browserconfig.xml has been fetched.
+  other: {
+    'mobile-web-app-capable': 'yes',
+    'msapplication-TileColor': '#fbfaf8',
+    'msapplication-TileImage': '/icons/apple-touch-icon-144x144.png',
+    'msapplication-config': '/browserconfig.xml',
   },
   openGraph: {
     type: 'website',
