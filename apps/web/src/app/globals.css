@@ -1500,6 +1500,14 @@ select {
   }
 }
 
+/* What the run is waiting on, sat between the bar and the log it will fill. */
+.live-busy {
+  margin: 0.75rem 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
 .live-log {
   list-style: none;
   margin: 0.9rem 0 0;
