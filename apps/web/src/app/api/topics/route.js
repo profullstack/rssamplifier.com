@@ -18,6 +18,10 @@ export const dynamic = 'force-dynamic';
  * to page through the whole rollup — which made "what does this directory have
  * about homelabs" an expensive question to ask from outside.
  *
+ * The term is slugged before it is matched, the same way a keyword in a URL is,
+ * so `?q=quantum physics` and `?q=quantum-physics` are one search. Nobody
+ * should have to learn the slugging rules to ask a question.
+ *
  * @param {Request} req
  */
 export async function GET(req) {

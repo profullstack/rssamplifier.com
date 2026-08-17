@@ -608,14 +608,15 @@ test('topic search ranks matches, and a topic export is the feeds on that topic'
   const dbT = connect({ url: `file:${join(dirT, 'search.db')}` });
   await migrate(dbT);
 
-  // Four subjects that between them cover every tier of the ranking, plus one
-  // whose slug contains a LIKE metacharacter.
+  // Four subjects that between them cover every tier of the ranking, plus two
+  // that are only reachable by typing a phrase.
   const subjects = [
     { slug: 'lab', feeds: 2 },
     { slug: 'homelab', feeds: 5 },
     { slug: 'homelabbing', feeds: 4 },
     { slug: 'myhomelab', feeds: 9 },
-    { slug: '100_days', feeds: 3 },
+    { slug: '100-days', feeds: 3 },
+    { slug: 'quantum-physics', feeds: 5 },
   ];
 
   for (const subject of subjects) {
@@ -644,12 +645,28 @@ test('topic search ranks matches, and a topic export is the feeds on that topic'
   assert.equal((await q.listTopics(dbT, { query: 'lab' })).length, 4);
   assert.equal(await q.countTopics(dbT, 2, 'homelab'), 3, 'the count follows the same filter');
 
-  // '_' is LIKE's single-character wildcard. Unescaped, this search would also
-  // match '100 days', '100-days' and anything else of that shape.
+  // The index is a table of slugs, so the term is slugged before it is matched:
+  // nobody has to know the slugging rules to search for a two-word subject.
+  for (const spelling of ['quantum physics', 'Quantum Physics', 'quantum-physics', 'quantum  physics']) {
+    assert.deepEqual(
+      (await q.listTopics(dbT, { query: spelling })).map((t) => String(t.slug)),
+      ['quantum-physics'],
+      `"${spelling}" finds the topic`,
+    );
+    assert.equal(await q.countTopics(dbT, 2, spelling), 1, `"${spelling}" counts the same`);
+  }
+
+  // Slugging is the same normalisation the topic pages do, so a plural finds
+  // the singular topic the directory merged it into.
   assert.deepEqual(
-    (await q.listTopics(dbT, { query: '100_days' })).map((t) => String(t.slug)),
-    ['100_days'],
+    (await q.listTopics(dbT, { query: '100 days' })).map((t) => String(t.slug)),
+    ['100-days'],
   );
+
+  // '%' and '_' are LIKE's wildcards. Slugging strips them from any real term,
+  // but a term that is nothing else keeps its raw form — and must still be
+  // escaped, or a search for '%' would answer with the whole index.
+  assert.equal((await q.listTopics(dbT, { query: '%' })).length, 0);
 
   // An empty query is "no search", not "search for nothing".
   assert.equal((await q.listTopics(dbT, { query: '   ' })).length, subjects.length);

@@ -1,4 +1,4 @@
-import { clusterKey, dedupeItems } from '@rssamplifier/feed';
+import { clusterKey, dedupeItems, topicSlug } from '@rssamplifier/feed';
 
 import { newId, nowIso } from './client.js';
 
@@ -815,6 +815,29 @@ function likeTerm(term) {
 }
 
 /**
+ * A search term as the index stores it.
+ *
+ * The topics index is a table of slugs, so a search for "quantum physics"
+ * matched nothing while "quantum-physics" matched — which asked the caller to
+ * know the slugging rules before they could ask a question. Running the term
+ * through the same function that minted the slugs makes the two spellings one
+ * search, and it is the same normalisation every single-topic route already
+ * does to the keyword in its URL.
+ *
+ * A term that slugs to nothing — punctuation only — keeps its raw form rather
+ * than becoming the empty string, so it searches and finds nothing instead of
+ * silently turning into "list everything".
+ *
+ * @param {string|null} query
+ * @returns {string}
+ */
+function searchSlug(query) {
+  const raw = typeof query === 'string' ? query.trim().toLowerCase() : '';
+  if (!raw) return '';
+  return topicSlug(raw) || raw;
+}
+
+/**
  * The topics index, from the rollup, optionally searched.
  *
  * `query` is ranked rather than filtered: exact slug first, then slugs that
@@ -830,7 +853,7 @@ function likeTerm(term) {
  */
 export async function listTopics(db, opts = {}) {
   const { limit = 200, offset = 0, minFeeds = 2, query = null } = opts;
-  const term = typeof query === 'string' ? query.trim().toLowerCase() : '';
+  const term = searchSlug(query);
 
   if (!term) {
     const { rows } = await db.execute({
@@ -864,7 +887,7 @@ export async function listTopics(db, opts = {}) {
  * @returns {Promise<number>}
  */
 export async function countTopics(db, minFeeds = 2, query = null) {
-  const term = typeof query === 'string' ? query.trim().toLowerCase() : '';
+  const term = searchSlug(query);
 
   if (!term) {
     const { rows } = await db.execute({
