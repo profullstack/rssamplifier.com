@@ -8,6 +8,7 @@ import { PLAYABLE_KINDS, groupsWithFeeds } from '../../../lib/topicGroups.js';
 import { shareText } from '../../../lib/share.js';
 import Ad from '../../Ad.jsx';
 import AdBanner from '../../AdBanner.jsx';
+import FollowButton from '../../FollowButton.jsx';
 import Share from '../../Share.jsx';
 
 /** Feeds per page. Matches the category pages. */
@@ -210,21 +211,19 @@ export default async function TopicListing({ topic, counts, group = null, page =
         {/* Following a subject, not a publication. The extensions above hand this
             page to a reader app; this hands it to /following, which is the same
             river merged with everything else this account follows — and the only
-            one of the two that survives adding a second topic. A plain form, so
-            it works with JavaScript off. */}
-        <form className="follow-form" action="/api/follows/topics" method="post">
-          <input type="hidden" name="slug" value={topic.slug} />
-          {/* Present only on a sub-group, because '' is what the endpoint reads
-              as "the whole topic" and a hidden field carrying it says the same
-              thing less clearly. */}
-          {group && <input type="hidden" name="segment" value={group.segment} />}
-          <input type="hidden" name="action" value={following ? 'unfollow' : 'follow'} />
-          {/* Following is the quiet state: a thing already done should not shout
-              as loudly as the invitation to do it. */}
-          <button type="submit" className={following ? 'secondary-button' : ''}>
-            {following ? 'Following ✓' : 'Follow this topic'}
-          </button>
-        </form>
+            one of the two that survives adding a second topic. Still a plain
+            form underneath, so it works with JavaScript off; with JavaScript it
+            flips in place rather than reloading a page of sixty feeds to change
+            two words on one button. */}
+        <FollowButton
+          endpoint="/api/follows/topics"
+          slug={topic.slug}
+          segment={group?.segment ?? ''}
+          following={following}
+          signedIn={Boolean(user)}
+          next={base}
+          label="Follow this topic"
+        />
 
         <Share
           url={pageUrl}
