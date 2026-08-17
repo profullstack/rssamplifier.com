@@ -1,0 +1,236 @@
+import { q } from '@rssamplifier/db';
+import { SYNDICATION_FORMATS } from '@rssamplifier/feed';
+
+import { db, siteUrl } from '../../../lib/db.js';
+import { AD_TEXT, adPlan } from '../../../lib/ads.js';
+import { groupsWithFeeds } from '../../../lib/topicGroups.js';
+import Ad from '../../Ad.jsx';
+import AdBanner from '../../AdBanner.jsx';
+
+/** Feeds per page. Matches the category pages. */
+export const PAGE_SIZE = 60;
+
+/**
+ * The formats offered on a listing, in the order a visitor is likely to want one.
+ *
+ * The three feed formats first, then the two playlists — which are only offered
+ * where the group's entries are files a player can queue. `.xml` is a supported
+ * alias for `.rss` and is deliberately absent: it is the same document under a
+ * second name, and offering both invites the question of how they differ.
+ *
+ * @param {{ playlists: boolean }|null} group
+ * @returns {string[]}
+ */
+function formatsFor(group) {
+  // The whole topic keeps all five: it contains whatever it contains, and a
+  // topic with a single podcast in it still has a playlist worth offering.
+  if (!group) return ['rss', 'atom', 'json', 'm3u', 'pls'];
+  return group.playlists ? ['rss', 'atom', 'json', 'm3u', 'pls'] : ['rss', 'atom', 'json'];
+}
+
+/**
+ * What each extension is, for the link's title attribute.
+ *
+ * @param {string} ext
+ * @param {string} what the noun for what this listing holds
+ * @returns {string}
+ */
+function formatTitle(ext, what) {
+  const names = {
+    rss: 'RSS 2.0',
+    atom: 'Atom 1.0',
+    json: 'JSON Feed 1.1',
+    m3u: 'M3U playlist',
+    pls: 'PLS playlist',
+  };
+
+  return ext === 'm3u' || ext === 'pls'
+    ? `${names[ext]} — the playable media from ${what}`
+    : `${names[ext]} — recent posts from ${what}`;
+}
+
+/**
+ * One topic, or one category of it, as a page of feeds.
+ *
+ * The whole topic and a sub-group of it are the same page over a different
+ * filter — the same relationship /blogs has to the directory index — so they
+ * share this and differ only in what is passed in. Two copies would drift the
+ * moment one of them grew a feature, and the sub-groups exist precisely because
+ * there are now eight of them per topic.
+ *
+ * @param {{
+ *   topic: { slug: string, keyword: string, feedCount: number },
+ *   counts: Record<string, number>,
+ *   group?: import('../../../lib/topicGroups.js').TOPIC_GROUPS[number]|null,
+ *   page?: number,
+ * }} props
+ */
+export default async function TopicListing({ topic, counts, group = null, page = 1 }) {
+  const client = db();
+  const slug = encodeURIComponent(topic.slug);
+
+  const base = group ? `/topics/${slug}/${group.segment}` : `/topics/${slug}`;
+  const total = group
+    ? group.kinds.reduce((sum, kind) => sum + (counts[kind] ?? 0), 0)
+    : topic.feedCount;
+
+  const rows = await q.feedsForTopic(client, topic.slug, {
+    limit: PAGE_SIZE,
+    offset: (page - 1) * PAGE_SIZE,
+    kinds: group?.kinds ?? null,
+  });
+
+  const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const ads = adPlan(rows.length, { first: 11, every: 24, max: 2 });
+  const groups = groupsWithFeeds(counts);
+  const what = group ? `the ${group.noun} on this topic` : 'this topic';
+
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: group ? `${topic.keyword} — ${group.heading}` : topic.keyword,
+    about: { '@type': 'Thing', name: topic.keyword },
+    url: `${siteUrl()}${base}`,
+    hasPart: rows.slice(0, 20).map((f) => ({
+      '@type': f.category === 'podcast' ? 'PodcastSeries' : 'Blog',
+      name: f.title,
+      url: `${siteUrl()}/${f.slug}`,
+    })),
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+
+      <p className="eyebrow">
+        {group ? (
+          <>
+            <a href="/topics">Topic</a> · <a href={`/topics/${slug}`}>{topic.keyword}</a>
+          </>
+        ) : (
+          <a href="/topics">Topic</a>
+        )}
+      </p>
+      <h1>{group ? `${topic.keyword}: ${group.heading.toLowerCase()}` : topic.keyword}</h1>
+      <p className="lede">
+        {total === 1
+          ? `One ${group ? group.one : 'feed'} in the directory covers this.`
+          : `${total} ${group ? group.noun : 'feeds'} in the directory cover this.`}
+      </p>
+
+      {/* The topic's other categories. Shown on the sub-group pages too, so
+          moving between them never costs a trip back through the topic — which
+          is the whole reason for cutting the topic up. Only the groups that
+          have something in them are listed. */}
+      {groups.length > 1 && (
+        <nav className="topic-groups" aria-label="This topic by category">
+          <a
+            href={`/topics/${slug}`}
+            aria-current={group ? undefined : 'page'}
+            className={group ? undefined : 'is-current'}
+          >
+            All <span>{topic.feedCount}</span>
+          </a>
+          {groups.map(({ group: entry, count }) => (
+            <a
+              key={entry.segment}
+              href={`/topics/${slug}/${entry.segment}`}
+              aria-current={entry.segment === group?.segment ? 'page' : undefined}
+              className={entry.segment === group?.segment ? 'is-current' : undefined}
+            >
+              {entry.heading} <span>{count}</span>
+            </a>
+          ))}
+        </nav>
+      )}
+
+      {/* This page, as something to subscribe to. Kept to the bare extensions
+          and set quietly under the heading: a reader who wants a feed knows
+          what ".rss" means and is scanning for exactly that, and everyone else
+          should be able to read past it without it competing with the list. */}
+      <p className="format-links">
+        <span>Subscribe:</span>
+        {formatsFor(group).map((ext) => (
+          <a
+            key={ext}
+            href={`${base}.${ext}`}
+            title={formatTitle(ext, what)}
+            // The advisory type a reader uses to decide it can handle the link
+            // before following it. Without the charset: the attribute takes a
+            // MIME type, and the parameter belongs on the response header.
+            type={SYNDICATION_FORMATS.get(ext)?.type.split(';')[0]}
+          >
+            {`.${ext}`}
+          </a>
+        ))}
+      </p>
+
+      <Ad format={AD_TEXT} />
+
+      <div className="feed-list">
+        {rows.flatMap((f, i) => {
+          const row = (
+            <a className="feed-row" key={String(f.slug)} href={`/${f.slug}`}>
+              <h3>{f.title}</h3>
+              {f.description && <p>{f.description}</p>}
+              <div className="feed-meta">
+                <span>{f.category === 'podcast' ? 'Podcast' : 'Blog'}</span>
+                {/* Where this feed's place on the page came from. A publisher's
+                    own tag is a different claim from a word we counted, and the
+                    reader deserves to know which they are looking at. */}
+                <span>
+                  {f.source === 'category' ? 'tagged by the author' : `${f.count} mentions`}
+                </span>
+                <span>
+                  {f.item_count} {f.category === 'podcast' ? 'episodes' : 'posts'}
+                </span>
+              </div>
+            </a>
+          );
+
+          const format = ads.get(i);
+          return format ? [row, <Ad key={`ad-${i}`} format={format} inFeed />] : [row];
+        })}
+      </div>
+
+      {lastPage > 1 && (
+        <nav className="pager" aria-label="Topic pages">
+          {page > 1 ? (
+            <a href={page === 2 ? base : `${base}?page=${page - 1}`} rel="prev">
+              ← Previous
+            </a>
+          ) : (
+            <span className="disabled">← Previous</span>
+          )}
+          <span className="pill">
+            Page {page} of {lastPage}
+          </span>
+          {page < lastPage ? (
+            <a href={`${base}?page=${page + 1}`} rel="next">
+              Next →
+            </a>
+          ) : (
+            <span className="disabled">Next →</span>
+          )}
+        </nav>
+      )}
+
+      {/* The feed links above are the posts; this one is the directory listing
+          — who covers the topic, rather than what they published. Two different
+          documents, so both are offered and both say which they are. */}
+      <p className="hint">
+        Machine-readable:{' '}
+        <a href={`/api/topics/${slug}${group ? `?group=${group.segment}` : ''}`}>
+          this list of feeds, as JSON
+        </a>{' '}
+        · <a href={`${base}.json`}>their recent posts, as JSON Feed</a> ·{' '}
+        <a href="/topics">all topics</a>
+      </p>
+
+      <AdBanner />
+    </>
+  );
+}

@@ -40,6 +40,10 @@ export const STATIC_PAGES = [
   { path: '/search', changefreq: 'daily', priority: '0.8' },
   { path: '/submit', changefreq: 'weekly', priority: '0.7' },
   { path: '/signup', changefreq: 'monthly', priority: '0.6' },
+  // How to connect an agent to the directory. Listed because the people who
+  // would use it are the ones searching for it, and it is not linked from
+  // anywhere a crawler weights heavily.
+  { path: '/mcp', changefreq: 'monthly', priority: '0.6' },
   { path: '/about', changefreq: 'monthly', priority: '0.5' },
 ];
 

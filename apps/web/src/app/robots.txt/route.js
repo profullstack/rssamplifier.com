@@ -33,6 +33,7 @@ Allow: /
 #   ${siteUrl()}/llms.txt
 #   ${siteUrl()}/api/feeds
 #   ${siteUrl()}/opml
+#   ${siteUrl()}/mcp  (Model Context Protocol, if you would rather call than crawl)
 
 Sitemap: ${siteUrl()}/sitemap.xml
 `;

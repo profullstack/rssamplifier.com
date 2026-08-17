@@ -71,6 +71,9 @@ All send `access-control-allow-origin: *` and need no key.
 | `/api/discover` | `POST {"keywords":[…]}` — up to 100 keywords per run |
 | `/api/discoveries/{id}` | Progress of one keyword run |
 | `/api/crawlstats` | Crawler health, including the two discovery queues |
+| `/api/topics/{keyword}` | The feeds on a topic, its category breakdown, `?group=` to narrow |
+| `/topics/{keyword}/{group}.rss` | One category of a topic, as a feed — also `.atom`, `.json`, `.m3u`, `.pls` |
+| `/mcp` | MCP endpoint — and the documentation page, in a browser |
 
 ```bash
 curl -X POST https://rssamplifier.com/api/submit \
@@ -81,6 +84,83 @@ curl -X POST https://rssamplifier.com/api/discover \
   -H 'content-type: application/json' \
   -d '{"keywords":["siberian huskies"]}'
 ```
+
+## Topics, and topics by category
+
+A topic page is every feed filed under a subject. On a well-covered one that is
+several hundred feeds of different kinds in a single list, so each category the
+topic has also gets an address of its own:
+
+| Path | What |
+| --- | --- |
+| `/topics/physics` | Everything filed under physics |
+| `/topics/physics/blogs` | Just the writing |
+| `/topics/physics/podcasts` | Just the shows |
+| `/topics/physics/audio` | Podcasts and music together |
+| `/topics/physics/music`, `/videos`, `/comics`, `/lives`, `/reels` | The rest |
+
+Every one of them is also a feed — `.rss`, `.atom`, `.json`, and `.m3u` / `.pls`
+where the entries are files a player can queue. `/topics/physics/audio.m3u` is a
+playlist of everything on a subject you can listen to.
+
+Worth knowing if you touch it:
+
+- **The segments are the category pages' own names**, derived from the table in
+  `apps/web/src/lib/categories.js` rather than written down twice — so
+  `/topics/physics/videos` sits under `/videos`, and a category that is renamed
+  renames its sub-group with it. A test asserts the two agree.
+- **`audio` is the one group that is not a single category** (podcast + music),
+  which is why the queries take a *set* of kinds rather than a kind.
+- **A sub-group with no feeds is a 404**, not an empty page. There are eight
+  addresses per topic and forty-odd thousand topics; rendering the empty ones
+  would be a great deal of thin content nobody asked for.
+- **The group is a path segment in the rewrite destination, not `?group=`.** A
+  rewrite's destination query string does not reach an App Router route handler
+  — `req.url` there is the URL the client asked for — so a query parameter
+  arrives as nothing and the feed quietly serves the whole topic. That is why
+  there are two routes over one implementation in `apps/web/src/lib/topicFeed.js`.
+  `?group=` *does* work when a caller sends it to `/api/topics/...` directly.
+- **The pages and the feeds disagree on purpose about unknown groups.** A page
+  404s; a feed ignores the group and serves the topic. A page is an address
+  somebody can link to, a feed is a subscription somebody has already made.
+- The sub-groups are deliberately **not** in the sitemap: at 40k+ topics they
+  would multiply it several times over for pages that are a filter on something
+  already listed.
+## MCP server
+
+The directory speaks the Model Context Protocol, so an agent can call it rather
+than scrape it. It runs inside the web app — no second service, no second
+deploy — and the endpoint is the same URL as its documentation page:
+
+```bash
+claude mcp add --transport http rssamplifier https://rssamplifier.com/mcp
+```
+
+Ten tools: `search`, `list_feeds`, `get_feed`, `list_topics`, `get_topic`,
+`topic_posts`, `read_post`, `random_feed`, `directory_stats` and `submit_feed`.
+All but the last are reads, and none needs a key. One resource, `llms.txt`.
+
+Keyword discovery is deliberately **not** a tool: every keyword spends a credit
+against a metered search plan, and a tool anyone can connect to should not be
+able to spend money. It stays a form at `/discover`.
+
+Worth knowing if you touch it:
+
+- **The code lives in `apps/web/src/lib/mcp/`.** `protocol.js` is pure — versions,
+  framing, header validation — and is where the tests bite. `tools.js` is the
+  tool table, `server.js` dispatches, and `app/api/mcp/route.js` is a thin HTTP
+  wrapper. Adding a tool means adding one entry to `TOOLS`; the documentation
+  page renders from the same array, so it cannot drift.
+- **It is dual-era and stateless.** MCP dropped the `initialize` handshake in
+  revision `2026-07-28` in favour of per-request metadata; older clients still
+  open with `initialize`. Both are answered on one endpoint, which is only
+  cheap because there is no session to keep either way.
+- **`/mcp` is a page *and* an endpoint.** Next cannot put a `page.jsx` and a
+  `route.js` in one segment, so `next.config.mjs` rewrites the path to
+  `/api/mcp` before the filesystem is consulted when the request looks like MCP
+  traffic — the protocol's own headers, an SSE `Accept`, a CORS preflight or a
+  JSON body. A browser falls through to the page. The endpoint answers at
+  `/api/mcp` too.
 
 ## Finding blogs by keyword
 

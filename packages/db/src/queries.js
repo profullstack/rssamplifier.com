@@ -54,6 +54,46 @@ export function normalizeKind(kind) {
 }
 
 /**
+ * Read a set of kinds, keeping only the real ones.
+ *
+ * A topic's sub-groups are mostly one kind each, but not all of them: "audio"
+ * is podcasts and music together, because a listener looking for something to
+ * put on does not care which of the two a feed was filed as. So the queries
+ * take a set rather than a kind, and a set of one covers the ordinary case.
+ *
+ * Returns null — meaning "every kind", the same as passing nothing — when
+ * nothing usable survives, so a caller that guessed a category name gets the
+ * whole topic instead of an empty page.
+ *
+ * @param {unknown} kinds
+ * @returns {string[]|null}
+ */
+export function normalizeKinds(kinds) {
+  const list = (Array.isArray(kinds) ? kinds : [kinds])
+    .map((kind) => normalizeKind(kind))
+    .filter((kind) => kind !== null);
+
+  return list.length > 0 ? [...new Set(list)] : null;
+}
+
+/**
+ * A `category in (…)` fragment and its arguments, or nothing at all.
+ *
+ * Placeholders rather than interpolation even though `normalizeKinds` has
+ * already rejected anything that is not a known kind: the validation is what
+ * makes it safe, and the placeholders are what keep it safe if somebody later
+ * calls this with a value that skipped the validation.
+ *
+ * @param {string[]|null} kinds
+ * @param {string} [column]
+ * @returns {{ sql: string, args: string[] }}
+ */
+function kindFilter(kinds, column = 'f.category') {
+  if (!kinds || kinds.length === 0) return { sql: '', args: [] };
+  return { sql: ` and ${column} in (${kinds.map(() => '?').join(', ')})`, args: kinds };
+}
+
+/**
  * @param {Client} db
  * @param {string} slug
  * @returns {Promise<object|null>}
@@ -486,25 +526,60 @@ export async function topicBySlug(db, slug) {
  * A feed's own categories rank above a keyword counted out of its prose: the
  * publisher saying "this is about homelabs" outranks us noticing the word.
  *
+ * `kinds` narrows it to a sub-group of the topic — the blogs about physics
+ * rather than everything about physics. See `normalizeKinds`.
+ *
  * @param {Client} db
  * @param {string} slug
- * @param {{ limit?: number, offset?: number }} [opts]
+ * @param {{ limit?: number, offset?: number, kinds?: string[]|null }} [opts]
  * @returns {Promise<object[]>}
  */
 export async function feedsForTopic(db, slug, opts = {}) {
-  const { limit = 60, offset = 0 } = opts;
+  const { limit = 60, offset = 0, kinds = null } = opts;
+  const filter = kindFilter(normalizeKinds(kinds));
 
   const { rows } = await db.execute({
     sql: `select f.slug, f.title, f.description, f.site_url, f.category, f.item_count,
                  k.keyword, k.count, k.source
           from feed_keywords k
           join feeds f on f.id = k.feed_id
-          where k.slug = ? and f.status <> 'dead'
+          where k.slug = ? and f.status <> 'dead'${filter.sql}
           order by case k.source when 'category' then 0 else 1 end, k.count desc, f.title asc
           limit ? offset ?`,
-    args: [slug, limit, offset],
+    args: [slug, ...filter.args, limit, offset],
   });
   return rows;
+}
+
+/**
+ * How many feeds a topic has of each category.
+ *
+ * One query for the whole breakdown rather than one per sub-group: the topic
+ * page links every group that has anything in it, so the alternative is eight
+ * counts on a page that already runs a listing query.
+ *
+ * Categories with nothing in them are absent rather than zero, which is what
+ * the page wants — a link to an empty sub-group is a link to a page that says
+ * "nothing here".
+ *
+ * @param {Client} db
+ * @param {string} slug
+ * @returns {Promise<Record<string, number>>}
+ */
+export async function topicKindCounts(db, slug) {
+  const { rows } = await db.execute({
+    sql: `select f.category, count(*) as n
+          from feed_keywords k
+          join feeds f on f.id = k.feed_id and f.status <> 'dead'
+          where k.slug = ?
+          group by f.category`,
+    args: [slug],
+  });
+
+  /** @type {Record<string, number>} */
+  const counts = {};
+  for (const row of rows) counts[String(row.category)] = Number(row.n ?? 0);
+  return counts;
 }
 
 /**
@@ -557,14 +632,19 @@ const TOPIC_RIVER_DAYS = 730;
  * @returns {Promise<object[]>}
  */
 export async function itemsForTopic(db, slug, opts = {}) {
-  const { limit = 50, feedCap = TOPIC_RIVER_FEEDS, days = TOPIC_RIVER_DAYS } = opts;
+  const { limit = 50, feedCap = TOPIC_RIVER_FEEDS, days = TOPIC_RIVER_DAYS, kinds = null } = opts;
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  // Applied inside `picked`, so the cap counts feeds of the requested kinds
+  // rather than spending itself on the ones about to be filtered out. A river
+  // of a topic's podcasts would otherwise be drawn from whichever podcasts
+  // happened to survive a cut made mostly of blogs.
+  const filter = kindFilter(normalizeKinds(kinds));
 
   const { rows } = await db.execute({
     sql: `with picked as (
             select k.feed_id from feed_keywords k
             join feeds f on f.id = k.feed_id and f.status <> 'dead'
-            where k.slug = ?
+            where k.slug = ?${filter.sql}
             order by case k.source when 'category' then 0 else 1 end, k.count desc
             limit ?
           )
@@ -577,7 +657,7 @@ export async function itemsForTopic(db, slug, opts = {}) {
             and i.published_at >= ?
           order by i.published_at desc
           limit ?`,
-    args: [slug, feedCap, since, limit],
+    args: [slug, ...filter.args, feedCap, since, limit],
   });
   return rows;
 }
@@ -599,13 +679,14 @@ export async function itemsForTopic(db, slug, opts = {}) {
  * @returns {Promise<object[]>}
  */
 export async function mediaForTopic(db, slug, opts = {}) {
-  const { limit = 100, feedCap = TOPIC_RIVER_FEEDS } = opts;
+  const { limit = 100, feedCap = TOPIC_RIVER_FEEDS, kinds = null } = opts;
+  const filter = kindFilter(normalizeKinds(kinds));
 
   const { rows } = await db.execute({
     sql: `with picked as (
             select k.feed_id from feed_keywords k
             join feeds f on f.id = k.feed_id and f.status <> 'dead'
-            where k.slug = ?
+            where k.slug = ?${filter.sql}
             order by case k.source when 'category' then 0 else 1 end, k.count desc
             limit ?
           )
@@ -618,7 +699,7 @@ export async function mediaForTopic(db, slug, opts = {}) {
             and i.audio_url is not null
           order by i.published_at desc nulls last, i.created_at desc
           limit ?`,
-    args: [slug, feedCap, limit],
+    args: [slug, ...filter.args, feedCap, limit],
   });
   return rows;
 }
