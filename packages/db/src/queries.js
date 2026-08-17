@@ -653,6 +653,232 @@ export async function crawlStats(db) {
 }
 
 /**
+ * Add one poller tick's work to the hour it happened in.
+ *
+ * Called once per tick rather than once per feed: a tick is already a batch,
+ * and an upsert per crawled feed would be twenty-five extra writes a minute to
+ * arrive at the same five numbers.
+ *
+ * `ticks` counts reports rather than feeds so a reader of the table can tell a
+ * live-recorded hour from one backfilled by 0017 — see the column's comment
+ * there. An hour the crawler genuinely sat out still gets a row, because a tick
+ * that crawled nothing calls this too.
+ *
+ * @param {Client} db
+ * @param {{ fetched?: number, succeeded?: number, failed?: number, items?: number }} counts
+ * @param {string} [at] ISO timestamp deciding the bucket; defaults to now
+ * @returns {Promise<void>}
+ */
+export async function recordCrawlHour(db, counts, at = nowIso()) {
+  const hour = at.slice(0, 13);
+
+  await db.execute({
+    sql: `insert into crawl_hourly (hour, ticks, fetched, succeeded, failed, items)
+          values (?, 1, ?, ?, ?, ?)
+          on conflict (hour) do update set
+            ticks     = crawl_hourly.ticks + 1,
+            fetched   = crawl_hourly.fetched + excluded.fetched,
+            succeeded = crawl_hourly.succeeded + excluded.succeeded,
+            failed    = crawl_hourly.failed + excluded.failed,
+            items     = crawl_hourly.items + excluded.items`,
+    args: [
+      hour,
+      Number(counts.fetched ?? 0),
+      Number(counts.succeeded ?? 0),
+      Number(counts.failed ?? 0),
+      Number(counts.items ?? 0),
+    ],
+  });
+}
+
+/**
+ * Drop rollup rows older than the charts can show.
+ *
+ * @param {Client} db
+ * @param {number} [days]
+ * @returns {Promise<number>} rows removed
+ */
+export async function pruneCrawlHours(db, days = 90) {
+  const { rowsAffected } = await db.execute({
+    sql: 'delete from crawl_hourly where hour < ?',
+    args: [nowIso(-days * 86_400_000).slice(0, 13)],
+  });
+  return Number(rowsAffected ?? 0);
+}
+
+/**
+ * The crawler's throughput hour by hour, ready to plot.
+ *
+ * Dense: every hour in the window is returned whether or not the table has a
+ * row for it, because a bar chart that silently closes its gaps draws a quiet
+ * night as if it were busy. `recorded` says whether the hour was written down
+ * live; hours before the rollup existed know their item count and nothing else.
+ *
+ * @param {Client} db
+ * @param {number} [hours] how far back to go
+ * @returns {Promise<Array<{ hour: string, items: number, fetched: number, succeeded: number, failed: number, recorded: boolean }>>}
+ */
+export async function indexingHistory(db, hours = 48) {
+  const start = nowIso(-(hours - 1) * 3_600_000).slice(0, 13);
+
+  const { rows } = await db.execute({
+    sql: `select hour, ticks, fetched, succeeded, failed, items
+          from crawl_hourly where hour >= ? order by hour`,
+    args: [start],
+  });
+
+  const byHour = new Map(rows.map((r) => [String(r.hour), r]));
+  const series = [];
+
+  // Walked from the start of the window in real hours rather than by
+  // incrementing the string: '2026-08-31T23' + 1 is a date, not arithmetic.
+  const cursor = new Date(`${start}:00:00.000Z`);
+  for (let i = 0; i < hours; i += 1) {
+    const key = cursor.toISOString().slice(0, 13);
+    const row = byHour.get(key);
+    series.push({
+      hour: key,
+      items: Number(row?.items ?? 0),
+      fetched: Number(row?.fetched ?? 0),
+      succeeded: Number(row?.succeeded ?? 0),
+      failed: Number(row?.failed ?? 0),
+      recorded: Number(row?.ticks ?? 0) > 0,
+    });
+    cursor.setUTCHours(cursor.getUTCHours() + 1);
+  }
+
+  return series;
+}
+
+/**
+ * What the directory holds, broken down by category, with each category's own
+ * growth curve.
+ *
+ * Two grouped scans of `feeds` and no join: attributing posts to a category
+ * through feed_items takes over three minutes against production, because it is
+ * 1.4M item rows looking up their feed. `feeds.item_count` is the same number,
+ * maintained by the crawler on every successful fetch, and it is already on the
+ * row being grouped.
+ *
+ * The growth series is cumulative and dense — one point per day, carried
+ * forward across days when nothing was added — and it is reconstructed from
+ * `created_at` rather than stored, so it is true history rather than a rollup
+ * that only starts when somebody remembered to record it. It counts back from
+ * today's total, so a category's line always ends at the number beside it.
+ *
+ * Dead feeds are excluded throughout, matching every other count in the app.
+ *
+ * @param {Client} db
+ * @param {number} [days] length of the growth series
+ * @returns {Promise<{ total: number, days: string[], categories: Array<object> }>}
+ */
+export async function categoryStats(db, days = 30) {
+  const dayAgo = nowIso(-86_400_000);
+  const weekAgo = nowIso(-7 * 86_400_000);
+  const monthAgo = nowIso(-30 * 86_400_000);
+  const windowStart = nowIso(-(days - 1) * 86_400_000).slice(0, 10);
+
+  const [totals, added] = await Promise.all([
+    db.execute({
+      sql: `select category,
+                   count(*)                                                       as feeds,
+                   sum(case when status = 'active'  then 1 else 0 end)            as active,
+                   sum(case when status = 'error'   then 1 else 0 end)            as errored,
+                   sum(case when status = 'pending' then 1 else 0 end)            as pending,
+                   sum(case when last_success_at >= ? then 1 else 0 end)          as crawled_day,
+                   sum(case when created_at      >= ? then 1 else 0 end)          as added_day,
+                   sum(case when created_at      >= ? then 1 else 0 end)          as added_week,
+                   sum(case when created_at      >= ? then 1 else 0 end)          as added_month,
+                   sum(item_count)                                                as items
+            from feeds where status <> 'dead' group by category`,
+      args: [dayAgo, dayAgo, weekAgo, monthAgo],
+    }),
+    db.execute({
+      sql: `select substr(created_at, 1, 10) as day, category, count(*) as n
+            from feeds where status <> 'dead' and created_at >= ?
+            group by 1, 2`,
+      args: [`${windowStart}T00:00:00.000Z`],
+    }),
+  ]);
+
+  const labels = dayLabels(days);
+
+  /** @type {Map<string, Map<string, number>>} category → day → feeds added */
+  const addedByCategory = new Map();
+  for (const row of added.rows) {
+    const category = String(row.category);
+    const perDay = addedByCategory.get(category) ?? new Map();
+    perDay.set(String(row.day), Number(row.n ?? 0));
+    addedByCategory.set(category, perDay);
+  }
+
+  const byCategory = new Map(totals.rows.map((r) => [String(r.category), r]));
+  const total = totals.rows.reduce((n, r) => n + Number(r.feeds ?? 0), 0);
+
+  const categories = KINDS.map((category) => {
+    const row = byCategory.get(category);
+    const feeds = Number(row?.feeds ?? 0);
+
+    return {
+      category,
+      feeds,
+      share: total > 0 ? feeds / total : 0,
+      active: Number(row?.active ?? 0),
+      errored: Number(row?.errored ?? 0),
+      pending: Number(row?.pending ?? 0),
+      crawledLastDay: Number(row?.crawled_day ?? 0),
+      addedLastDay: Number(row?.added_day ?? 0),
+      addedLastWeek: Number(row?.added_week ?? 0),
+      addedLastMonth: Number(row?.added_month ?? 0),
+      items: Number(row?.items ?? 0),
+      growth: cumulativeBack(feeds, labels, addedByCategory.get(category) ?? new Map()),
+    };
+  });
+
+  return { total, days: labels, categories };
+}
+
+/**
+ * The last `days` dates, oldest first, as YYYY-MM-DD.
+ *
+ * @param {number} days
+ * @returns {string[]}
+ */
+function dayLabels(days) {
+  const labels = [];
+  const cursor = new Date(nowIso(-(days - 1) * 86_400_000).slice(0, 10));
+
+  for (let i = 0; i < days; i += 1) {
+    labels.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return labels;
+}
+
+/**
+ * Turn "feeds added on each day" into "feeds held at the end of each day".
+ *
+ * Worked backwards from today's total: the alternative is to count everything
+ * older than the window as a starting balance, which is a third aggregate over
+ * the whole table for a number that subtraction already has.
+ *
+ * @param {number} total feeds in the category now
+ * @param {string[]} labels days, oldest first
+ * @param {Map<string, number>} added day → feeds added that day
+ * @returns {number[]} one running total per label
+ */
+function cumulativeBack(total, labels, added) {
+  const series = new Array(labels.length);
+  let running = total;
+
+  for (let i = labels.length - 1; i >= 0; i -= 1) {
+    series[i] = running;
+    running -= added.get(labels[i]) ?? 0;
+  }
+  return series;
+}
+
+/**
  * The feeds failing right now, worst first, so a reader can see which blog is
  * broken rather than only that something is.
  *

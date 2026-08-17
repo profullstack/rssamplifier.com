@@ -1428,6 +1428,264 @@ select {
   text-overflow: ellipsis;
 }
 
+/* ---------------------------------------------------------------- charts */
+
+/*
+ * Two series, and only two, anywhere on the site.
+ *
+ * The first is the brand accent, because a chart on this site should look like
+ * it belongs to it. The second is a blue chosen to be told apart from that
+ * accent under protanopia and deuteranopia as well as with full colour vision —
+ * a grey second series, which is what an editorial palette reaches for first,
+ * measured too close to the accent to be legible either way.
+ *
+ * The dark steps are not the light ones lightened: --accent's dark value is too
+ * light to sit in the band a mark needs against a dark surface, so both series
+ * step down rather than up. Both pairs were checked against their own surface,
+ * not eyeballed.
+ */
+:root {
+  --chart-1: #b4552d;
+  --chart-2: #3a6ea5;
+  --chart-grid: var(--line);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chart-1: #d2764c;
+    --chart-2: #5b96d2;
+  }
+}
+
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1.75rem 2rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.chart {
+  margin: 0;
+  min-width: 0;
+}
+
+.chart-wide {
+  margin: 1.5rem 0 2rem;
+}
+
+.chart-title {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.6rem;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+}
+
+/* The headline figures a reader would otherwise have to read off the axis. */
+.chart-note {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* Scaling up past 1:1 costs nothing here — there is no type inside the SVG to
+     grow with it, and the marks stay crisp because they are vectors. */
+  overflow: visible;
+}
+
+.chart-svg .chart-rules line {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.chart-svg .chart-baseline {
+  stroke: var(--line);
+}
+
+.chart-mark-1 {
+  fill: var(--chart-1);
+}
+
+.chart-mark-2 {
+  fill: var(--chart-2);
+}
+
+.chart-line-1 {
+  fill: none;
+  stroke: var(--chart-1);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-area-1 {
+  fill: var(--accent-soft);
+  stroke: none;
+}
+
+.chart-dot-1 {
+  fill: var(--chart-1);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+/* An hour with nothing in it: present, hoverable, and clearly not a bar. */
+.chart-empty {
+  fill: var(--line);
+}
+
+.chart-axis {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.chart-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.chart-swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  margin-right: 0.35rem;
+  vertical-align: -1px;
+}
+
+.chart-swatch-1 {
+  background: var(--chart-1);
+}
+
+.chart-swatch-2 {
+  background: var(--chart-2);
+}
+
+.chart-data {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+}
+
+.chart-data > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chart-data .crawl-table {
+  max-height: 18rem;
+  overflow-y: auto;
+  margin-top: 0.5rem;
+}
+
+/* ------------------------------------------------------- category table */
+
+.category-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.category-table tfoot td {
+  border-bottom: none;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.category-name {
+  font-family: var(--serif);
+}
+
+.category-flag {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-left: 0.4rem;
+}
+
+.share {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.share-bar {
+  display: block;
+  width: 4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.share-fill {
+  display: block;
+  height: 100%;
+  background: var(--chart-1);
+}
+
+.share-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.spark-cell {
+  width: 6.5rem;
+}
+
+.spark {
+  display: block;
+  width: 6rem;
+  height: auto;
+}
+
+.spark-empty {
+  color: var(--muted);
+}
+
+/* Announced, not shown: a caption naming a table for a screen reader. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ------------------------------------------------------------- favorites */
 
 .post-list {
