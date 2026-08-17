@@ -662,6 +662,30 @@ button:disabled {
   display: none;
 }
 
+/* Audio inline is a transport, not a picture, and the inline layout is built
+   for a picture: a column flex container reads the docked `flex: 1 1 16rem` as
+   a height, which stands a scrubber up sixteen rem tall. Width is what it
+   wanted from that rule; take the width and leave the height alone. */
+.episode-player.is-inline .episode-audio {
+  flex: 0 0 auto;
+  width: 100%;
+  height: 2.5rem;
+}
+
+/* The meta line comes back when there is no picture. An inline video says what
+   it is by being visible; a bare scrubber says nothing at all, so "Listen" and
+   the runtime are the only things telling a reader what they are looking at
+   and how long it runs. The title and the show name still go — the <h1> and
+   the eyebrow directly above are already those two lines. */
+.episode-player.is-inline:not(.is-video) .episode-meta {
+  display: flex;
+}
+
+.episode-player.is-inline:not(.is-video) .episode-meta strong,
+.episode-player.is-inline:not(.is-video) .episode-meta .show {
+  display: none;
+}
+
 @media (min-width: 48rem) {
   /* On a wide screen the video sits in a corner instead of across the foot of
      the page, so the article keeps its measure. Docked only — an inline player

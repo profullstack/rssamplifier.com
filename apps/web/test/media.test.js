@@ -159,3 +159,44 @@ test('markup does not count towards the length of an article', () => {
   const dressed = `<div class="wrapper"><span class="a">${'<b></b>'.repeat(400)}</span>Short.</div>`;
   assert.equal(isEpisode(post, dressed), true);
 });
+
+/**
+ * A Funkwhale track, exactly as gojonnes@open.audio ships one.
+ *
+ * The post that sent the reader to a dead end: open.audio answers
+ * `x-frame-options: SAMEORIGIN`, so the page will not frame, and the page is a
+ * JavaScript app, so extraction finds no article to render in its place. Both
+ * escapes closed, the reader fell through to "this site does not allow itself
+ * to be embedded" — over an mp3 it could play, and was already loading into a
+ * player docked in the corner.
+ */
+const TRACK = {
+  url: 'https://open.audio/library/tracks/469538',
+  audio_url: 'https://open.audio/api/v2/stream/c024c701-25c1-43bb-af63-986b39356c47.mp3',
+  audio_type: 'audio/mpeg',
+};
+
+test('a Funkwhale track is audio the reader can play, not a page that failed', () => {
+  assert.equal(mediaKind(TRACK), 'audio');
+
+  // Not watchable, which is the whole reason it took the framing path: the
+  // enclosure has named what a post is since the video branch landed, and that
+  // sentence was only ever acted on for video.
+  assert.equal(isWatchable(TRACK), false);
+
+  // There is a file, and it is the post — so the reader has something to render
+  // where the refusal notice was.
+  assert.equal(isEpisode(TRACK, 'Acoustic guitar that I recorded at home'), true);
+  assert.deepEqual(playableMedia(TRACK), { kind: 'audio', src: TRACK.audio_url });
+});
+
+test('audio attached to an article is still not the article', () => {
+  const post = { ...TRACK, url: 'https://example.com/post' };
+  const article = '<p>Paragraph of the actual write-up.</p>'.repeat(60);
+
+  // Same split the video branch draws: there is audio to play either way, and
+  // whether it is the post decides whether the link out reads "Listen on" or
+  // "Read the original on".
+  assert.equal(mediaKind(post), 'audio');
+  assert.equal(isEpisode(post, article), false);
+});

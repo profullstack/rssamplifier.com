@@ -213,6 +213,23 @@ export default async function ReaderPage({ params, searchParams }) {
   // "Open ↗" have to follow rather than point at where the reader began.
   const framed = !watchable && !readable && verdict.frameable && Boolean(postUrl);
 
+  // An audio post is not a page that failed to frame either.
+  //
+  // The video branch above already makes this argument; it just never got made
+  // about audio, because audio had the docked player and looked handled. It was
+  // not: a track on a Funkwhale instance sends X-Frame-Options, and its page is
+  // a JavaScript app, so extraction comes back with nothing to render. Both
+  // escapes closed, the post fell through to the last branch — a notice saying
+  // the site refuses to be embedded, over a button sending the reader away —
+  // while the mp3 sat in a player docked in the corner, ready to play. The
+  // reader had the post the whole time and told the reader it did not.
+  //
+  // Narrower than `watchable` on purpose. A page that frames still frames: a
+  // podcast's own episode page is worth showing, and the docked player keeps
+  // the episode going behind it. This is only the branch where there is nothing
+  // to show and something to play.
+  const listenable = !watchable && !readable && !framed && !extracted && Boolean(media.src);
+
   return (
     <div className="reader">
       <div className="reader-head">
@@ -417,6 +434,62 @@ export default async function ReaderPage({ params, searchParams }) {
                * framing it changes how it got here, not whose it is.
                */}
             </>
+          ) : listenable ? (
+            <>
+              {/*
+               * The post, playing, where the refusal notice used to be.
+               *
+               * Inline rather than docked for the reason the video branch is:
+               * this is the thing the reader came for, and the alternative on
+               * offer is an apology in the middle of the screen with the actual
+               * post shrunk into the corner beneath it. Still `preload="none"`
+               * — nothing has been said about wanting to hear it yet.
+               */}
+              <EpisodePlayer
+                inline
+                attached={!episode}
+                kind={media.kind}
+                src={media.src}
+                type={mediaType}
+                title={title}
+                seconds={post.audio_seconds ? Number(post.audio_seconds) : null}
+                feedTitle={String(feed.title)}
+              />
+
+              {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
+
+              {/* Show notes, or an article the audio came attached to.
+                  Withheld only when it is the summary again — a track whose
+                  feed puts the same sentence in <description> and <content>
+                  printed "Acoustic guitar that I recorded at home" twice,
+                  once as the lede and once as the body. Not the fallback
+                  branch's `!summary` gate, which throws away a whole article
+                  whenever a feed also shipped an excerpt of it. */}
+              {article && !repeats(article, summary) && (
+                <article
+                  className={`reader-article${translated ? ' translated' : ''}`}
+                  lang={translated ? (wanted ?? undefined) : undefined}
+                  dangerouslySetInnerHTML={{ __html: article }}
+                />
+              )}
+
+              {postUrl && (
+                <p className="hint">
+                  <a href={postUrl} target="_blank" rel="noopener">
+                    {episode ? 'Listen on' : 'Read the original on'} {hostOf(postUrl)} ↗
+                  </a>
+                </p>
+              )}
+
+              {/*
+               * An ad, unlike the video branch, and the difference is what is
+               * on screen. A video fills the column, so a unit beside it is
+               * sold against somebody else's work. An audio transport is a
+               * strip: the page around it is this summary and this link, the
+               * same page the fallback branch below carries a unit on.
+               */}
+              <Ad format={AD_MREC} />
+            </>
           ) : (
             <div className="reader-fallback">
               <p className="notice">
@@ -464,8 +537,9 @@ export default async function ReaderPage({ params, searchParams }) {
       {/* Docked above the toolbar, so the episode keeps playing while the
           show notes scroll behind it. Audio only: a video is already playing
           up where the article would be, and two players on one page is one
-          player too many. */}
-      {audio && !watchable && (
+          player too many. Same reason `listenable` is excluded — that branch
+          moved this player up into the post. */}
+      {audio && !watchable && !listenable && (
         <EpisodePlayer
           kind={media.kind}
           src={media.src}
@@ -487,6 +561,32 @@ export default async function ReaderPage({ params, searchParams }) {
       />
     </div>
   );
+}
+
+/**
+ * Does this body say only what the summary already said?
+ *
+ * The two are different fields and usually different lengths — a description
+ * and the post it describes — but plenty of feeds put one sentence in both,
+ * and then a page that renders both shows the reader the same sentence twice.
+ *
+ * Equality rather than "the summary is a prefix of the body", which is the
+ * ordinary excerpt-and-article case and exactly the one worth rendering: the
+ * summary is the first paragraph, and the body is the other twenty.
+ *
+ * @param {string} html the body, as it will be rendered
+ * @param {unknown} summary
+ * @returns {boolean}
+ */
+function repeats(html, summary) {
+  const text = (value) =>
+    String(value ?? '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const gist = text(summary);
+  return gist.length > 0 && text(html) === gist;
 }
 
 /**
