@@ -71,6 +71,7 @@ All send `access-control-allow-origin: *` and need no key.
 | `/api/discover` | `POST {"keywords":[…]}` — up to 100 keywords per run |
 | `/api/discoveries/{id}` | Progress of one keyword run |
 | `/api/crawlstats` | Crawler health, including the two discovery queues |
+| `/mcp` | MCP endpoint — and the documentation page, in a browser |
 
 ```bash
 curl -X POST https://rssamplifier.com/api/submit \
@@ -81,6 +82,42 @@ curl -X POST https://rssamplifier.com/api/discover \
   -H 'content-type: application/json' \
   -d '{"keywords":["siberian huskies"]}'
 ```
+
+## MCP server
+
+The directory speaks the Model Context Protocol, so an agent can call it rather
+than scrape it. It runs inside the web app — no second service, no second
+deploy — and the endpoint is the same URL as its documentation page:
+
+```bash
+claude mcp add --transport http rssamplifier https://rssamplifier.com/mcp
+```
+
+Ten tools: `search`, `list_feeds`, `get_feed`, `list_topics`, `get_topic`,
+`topic_posts`, `read_post`, `random_feed`, `directory_stats` and `submit_feed`.
+All but the last are reads, and none needs a key. One resource, `llms.txt`.
+
+Keyword discovery is deliberately **not** a tool: every keyword spends a credit
+against a metered search plan, and a tool anyone can connect to should not be
+able to spend money. It stays a form at `/discover`.
+
+Worth knowing if you touch it:
+
+- **The code lives in `apps/web/src/lib/mcp/`.** `protocol.js` is pure — versions,
+  framing, header validation — and is where the tests bite. `tools.js` is the
+  tool table, `server.js` dispatches, and `app/api/mcp/route.js` is a thin HTTP
+  wrapper. Adding a tool means adding one entry to `TOOLS`; the documentation
+  page renders from the same array, so it cannot drift.
+- **It is dual-era and stateless.** MCP dropped the `initialize` handshake in
+  revision `2026-07-28` in favour of per-request metadata; older clients still
+  open with `initialize`. Both are answered on one endpoint, which is only
+  cheap because there is no session to keep either way.
+- **`/mcp` is a page *and* an endpoint.** Next cannot put a `page.jsx` and a
+  `route.js` in one segment, so `next.config.mjs` rewrites the path to
+  `/api/mcp` before the filesystem is consulted when the request looks like MCP
+  traffic — the protocol's own headers, an SSE `Accept`, a CORS preflight or a
+  JSON body. A browser falls through to the page. The endpoint answers at
+  `/api/mcp` too.
 
 ## Finding blogs by keyword
 
