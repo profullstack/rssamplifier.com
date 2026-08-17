@@ -31,33 +31,45 @@ import { mediaKind } from '../lib/media.js';
  *   seconds?: number|null,
  *   feedTitle?: string|null,
  *   inline?: boolean,
+ *   kind?: 'youtube'|'peertube'|'video'|'audio'|null,
  * }} props
  */
-export default function EpisodePlayer({ src, type, title, seconds, feedTitle, inline = false }) {
-  // The same reading of the enclosure the reader page uses to decide whether
-  // the post is watched or read. Two answers to "is this a video" that can
-  // disagree is how a page ends up rendering a docked audio bar for a video.
-  const kind = mediaKind({ audio_url: src, audio_type: type });
-  const youtube = kind === 'youtube';
+export default function EpisodePlayer({
+  src,
+  type,
+  title,
+  seconds,
+  feedTitle,
+  inline = false,
+  kind: given = null,
+}) {
+  // The caller's reading when it has one, because for an embed `src` is no
+  // longer the enclosure and the type no longer describes it — a PeerTube embed
+  // is an HTML page reached from a post whose enclosure claimed video/mp4.
+  // Otherwise the same reading of the enclosure the reader page uses, so two
+  // answers to "is this a video" can never disagree.
+  const kind = given ?? mediaKind({ audio_url: src, audio_type: type });
+  const embed = kind === 'youtube' || kind === 'peertube';
   const video = kind === 'video';
 
   return (
     <aside
-      className={`episode-player${youtube || video ? ' is-video' : ''}${inline ? ' is-inline' : ''}`}
-      aria-label={video || youtube ? 'Episode video' : 'Episode audio'}
+      className={`episode-player${embed || video ? ' is-video' : ''}${inline ? ' is-inline' : ''}`}
+      aria-label={video || embed ? 'Episode video' : 'Episode audio'}
     >
       <div className="episode-meta">
-        <span className="eyebrow">{video || youtube ? 'Watch' : 'Listen'}</span>
+        <span className="eyebrow">{video || embed ? 'Watch' : 'Listen'}</span>
         <strong title={title}>{title}</strong>
         {feedTitle && <span className="show">{feedTitle}</span>}
         {seconds ? <span className="runtime">{formatRuntime(seconds)}</span> : null}
       </div>
 
-      {/* Three media, three elements. A YouTube video has no file to play —
-          the watch page refuses to be framed and the media itself is not
-          addressable — so its embed is the only form that works, and it is the
-          one case here that loads a third-party frame. */}
-      {youtube ? (
+      {/* Three elements for four kinds. Two of them have no file worth playing
+          — YouTube's watch page refuses to be framed and its media is not
+          addressable at all; PeerTube's enclosure is a download endpoint that
+          404s once the instance re-encodes — so both are embedded, and those
+          are the two cases here that load a third-party frame. */}
+      {embed ? (
         <iframe
           className="episode-video"
           src={src}
