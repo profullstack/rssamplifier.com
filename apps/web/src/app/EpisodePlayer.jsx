@@ -33,6 +33,7 @@ import { isStream, mediaKind } from '../lib/media.js';
  *   inline?: boolean,
  *   attached?: boolean,
  *   kind?: 'youtube'|'peertube'|'video'|'audio'|null,
+ *   offer?: object|null,
  * }} props
  */
 export default function EpisodePlayer({
@@ -44,6 +45,7 @@ export default function EpisodePlayer({
   inline = false,
   attached = false,
   kind: given = null,
+  offer = null,
 }) {
   // The caller's reading when it has one, because for an embed `src` is no
   // longer the enclosure and the type no longer describes it — a PeerTube embed
@@ -64,8 +66,15 @@ export default function EpisodePlayer({
 
   return (
     <aside
-      className={`episode-player${embed || video ? ' is-video' : ''}${inline ? ' is-inline' : ''}`}
+      className={`episode-player${embed || video ? ' is-video' : ''}${
+        inline ? ' is-inline' : ' page-docked'
+      }`}
       aria-label={`${attached ? 'Attached' : 'Episode'} ${noun}`}
+      // What this page has to play, for the roaming player in the layout. It
+      // takes the offer only when it is idle, and while it is running this
+      // element is hidden by CSS — so with JavaScript this is the same player
+      // one level up, and without it, it is the player it always was.
+      data-dock-offer={offer ? JSON.stringify(offer) : undefined}
     >
       <div className="episode-meta">
         <span className="eyebrow">

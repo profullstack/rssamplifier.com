@@ -1,12 +1,15 @@
 import { notFound } from 'next/navigation';
-import { q, accounts } from '@rssamplifier/db';
+import { q, accounts, queue } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { adPlan } from '../../lib/ads.js';
+import { lanesOffered, trackFor } from '../../lib/queue.js';
 import { shareText } from '../../lib/share.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
+import PlayButton from '../PlayButton.jsx';
+import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
@@ -50,9 +53,18 @@ export default async function FeedPage({ params }) {
   ]);
 
   // Only asked once we know there is someone to ask about.
-  const following = user
-    ? await accounts.isFollowing(client, String(user.id), String(feed.id))
-    : false;
+  const [following, queued] = user
+    ? await Promise.all([
+        accounts.isFollowing(client, String(user.id), String(feed.id)),
+        // One statement for the whole page. Asking per post would be fifty
+        // round trips to decide what fifty buttons say.
+        queue.lanesForItems(
+          client,
+          String(user.id),
+          posts.map((p) => String(p.id)),
+        ),
+      ])
+    : [false, /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({})];
 
   // A blog page is the longest read on the site — up to fifty summaries — so it
   // is the one place a rectangle earns its keep, sat in the flow where somebody
@@ -202,6 +214,12 @@ export default async function FeedPage({ params }) {
         </p>
       ) : (
         posts.flatMap((p, i) => {
+          // What the roaming player could carry, if anything: null for a post
+          // with no enclosure, and for a YouTube or PeerTube one, which plays
+          // only inside its own frame on its own page.
+          const track = trackFor(p, { slug, feedTitle: String(feed.title) });
+          const lanes = lanesOffered(p);
+
           const entry = (
             <article className="entry" key={String(p.guid)}>
               <h3>
@@ -219,6 +237,30 @@ export default async function FeedPage({ params }) {
                 {formatDate(p.published_at)}
                 {p.author ? ` · ${p.author}` : ''}
               </time>
+
+              {/* Queue it from the archive, rather than having to open every
+                  episode to line one up. The play control is here for the same
+                  reason: on a podcast's page, "play this one now" is the thing
+                  a visitor came to do, and it now starts in a player that
+                  survives them wandering off to the next blog. */}
+              <div className="entry-actions">
+                {track && (
+                  <PlayButton
+                    track={track}
+                    lane={lanes[0]}
+                    href={`/${slug}/read?p=${encodeURIComponent(String(p.guid))}`}
+                  />
+                )}
+
+                <QueueButton
+                  slug={slug}
+                  guid={String(p.guid)}
+                  lanes={lanes}
+                  queued={queued[String(p.id)] ?? []}
+                  next={`/${slug}`}
+                  compact
+                />
+              </div>
             </article>
           );
 
