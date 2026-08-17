@@ -1,7 +1,7 @@
 import { q, newId } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../lib/db.js';
-import { RAW_INPUT_LIMIT } from '../../../../lib/submitted.js';
+import { clampRawInput } from '../../../../lib/submitted.js';
 import {
   MAX_BATCH_ENTRIES,
   MAX_UPLOAD_FEEDS,
@@ -47,7 +47,7 @@ export async function POST(req) {
   }
 
   const kind = body?.kind === 'opml' ? 'opml' : 'list';
-  const sample = String(body?.sample ?? '').slice(0, RAW_INPUT_LIMIT);
+  const sample = clampRawInput(body?.sample);
 
   const id = newId();
   await q.insertSubmission(client, {

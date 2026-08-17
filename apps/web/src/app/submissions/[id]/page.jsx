@@ -7,7 +7,7 @@ import Toolbar from '../../Toolbar.jsx';
 import AdBanner from '../../AdBanner.jsx';
 import { db } from '../../../lib/db.js';
 import { streamSrc } from '../../../lib/sse.js';
-import { describeSubmittedInput, RAW_INPUT_LIMIT } from '../../../lib/submitted.js';
+import { describeSubmittedInput, RAW_INPUT_LINE_LIMIT } from '../../../lib/submitted.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -143,7 +143,7 @@ export default async function SubmissionPage({ params }) {
 
           {input.truncated && (
             <p className="muted">
-              Only the first {RAW_INPUT_LIMIT.toLocaleString()} characters of the upload are kept,
+              Only the first {RAW_INPUT_LINE_LIMIT.toLocaleString()} lines of the upload are kept,
               so this list may be shorter than the file was.
             </p>
           )}
