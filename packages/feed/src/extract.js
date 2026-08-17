@@ -50,6 +50,25 @@ const MIN_LENGTH = 600;
 const MIN_FIGURE_PX = 200;
 
 /**
+ * More of the publisher's own pictures than a page whose post is a picture has.
+ *
+ * Only the rescue in `orphan` consults this, and it is there because counting
+ * only the images that survive the filters is a count that can be gamed by a
+ * layout. The Bright Side's comic archive is the page that proved it: ten
+ * strip thumbnails, every one declared 150×150 and so ruled out for being
+ * small, leaving a single survivor — a sidebar advert for the author's book —
+ * which then looked exactly like a page whose one picture is the post. An
+ * index of a hundred pictures is not a picture post, and how many were ruled
+ * out is beside the point.
+ *
+ * Four rather than one, because a real strip page carries a couple of the
+ * publisher's own odds and ends beside the strip and refusing those would give
+ * back most of what this rescue is for. Fails closed either way: over the line
+ * is the honest card, which is what these pages showed before.
+ */
+const CROWD = 4;
+
+/**
  * Where a site keeps its chrome rather than its posts.
  *
  * Measured against the pages this gate was rejecting, not guessed. Elephant
@@ -65,8 +84,16 @@ const MIN_FIGURE_PX = 200;
 const CHROME_DIRS =
   /\/(?:static|assets|templates?|themes?|skins?|icons?|logos?|emoji|sprites?)\//i;
 
-/** Filenames that announce themselves as furniture. */
-const CHROME_NAMES = /(?:^|[/_-])(?:logo|avatar|icon|badge|button|sprite|pixel|spacer)s?[._-]/i;
+/**
+ * Filenames that announce themselves as furniture.
+ *
+ * `sidebar` and `banner` join the list on the evidence of The Bright Side,
+ * whose one image that is not a declared-small thumbnail is called
+ * `cover-vol-2-sidebar-150-2-1.png` — an advert for the author's book, sitting
+ * in the sidebar, saying so in its own name.
+ */
+const CHROME_NAMES =
+  /(?:^|[/_-])(?:logo|avatar|icon|badge|button|sprite|pixel|spacer|sidebar|banner)s?[._-]/i;
 
 /**
  * Largest page worth parsing.
@@ -119,13 +146,19 @@ export function readableArticle(html, url) {
 
   if (!article?.content) return null;
 
-  const clean = sanitizeHtml(String(article.content));
+  let clean = sanitizeHtml(String(article.content));
   const length = textLength(clean);
 
   // Prose is enough on its own, and a picture is enough on its own. Requiring
   // prose of a page that is a picture is what turned every webcomic in the
   // directory into "this site does not allow itself to be embedded".
-  if (length < MIN_LENGTH && figures(clean, url).length === 0) return null;
+  if (length < MIN_LENGTH && figures(clean, url).length === 0) {
+    // The words without the picture, which is its own kind of failure. See
+    // `orphan`.
+    const missing = orphan(based, url);
+    if (!missing) return null;
+    clean = `${missing}${clean}`;
+  }
 
   return {
     title: text(article.title),
@@ -135,6 +168,131 @@ export function readableArticle(html, url) {
     html: clean,
     length,
   };
+}
+
+/**
+ * The page's picture, when the extraction came away with only the caption.
+ *
+ * Readability scores subtrees and returns the one that wins, which is the right
+ * shape for an article and the wrong one for a page whose post is a picture
+ * with something written beside it. Sister Claire's hiatus page is the case
+ * this was measured against: the strip sits in one div and the note explaining
+ * the hiatus in another, Readability keeps the note — 578 characters, just
+ * under the prose floor — and the comic, the whole reason the page exists, is
+ * in the half that lost. The reader then fell back to the feed's own body,
+ * whose picture is a 133×200 thumbnail. The post was a strip and the reader
+ * showed a postage stamp.
+ *
+ * So the picture is looked for on the page rather than in the extraction, and
+ * put back at the top where the publisher had it.
+ *
+ * Deliberately narrow, in three ways:
+ *
+ *   - Only when the extraction has already failed both tests — under the prose
+ *     floor and carrying no figure of its own. An article that stands up on its
+ *     own never reaches here, so no ordinary post gains an image it did not
+ *     have. The alternative on this path is not "the post without a picture",
+ *     it is the honest card and no post at all.
+ *   - Only the same three tests `figures` applies: the publisher's own image, at
+ *     a size they have not disclaimed, outside the directories a site keeps its
+ *     chrome in.
+ *   - Only when exactly one image survives them, on a page that was not crowded
+ *     with the publisher's pictures to begin with. A page whose post is a
+ *     picture has a picture; a gallery, an index or a layout has many, and
+ *     guessing which one is the post is how a reader gets shown an ad. See
+ *     CROWD for why both counts are needed and not just the survivors.
+ *
+ * Read off the DOM rather than the sanitized source because relative sources
+ * are still relative here — the sanitizer drops those on purpose, and dropping
+ * them is what would make this find nothing on half the small web. The tag it
+ * returns is built from scratch out of three escaped attributes rather than
+ * passed through, and then sanitized like everything else, so a picture rescued
+ * off a page has been through exactly the allowlist the rest of the body has.
+ *
+ * The page is parsed again rather than shared with the caller's parse, because
+ * Readability strips the document it is given as it scores it and the picture
+ * is by definition in a part it threw away. A second parse is affordable
+ * precisely because this only runs where the first attempt already failed.
+ *
+ * @param {string} html the page source, with its base href in place
+ * @param {string} url the URL it was fetched from
+ * @returns {string|null} an `<img>` tag, or null when the page offers no answer
+ */
+function orphan(html, url) {
+  const site = siteOf(url);
+  const found = [];
+  let mine = 0;
+
+  let document;
+  try {
+    ({ document } = parseHTML(html));
+  } catch {
+    return null;
+  }
+
+  for (const img of document.querySelectorAll('img')) {
+    let src;
+    try {
+      src = new URL(String(img.getAttribute('src') ?? ''), url).href;
+    } catch {
+      continue;
+    }
+
+    if (!/^https?:/i.test(src)) continue;
+    if (siteOf(src) !== site) continue;
+
+    // Counted before the filters rather than after, because how crowded the
+    // page is with the publisher's own pictures is the question the filters
+    // cannot answer. See CROWD.
+    mine += 1;
+    if (mine > CROWD) return null;
+
+    const width = Number(img.getAttribute('width'));
+    const height = Number(img.getAttribute('height'));
+    if (width > 0 && width < MIN_FIGURE_PX) continue;
+    if (height > 0 && height < MIN_FIGURE_PX) continue;
+
+    const { pathname } = new URL(src);
+    if (CHROME_DIRS.test(pathname)) continue;
+    if (CHROME_NAMES.test(pathname)) continue;
+
+    found.push(img);
+    if (found.length > 1) return null;
+  }
+
+  const only = found[0];
+  if (!only) return null;
+
+  const src = new URL(String(only.getAttribute('src')), url).href;
+  const alt = attrValue(only.getAttribute('alt'));
+  const title = attrValue(only.getAttribute('title'));
+
+  return sanitizeHtml(
+    `<p><img src="${attrValue(src)}" alt="${alt}"${title ? ` title="${title}"` : ''} /></p>`,
+  );
+}
+
+/**
+ * An attribute value safe to write into markup the sanitizer will then read.
+ *
+ * Stripping rather than escaping, which looks like the weaker choice and is the
+ * right one here. The sanitizer escapes `&` on the way out without decoding on
+ * the way in, so a value pre-escaped to `&quot;` is re-escaped to `&amp;quot;`
+ * and the reader is shown the entity — an artist's `title="Mutt said &ldquo;no&rdquo;"`
+ * arrives as literal punctuation soup. Emitting the raw text and letting the
+ * sanitizer escape it exactly once is what renders correctly.
+ *
+ * What is left to do here is only what would break the attribute before the
+ * sanitizer ever parsed it: the quote that would close it early, and the angle
+ * brackets that would close the tag. Three characters, removed rather than
+ * encoded, because an alt text missing a quotation mark is a smaller loss than
+ * one covered in ampersands.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function attrValue(value) {
+  return String(value ?? '').replace(/["<>]/g, '');
 }
 
 /**

@@ -179,12 +179,19 @@ export function groupByHost(feeds) {
  * domains, running hosts concurrently buys the throughput without ever sending
  * two overlapping requests to the same server.
  *
+ * `onEvent` is called once per feed as it settles, which is what makes a live
+ * log possible: the return value only arrives when the whole batch is done, and
+ * a batch is the thing somebody watching wants to see progress through. It is
+ * called synchronously with a plain object and is never awaited — a slow or
+ * throwing listener must not hold up or break the crawl.
+ *
  * @param {import('@libsql/client').Client} db
  * @param {number} [batchSize]
  * @param {number} [concurrency] hosts crawled at once
+ * @param {((event: { at: string, event: 'feed', status: 'ok'|'error', subject: string, slug: string|null, amount: number|null, detail: string|null, ms: number }) => void)|null} [onEvent]
  * @returns {Promise<{ crawled: number, failed: number, items: number }>} items being posts stored, not posts seen
  */
-export async function crawlDue(db, batchSize = 25, concurrency = 8) {
+export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = null) {
   const due = await q.dueFeeds(db, batchSize);
   if (due.length === 0) return { crawled: 0, failed: 0, items: 0 };
 
@@ -205,6 +212,8 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8) {
       if (index >= queues.length) return;
 
       for (const feed of queues[index]) {
+        const started = Date.now();
+
         // One feed that throws — a write that times out, a URL that breaks the
         // parser — must not reject the whole batch and take the other workers'
         // completed crawls down with it.
@@ -214,8 +223,19 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8) {
             crawled += 1;
             items += Number(res.newItems ?? 0);
           } else failed += 1;
-        } catch {
+
+          report(onEvent, feed, started, {
+            ok: res.ok,
+            amount: res.ok ? Number(res.newItems ?? 0) : null,
+            detail: res.ok ? null : (res.error ?? 'unknown'),
+          });
+        } catch (err) {
           failed += 1;
+          report(onEvent, feed, started, {
+            ok: false,
+            amount: null,
+            detail: String(err?.message ?? err),
+          });
         }
       }
     }
@@ -225,4 +245,38 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8) {
   await Promise.all(Array.from({ length: workers }, worker));
 
   return { crawled, failed, items };
+}
+
+/**
+ * Hand one settled feed to the log listener, if there is one.
+ *
+ * Wrapped because the listener belongs to the caller: the crawl's job is to
+ * crawl, and a logger that throws is a logging bug, not a reason to lose a
+ * batch's worth of fetches.
+ *
+ * @param {((event: object) => void)|null} onEvent
+ * @param {{ id: string, feed_url: string, slug?: unknown, title?: unknown }} feed
+ * @param {number} started epoch ms
+ * @param {{ ok: boolean, amount: number|null, detail: string|null }} outcome
+ */
+function report(onEvent, feed, started, outcome) {
+  if (typeof onEvent !== 'function') return;
+
+  try {
+    onEvent({
+      at: new Date().toISOString(),
+      event: 'feed',
+      status: outcome.ok ? 'ok' : 'error',
+      // The blog's name when we have one, and the URL that was actually fetched
+      // otherwise — a feed crawled before its first successful parse has no
+      // title, and those are exactly the lines somebody is watching for.
+      subject: String(feed.title || feed.feed_url),
+      slug: feed.slug == null ? null : String(feed.slug),
+      amount: outcome.amount,
+      detail: outcome.detail,
+      ms: Date.now() - started,
+    });
+  } catch {
+    // A broken listener loses its line and nothing else.
+  }
 }

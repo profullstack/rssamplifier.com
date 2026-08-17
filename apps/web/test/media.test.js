@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   mediaKind,
   isEpisode,
+  isPicture,
   isWatchable,
   peertubeEmbed,
   playableMedia,
@@ -199,4 +200,29 @@ test('audio attached to an article is still not the article', () => {
   // "Read the original on".
   assert.equal(mediaKind(post), 'audio');
   assert.equal(isEpisode(post, article), false);
+});
+
+test('a strip with a line under it is a picture, and gets the room to be one', () => {
+  const strip =
+    '<p><img src="https://www.sisterclaire.com/comics/1750651937-pain_s.png"></p>' +
+    '<p>Back on Monday. Thank you for your patience.</p>';
+
+  assert.equal(isPicture(strip), true);
+});
+
+test('an illustration inside an essay is not the essay', () => {
+  // The distinction the measure exists for: a photograph in two thousand words
+  // is an illustration and belongs in the column, at the width every other
+  // paragraph gets.
+  const essay =
+    '<p><img src="https://example.com/photos/harbour.jpg"></p>' +
+    '<p>The harbour was rebuilt twice, and the second time nobody agreed why.</p>'.repeat(30);
+
+  assert.equal(isPicture(essay), false);
+});
+
+test('a short post with no picture in it is prose, not a picture', () => {
+  assert.equal(isPicture('<p>Back on Monday.</p>'), false);
+  assert.equal(isPicture(''), false);
+  assert.equal(isPicture(null), false);
 });

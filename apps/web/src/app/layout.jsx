@@ -1,6 +1,7 @@
 import './globals.css';
 
 import { siteUrl } from '../lib/db.js';
+import DockPlayer from './DockPlayer.jsx';
 import ServiceWorker from './ServiceWorker.jsx';
 import Script from "next/script";
 
@@ -112,6 +113,7 @@ export default function RootLayout({ children }) {
                   came to do, and everything after Search is a thing you do once
                   you already know the site. */}
               <a href="/blogs">Blogs</a>
+              <a href="/news">News</a>
               <a href="/podcasts">Podcasts</a>
               <a href="/music">Music</a>
               <a href="/videos">Videos</a>
@@ -136,6 +138,10 @@ export default function RootLayout({ children }) {
               {/* Like /account, unconditional: a signed-out visitor is sent to
                   sign in rather than being shown an empty shelf. */}
               <a href="/favorites">Favorites</a>
+              {/* Same argument as Favorites: unconditional, so the nav stays
+                  the same on every page and none of them has to read a cookie
+                  to draw it. */}
+              <a href="/queue">Queue</a>
               <a href="/account">Account</a>
             </nav>
           </div>
@@ -152,7 +158,8 @@ export default function RootLayout({ children }) {
               account needed. Built by <a href="https://profullstack.com">Profullstack, Inc.</a>
             </p>
             <p>
-              Browse: <a href="/blogs">Blogs</a> · <a href="/podcasts">Podcasts</a> ·{' '}
+              Browse: <a href="/blogs">Blogs</a> · <a href="/news">News</a> ·{' '}
+              <a href="/podcasts">Podcasts</a> ·{' '}
               <a href="/music">Music</a> · <a href="/videos">Videos</a> ·{' '}
               <a href="/comics">Comics</a> · <a href="/lives">Live</a> ·{' '}
               <a href="/reels">Reels</a> · <a href="/topics">Topics</a>
@@ -163,10 +170,19 @@ export default function RootLayout({ children }) {
               <a href="/crawlstats">Crawler status</a>
             </p>
             <p>
-              <a href="/about">About</a> · <a href="/privacy">Privacy</a>
+              <a href="/about">About</a> · <a href="/privacy">Privacy</a> ·{' '}
+              <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
+                Source on GitHub
+              </a>
             </p>
           </div>
         </footer>
+
+        {/* The player, in the layout rather than in a page, because that is the
+            difference between one that follows you around the directory and one
+            that dies with the post you started it from. It renders nothing at
+            all until a page hands it something to play. */}
+        <DockPlayer />
 
         <ServiceWorker />
 

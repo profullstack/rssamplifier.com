@@ -36,6 +36,10 @@ export async function GET() {
     JSON.stringify(
       {
         ...stats,
+        // Where to watch the same crawler line by line rather than in
+        // aggregate. Named here because this is the endpoint an agent finds
+        // first, and a stream nobody knows about is a stream nobody reads.
+        log: { events: '/api/crawlstats/log', text: '/api/crawlstats/log?format=text' },
         // The discovery queues run on the same poller, so a monitor watching
         // this endpoint should see them stall too.
         discovery: { keywordsQueued, sitesToCheck },
