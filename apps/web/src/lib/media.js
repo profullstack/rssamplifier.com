@@ -100,6 +100,29 @@ export function isEpisode(post, contentHtml) {
 }
 
 /**
+ * Is the picture the post, rather than an illustration in one?
+ *
+ * Asked so the reader knows whether to hold a body to the prose measure or let
+ * its pictures out to the size they were published at. A photograph inside a
+ * two-thousand-word essay is an illustration and belongs in the column with
+ * everything else; a comic strip with a line under it is a picture, and 42rem
+ * is not a fact about it.
+ *
+ * Same test `isEpisode` makes about audio and video, on the same number and for
+ * the same reason: the words either are the post or are a caption on it, and
+ * their length is what says which. A body with no picture in it is not a
+ * picture post however short it is — a one-line note is still prose.
+ *
+ * @param {unknown} html the body, as it will be rendered
+ * @returns {boolean}
+ */
+export function isPicture(html) {
+  const body = String(html ?? '');
+  if (!/<(?:img|figure|picture)\b/i.test(body)) return false;
+  return textLength(body) < ARTICLE_TEXT;
+}
+
+/**
  * How much prose some HTML carries, in characters.
  *
  * @param {unknown} html

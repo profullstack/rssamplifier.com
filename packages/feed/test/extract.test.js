@@ -155,3 +155,146 @@ test('a picture served from the site’s own CDN is still the site’s own pictu
   const html = '<img src="https://images.wildelifecomic.com/comics/1633.png">';
   assert.equal(figures(html, COMIC_URL).length, 1);
 });
+
+/**
+ * A comic page where the strip and the words are in different halves.
+ *
+ * Sister Claire's hiatus post, in the shape the live one has. Readability
+ * scores subtrees and keeps the one that wins; here that is the note explaining
+ * the hiatus, and the strip — the reason the page exists — is in the half that
+ * lost. The note is 578 characters on the real page, just under the prose
+ * floor, so the whole extraction was thrown away and the reader fell back to
+ * the feed's own body, whose picture is a 133×200 thumbnail.
+ */
+const SPLIT = `<!doctype html><html><head><title>Sister Claire</title></head><body>
+  <div id="comic"><img title="What a Pain..." src="https://www.sisterclaire.com/comics/1750651937-pain_s.png" id="cc-comic"></div>
+  <div id="news"><div><p>Hey all,</p>
+    <p>It really pains me to say this (literally) but my spine injury has flared
+       up really badly and I am once again stuck waiting for insurance to allow
+       me to get the treatment I need to be functional again.</p>
+    <p>The pain medications I have been prescribed in the meantime can only do
+       so much, and their side effects make me sleepy and confused.</p>
+    <p>I am so frustrated and pained, but I am hoping I can get back to my usual
+       art schedule ASAP. Thank you for your patience.</p>
+    <p>-Yamino</p></div></div>
+</body></html>`;
+
+const SPLIT_URL = 'https://www.sisterclaire.com/comic/what-a-pain';
+
+test('the strip is put back when the extraction kept only the words beside it', () => {
+  const found = readableArticle(SPLIT, SPLIT_URL);
+
+  assert.ok(found, 'a page whose post is a picture is a post');
+  assert.ok(
+    found.html.includes('https://www.sisterclaire.com/comics/1750651937-pain_s.png'),
+    found.html,
+  );
+  // At the top, where the publisher had it, rather than trailing the note.
+  assert.ok(found.html.indexOf('pain_s.png') < found.html.indexOf('Hey all'), found.html);
+  // The artist's own words on the image survive; nothing else off the tag does.
+  assert.ok(found.html.includes('title="What a Pain..."'));
+  assert.ok(!found.html.includes('cc-comic'));
+});
+
+test('a page offering several pictures is not guessed at', () => {
+  // An index, a gallery or a layout — not a page whose post is a picture. The
+  // rescue is for the case where there is one answer, and picking one of four
+  // is how a reader gets shown an advert instead of a post.
+  const many = SPLIT.replace(
+    '<div id="comic">',
+    '<div id="comic"><img src="https://www.sisterclaire.com/comics/other.png">',
+  );
+
+  assert.equal(readableArticle(many, SPLIT_URL), null);
+});
+
+test('a rescued picture carries nothing off the page but its own three attributes', () => {
+  // The rescue rebuilds the tag rather than passing it through, and this is
+  // what that is for: a handler, a hostile title and a second source all sit on
+  // the one image the page offers.
+  const hostile = SPLIT.replace(
+    '<img title="What a Pain..."',
+    '<img onerror="fetch(\'//evil\')" srcset="//evil/x.png 2x" title=\'a" onload="x\'',
+  );
+
+  const found = readableArticle(hostile, SPLIT_URL);
+
+  assert.ok(found);
+  assert.ok(!/onerror/i.test(found.html), found.html);
+  assert.ok(!/srcset/i.test(found.html), found.html);
+  assert.ok(!found.html.includes('evil'), found.html);
+  // The quote that would have closed the attribute early is gone, so what was
+  // meant to become an `onload` handler stays inside the title as inert text.
+  assert.ok(found.html.includes('title="a onload=x"'), found.html);
+  assert.deepEqual(attrsOf(found.html), ['src', 'alt', 'title', 'loading']);
+});
+
+/**
+ * The attribute names on the first `<img>` in some markup.
+ *
+ * Read off the quoted pairs rather than off anything that looks like `name=`,
+ * so text sitting inside a value is not mistaken for an attribute — which is
+ * the whole thing under test.
+ *
+ * @param {string} html
+ * @returns {string[]}
+ */
+function attrsOf(html) {
+  const tag = html.match(/<img\b[^>]*>/i)?.[0] ?? '';
+  return [...tag.matchAll(/([a-z-]+)="[^"]*"/gi)].map((m) => m[1]);
+}
+
+test('a rescued picture keeps the artist’s own words, escaped exactly once', () => {
+  const quoted = SPLIT.replace('title="What a Pain..."', 'title="Mutt &amp; Jeff said no"');
+
+  const found = readableArticle(quoted, SPLIT_URL);
+
+  assert.ok(found);
+  // Not `&amp;amp;`, which is what pre-escaping a value the sanitizer escapes
+  // again produces, and what the reader would see on the page.
+  assert.ok(found.html.includes('title="Mutt &amp; Jeff said no"'), found.html);
+});
+
+test('an index of thumbnails is not a page whose post is a picture', () => {
+  // The Bright Side's comic archive, which is the page that put the crowd test
+  // there. Ten strip thumbnails, each declared 150×150 and so ruled out for
+  // being small, leaving one survivor — a sidebar advert for the author's book
+  // — which looked exactly like a lone picture that must be the post.
+  const thumbs = Array.from(
+    { length: 10 },
+    (_, i) =>
+      `<a href="/comic/p${i}"><img src="https://www.thebrightsidecomic.com/wp-content/uploads/p${i}-150x150.jpg" width="150" height="150"></a>`,
+  ).join('');
+
+  const archive = `<!doctype html><html><head><title>Archive</title></head><body>
+    <div id="main">${thumbs}</div>
+    <div id="sidebar"><img src="https://www.thebrightsidecomic.com/wp-content/uploads/cover-vol-2-sidebar-150-2-1.png"></div>
+    <p>The Bright Side updates on Tuesdays and Fridays. Read from the beginning.</p>
+  </body></html>`;
+
+  assert.equal(readableArticle(archive, 'https://www.thebrightsidecomic.com/?post_type=comic'), null);
+});
+
+test('a file that says it is furniture is furniture, wherever it sits', () => {
+  const html = `
+    <img src="https://example.com/uploads/cover-vol-2-sidebar-150-2-1.png">
+    <img src="https://example.com/uploads/top-banner-2026.png">
+  `;
+
+  assert.deepEqual(figures(html, 'https://example.com/posts/a'), []);
+});
+
+test('an article that stands on its own gains no picture it did not have', () => {
+  // The gate only opens where the alternative is showing the reader nothing at
+  // all. A post that clears the prose floor never reaches it, so a banner in
+  // the masthead stays in the masthead.
+  const withBanner = `<!doctype html><html><head><title>A Post</title></head><body>
+    <header><img src="https://example.com/seasonal-banner.png"></header>
+    <article><h1>A Post</h1><p>${PROSE}</p></article>
+  </body></html>`;
+
+  const found = readableArticle(withBanner, URL);
+
+  assert.ok(found);
+  assert.ok(!found.html.includes('seasonal-banner'), found.html);
+});

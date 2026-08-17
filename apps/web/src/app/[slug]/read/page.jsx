@@ -6,7 +6,7 @@ import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/tr
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { popularLanguages } from '../../../lib/languages.js';
-import { isEpisode, isWatchable, playableMedia } from '../../../lib/media.js';
+import { isEpisode, isPicture, isWatchable, playableMedia } from '../../../lib/media.js';
 import { readerView } from '../../../lib/reader.js';
 import { lanesOffered, trackFor } from '../../../lib/queue.js';
 import { shareText } from '../../../lib/share.js';
@@ -246,6 +246,20 @@ export default async function ReaderPage({ params, searchParams }) {
   // to show and something to play.
   const listenable = !watchable && !readable && !framed && !extracted && Boolean(media.src);
 
+  // Whether the pictures in the body get to be the size they were drawn.
+  //
+  // Two ways to qualify, because one test alone gets a category wrong. The body
+  // is judged on its own shape — a strip with a caption, a photograph with a
+  // line under it — which is what catches picture posts wherever they turn up,
+  // in a photoblog or a fediverse note or a comic that was never filed as one.
+  //
+  // And the category is trusted outright, because a comic whose author writes a
+  // paragraph under the strip is still a comic and the body test would call it
+  // prose. Filing a feed under /comics is a person saying what its posts are;
+  // there is no reason to then measure the words and disagree.
+  const body = extracted?.html ?? article;
+  const pictures = String(feed.kind ?? '') === 'comic' || isPicture(body);
+
   // Where this post lives, absolute, because a shared link is pasted somewhere
   // that has no idea what host it came from.
   //
@@ -387,7 +401,7 @@ export default async function ReaderPage({ params, searchParams }) {
             */}
           {article && (
             <article
-              className={`reader-article${translated ? ' translated' : ''}`}
+              className={`reader-article${pictures ? ' pictures' : ''}${translated ? ' translated' : ''}`}
               lang={translated ? (wanted ?? undefined) : undefined}
               dangerouslySetInnerHTML={{ __html: article }}
             />
@@ -409,7 +423,7 @@ export default async function ReaderPage({ params, searchParams }) {
         <>
           {summary && <p className="lede translated">{summary}</p>}
           <article
-            className="reader-article translated"
+            className={`reader-article${pictures ? ' pictures' : ''} translated`}
             lang={wanted ?? undefined}
             dangerouslySetInnerHTML={{ __html: article ?? '' }}
           />
@@ -486,7 +500,10 @@ export default async function ReaderPage({ params, searchParams }) {
                 {extracted.siteName ?? hostOf(postUrl ?? '')}
               </p>
 
-              <article className="reader-article" dangerouslySetInnerHTML={{ __html: extracted.html }} />
+              <article
+                className={`reader-article${pictures ? ' pictures' : ''}`}
+                dangerouslySetInnerHTML={{ __html: extracted.html }}
+              />
 
               {postUrl && (
                 <p className="hint">
@@ -550,7 +567,7 @@ export default async function ReaderPage({ params, searchParams }) {
                   whenever a feed also shipped an excerpt of it. */}
               {article && !repeats(article, summary) && (
                 <article
-                  className={`reader-article${translated ? ' translated' : ''}`}
+                  className={`reader-article${pictures ? ' pictures' : ''}${translated ? ' translated' : ''}`}
                   lang={translated ? (wanted ?? undefined) : undefined}
                   dangerouslySetInnerHTML={{ __html: article }}
                 />
@@ -594,7 +611,10 @@ export default async function ReaderPage({ params, searchParams }) {
                   and stripped of its markup that is the summary word for word,
                   so the reader printed the caption and dropped the picture. */}
               {article && !repeats(article, summary) && (
-                <article className="reader-article" dangerouslySetInnerHTML={{ __html: article }} />
+                <article
+                  className={`reader-article${pictures ? ' pictures' : ''}`}
+                  dangerouslySetInnerHTML={{ __html: article }}
+                />
               )}
 
               {postUrl && (
