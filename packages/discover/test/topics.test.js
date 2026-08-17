@@ -24,17 +24,41 @@ async function withTopics(rows) {
   return { db, dir };
 }
 
-test('the topics searched are the ones the directory is most about', async () => {
+test('the topics searched are subjects, not the words every feed uses', async () => {
   const { db, dir } = await withTopics([
+    // What popularity alone selects for, and what the first live run actually
+    // searched: the words every blog on earth uses.
+    ['one', 'one', 10300],
+    ['post', 'post', 7269],
+    ['continue-reading', 'continue reading', 2418],
+    // Subjects.
     ['home-lab', 'home lab', 40],
     ['open-source', 'open source', 25],
+    // A single word cannot be told from a stopword by count, so none are taken.
     ['sourdough', 'sourdough', 9],
-    // Below the floor: one blog's own vocabulary, not a subject.
-    ['my-weekly-roundup', 'my weekly roundup', 1],
+    // Below the floor: one blog's own vocabulary.
+    ['my-weekly-roundup', 'my weekly roundup', 2],
   ]);
 
-  const keywords = await discovery.unsearchedTopics(db, { limit: 3, minFeeds: 3 });
-  assert.deepEqual(keywords, ['home lab', 'open source', 'sourdough']);
+  const keywords = await discovery.unsearchedTopics(db, { limit: 5 });
+  assert.deepEqual(keywords, ['home lab', 'open source']);
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('half-decoded markup never becomes a search term', async () => {
+  // These are real rows from the live directory: "rsquo" was the seventh most
+  // common topic of all, because every "I&rsquo;ve" contributed one.
+  const { db, dir } = await withTopics([
+    ['rsquo-ve', 'rsquo ve', 318],
+    ['xa-xa-xa', '#xa #xa #xa', 280],
+    ['apos-ve', 'apos ve', 201],
+    ['https-www', 'https www', 198],
+    ['x27-ve', '#x27 ve', 190],
+    ['ai-agents', 'ai agents', 284],
+  ]);
+
+  assert.deepEqual(await discovery.unsearchedTopics(db, { limit: 10 }), ['ai agents']);
 
   await rm(dir, { recursive: true, force: true });
 });
@@ -49,7 +73,7 @@ test('a keyword anybody has already searched is never searched again', async () 
   const runId = await discovery.insertRun(db, { keywords: ['home lab'] });
   await discovery.insertKeywords(db, runId, ['home lab']);
 
-  assert.deepEqual(await discovery.unsearchedTopics(db, { minFeeds: 3 }), ['open source']);
+  assert.deepEqual(await discovery.unsearchedTopics(db), ['open source']);
 
   await rm(dir, { recursive: true, force: true });
 });
@@ -73,7 +97,7 @@ test('without a search key nothing is spent and nothing is queued', async () => 
 });
 
 test('a directory with nothing new to search says so rather than searching noise', async () => {
-  const { db, dir } = await withTopics([['tiny', 'tiny', 1]]);
+  const { db, dir } = await withTopics([['tiny', 'tiny thing', 1]]);
 
   const result = await discoverFromOwnTopics(db, {
     env: { VALUESERP_API_KEY: 'k' },
@@ -90,6 +114,8 @@ test('a pass queues its keywords and stops, leaving the searching to the poller'
   const { db, dir } = await withTopics([
     ['home-lab', 'home lab', 40],
     ['open-source', 'open source', 25],
+    // Single word: excluded however popular, because a single word cannot be
+    // told from a stopword by its count.
     ['e-ink', 'e-ink', 12],
     ['fountain-pens', 'fountain pens', 7],
   ]);
@@ -105,7 +131,11 @@ test('a pass queues its keywords and stops, leaving the searching to the poller'
   });
 
   assert.equal(result.ran, true);
-  assert.deepEqual(result.keywords, ['home lab', 'open source', 'e-ink'], 'capped, commonest first');
+  assert.deepEqual(
+    result.keywords,
+    ['home lab', 'open source', 'fountain pens'],
+    'capped, commonest first, single words skipped',
+  );
   assert.equal(result.runId, 'run-1');
 
   // Nothing is searched or checked inline: this runs inside the crawl tick, and

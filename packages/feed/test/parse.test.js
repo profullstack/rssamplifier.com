@@ -102,6 +102,21 @@ test('summarize strips markup, decodes entities and cuts on a word boundary', ()
   assert.equal(summarize('a &#8212; b'), 'a — b');
   assert.equal(summarize('bad &#x0;entity'), 'bad  entity'.replace(/\s+/g, ' '));
 
+  // Named entities, which WordPress emits constantly. Undecoded, their names
+  // survive tokenizing as words — "rsquo" was the seventh most common topic in
+  // the whole directory, ahead of "code" and "software".
+  assert.equal(summarize('I&rsquo;ve seen it'), "I've seen it");
+  assert.equal(summarize('&ldquo;quoted&rdquo;'), '"quoted"');
+  assert.equal(summarize('a &mdash; b'), 'a - b');
+  assert.equal(summarize('and so on&hellip;'), 'and so on…');
+
+  // An entity this list does not know is dropped rather than left as a word.
+  assert.equal(summarize('spaced&thinsp;out'), 'spaced out');
+  assert.equal(summarize('a&nonsense;b'), 'a b');
+
+  // Text that merely looks like an entity is left alone.
+  assert.equal(summarize('Tom & Jerry'), 'Tom & Jerry');
+
   const long = summarize('word '.repeat(200), 50);
   assert.ok(long.length <= 52, `expected a truncated string, got ${long.length}`);
   assert.ok(long.endsWith('…'));
