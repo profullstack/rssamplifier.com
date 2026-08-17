@@ -42,7 +42,7 @@ export const CATEGORIES = {
     noun: 'music feeds',
     one: 'music feed',
     title: 'Music',
-    lede: 'Feeds that publish audio without being podcasts — netlabels, artists posting tracks, mixes and radio shows. Audio attached, no episode numbers.',
+    lede: 'Albums, playlists, mixes and netlabel releases, newest first — feeds whose entries are the music itself rather than writing about it. A blog that attaches an mp3 is still a blog, so a feed lands here by declaring what it is or by being added to the list.',
     schemaType: 'MusicGroup',
     item: 'tracks',
   },

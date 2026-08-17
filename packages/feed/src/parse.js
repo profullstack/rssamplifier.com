@@ -60,6 +60,42 @@ const AUDIO_TYPE = /^audio\//i;
 const VIDEO_TYPE = /^video\//i;
 
 /**
+ * What `<podcast:medium>` says a feed is, for the values that answer outright.
+ *
+ * Podcasting 2.0 added the tag so a publisher can state the one thing no amount
+ * of parsing can infer: an album and a talk show attach the same mp3s, and only
+ * the publisher knows which one they made. `music` is an album; the `L` suffix
+ * is that medium as a playlist rather than a single work. Both are what this
+ * directory means by music, and a declaration beats any evidence read off the
+ * items, so this is consulted before anything else.
+ *
+ * Values outside this map are left to the evidence. `podcast` and `audiobook`
+ * are already caught as podcasts by the tag's mere presence, and a medium this
+ * code has never heard of should widen no category on its own.
+ */
+const MEDIUM_KINDS = new Map([
+  ['music', KIND_MUSIC],
+  ['musicl', KIND_MUSIC],
+  ['video', KIND_VIDEO],
+  ['videol', KIND_VIDEO],
+  ['film', KIND_VIDEO],
+  ['filml', KIND_VIDEO],
+  ['blog', KIND_BLOG],
+  ['blogl', KIND_BLOG],
+]);
+
+/**
+ * The category a channel declares outright, or '' if it declares none.
+ *
+ * @param {any} channel
+ * @returns {string}
+ */
+function declaredMedium(channel) {
+  const value = text(channel?.['podcast:medium']).toLowerCase();
+  return (value && MEDIUM_KINDS.get(value)) || '';
+}
+
+/**
  * Channel-level tags that only a podcast publishes.
  *
  * Deliberately not `itunes:author` or `itunes:image` — plenty of ordinary blogs
@@ -76,20 +112,6 @@ const PODCAST_CHANNEL_TAGS = [
   'podcast:guid',
   'podcast:medium',
 ];
-
-/**
- * Does this parsed element carry audio in an enclosure?
- *
- * A feed with audio attached to its entries is a podcast even when it declares
- * no namespace at all, which is the case for hand-rolled and static-site feeds
- * — the example that prompted this, linuxmatters.sh, happens to declare both.
- *
- * @param {any} item
- * @returns {boolean}
- */
-function hasAudioEnclosure(item) {
-  return arr(item?.enclosure).some((e) => AUDIO_TYPE.test(String(e?.['@type'] ?? '')));
-}
 
 /**
  * Does this element carry video?
@@ -126,12 +148,22 @@ function isYouTube(node) {
 /**
  * Classify a feed by what it publishes.
  *
- * Order matters, and it is the order of how specific the evidence is. Video
- * first, because a video feed frequently also carries audio metadata. Then
- * podcast, which is audio *plus* a publisher who filled in the podcast
- * namespaces — the strongest signal any of these have. Then music, which is
- * what audio without those tags is: a track, not an episode. Everything else
- * is a blog, which is what the overwhelming majority of the directory is.
+ * Order matters, and it is the order of how specific the evidence is. A
+ * declared medium first, because it is the publisher saying so rather than us
+ * guessing. Then video, because a video feed frequently also carries audio
+ * metadata. Then podcast, which is a publisher who filled in the podcast
+ * namespaces. Everything else is a blog, which is what the overwhelming
+ * majority of the directory is.
+ *
+ * Music is deliberately not inferred from an audio enclosure. It used to be —
+ * the reasoning was that audio without podcast tags is a track rather than an
+ * episode — and in the directory it produced 198 feeds of which none were
+ * music. What attaches an mp3 to a post is a blog: an AI read-through of the
+ * article, a conference talk, a cross-posted episode, a field recording in a
+ * travelogue. Narrated blogs are common enough now that "has audio" says
+ * nothing about the publisher's intent, and a category that cannot be read off
+ * the document is better left to `podcast:medium` and the curated list than
+ * filled with everything that happens to carry a file.
  *
  * Only the first few items are inspected: a feed's entries are homogeneous, and
  * scanning all of a 500-episode archive to learn what the first three already
@@ -142,16 +174,15 @@ function isYouTube(node) {
  * @returns {string} one of the KIND_* values
  */
 function kindOfChannel(channel, items) {
+  const declared = declaredMedium(channel);
+  if (declared) return declared;
+
   const sample = items.slice(0, 5);
 
   if (isYouTube(channel) || sample.some(isYouTube)) return KIND_VIDEO;
   if (sample.some(hasVideoEnclosure)) return KIND_VIDEO;
 
-  const audio = sample.some(hasAudioEnclosure);
-  const podcastTags = PODCAST_CHANNEL_TAGS.some((tag) => channel?.[tag] !== undefined);
-
-  if (podcastTags) return KIND_PODCAST;
-  if (audio) return KIND_MUSIC;
+  if (PODCAST_CHANNEL_TAGS.some((tag) => channel?.[tag] !== undefined)) return KIND_PODCAST;
 
   return KIND_BLOG;
 }
@@ -505,16 +536,6 @@ function parseAtom(feed) {
     };
   });
 
-  // Atom has no <enclosure>: an attachment is a <link rel="enclosure">, so the
-  // audio test has to read the link set rather than kindOfChannel's shape.
-  const audio = entries
-    .slice(0, 5)
-    .some((e) =>
-      arr(e.link).some(
-        (l) => l?.['@rel'] === 'enclosure' && AUDIO_TYPE.test(String(l?.['@type'] ?? '')),
-      ),
-    );
-
   // YouTube publishes Atom, so this is the format its channel feeds arrive in.
   const kind = kindOfChannel(feed, entries);
 
@@ -525,9 +546,7 @@ function parseAtom(feed) {
     language: text(feed['@xml:lang']),
     imageUrl: text(feed.logo) || text(feed.icon),
     categories: categories(feed),
-    // kindOfChannel already handles YouTube and the podcast namespaces; this
-    // only adds what it cannot see, which is Atom's link-shaped enclosures.
-    kind: kind === KIND_BLOG && audio ? KIND_MUSIC : kind,
+    kind,
     items,
   };
 }
@@ -602,7 +621,6 @@ function parseJsonFeed(raw) {
     .flatMap((it) => (Array.isArray(it?.attachments) ? it.attachments : []))
     .map((a) => String(a?.mime_type ?? ''));
 
-  const audio = attachmentTypes.some((type) => AUDIO_TYPE.test(type));
   const video = attachmentTypes.some((type) => VIDEO_TYPE.test(type));
 
   return {
@@ -613,8 +631,9 @@ function parseJsonFeed(raw) {
     imageUrl: j.icon ?? '',
     categories: [],
     // JSON Feed states the podcast claim in an extension rather than a
-    // namespace, so an attachment on its own is a track, not an episode.
-    kind: j._itunes ? KIND_PODCAST : video ? KIND_VIDEO : audio ? KIND_MUSIC : KIND_BLOG,
+    // namespace. It has no equivalent of `podcast:medium`, so a JSON Feed can
+    // only reach the music category by curation.
+    kind: j._itunes ? KIND_PODCAST : video ? KIND_VIDEO : KIND_BLOG,
     items,
   };
 }

@@ -217,11 +217,65 @@ test('a feed carrying the podcast namespaces is a podcast', () => {
   assert.equal(feed.imageUrl, 'https://linuxmatters.sh/cover.png');
 });
 
-test('audio without the podcast namespaces is music, not a podcast', () => {
-  // The distinction the four categories exist for: a netlabel posting tracks
-  // and a show posting episodes both attach mp3s, and only one of them filled
-  // in itunes:category.
-  assert.equal(parseFeed(AUDIO_ONLY_RSS).kind, 'music');
+test('audio without the podcast namespaces is a blog, not music', () => {
+  // Attaching an mp3 to a post says nothing about what the feed is: a narrated
+  // article, a conference talk and a cross-posted episode all look like this,
+  // and reading them as tracks filled the music category with 198 blogs.
+  assert.equal(parseFeed(AUDIO_ONLY_RSS).kind, 'blog');
+});
+
+test('a feed that declares itself music is music', () => {
+  const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel>
+  <title>An album</title>
+  <link>https://album.example/</link>
+  <podcast:medium>music</podcast:medium>
+  <item><title>Track one</title><link>https://album.example/1</link>
+    <enclosure url="https://album.example/1.mp3" type="audio/mpeg" length="1"/></item>
+</channel></rss>`;
+  assert.equal(parseFeed(rss).kind, 'music');
+});
+
+test('a declared playlist is music even with nothing attached to it', () => {
+  // `musicL` is a playlist, and a playlist points at tracks published
+  // elsewhere rather than carrying them, so there is no enclosure to read.
+  const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel>
+  <title>A playlist</title>
+  <link>https://list.example/</link>
+  <podcast:medium>musicL</podcast:medium>
+  <item><title>Pointer</title><link>https://list.example/1</link></item>
+</channel></rss>`;
+  assert.equal(parseFeed(rss).kind, 'music');
+});
+
+test('a declared medium beats the podcast tags around it', () => {
+  // podcast:medium is itself one of the tags that marks a podcast, so a music
+  // feed carrying the rest of the namespace must not be read as a show.
+  const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel>
+  <title>An album on podcast hosting</title>
+  <link>https://album.example/</link>
+  <podcast:medium>music</podcast:medium>
+  <itunes:category text="Music"/>
+  <itunes:explicit>false</itunes:explicit>
+  <item><title>Track one</title><link>https://album.example/1</link>
+    <enclosure url="https://album.example/1.mp3" type="audio/mpeg" length="1"/></item>
+</channel></rss>`;
+  assert.equal(parseFeed(rss).kind, 'music');
+});
+
+test('a medium this parser does not know leaves the evidence to speak', () => {
+  const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel>
+  <title>An audiobook</title>
+  <link>https://book.example/</link>
+  <podcast:medium>audiobook</podcast:medium>
+  <item><title>Chapter one</title><link>https://book.example/1</link>
+    <enclosure url="https://book.example/1.mp3" type="audio/mpeg" length="1"/></item>
+</channel></rss>`;
+  assert.equal(parseFeed(rss).kind, 'podcast');
 });
 
 test('a YouTube channel feed is a video feed, and its entries carry an embed', () => {
@@ -259,7 +313,7 @@ test('an ordinary blog stays a blog in every format', () => {
   assert.equal(parseFeed(JSON_FEED).kind, 'blog');
 });
 
-test('an atom feed with an audio enclosure link is music', () => {
+test('an atom feed with an audio enclosure link is a blog', () => {
   const atom = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Atom show</title>
@@ -271,10 +325,10 @@ test('an atom feed with an audio enclosure link is music', () => {
     <link rel="enclosure" type="audio/mpeg" href="https://a.example/1.mp3"/>
   </entry>
 </feed>`;
-  assert.equal(parseFeed(atom).kind, 'music');
+  assert.equal(parseFeed(atom).kind, 'blog');
 });
 
-test('a JSON feed with an audio attachment is music', () => {
+test('a JSON feed with an audio attachment is a blog', () => {
   const json = JSON.stringify({
     version: 'https://jsonfeed.org/version/1.1',
     title: 'JSON show',
@@ -287,7 +341,7 @@ test('a JSON feed with an audio attachment is music', () => {
       },
     ],
   });
-  assert.equal(parseFeed(json).kind, 'music');
+  assert.equal(parseFeed(json).kind, 'blog');
 });
 
 test('category tags are read from every format that has them', () => {
