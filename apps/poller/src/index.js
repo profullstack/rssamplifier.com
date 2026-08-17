@@ -60,6 +60,10 @@ const topicSearchIntervalMs = (Number(env['DISCOVERY_TOPIC_INTERVAL_SECONDS']) |
 // a single-column update, so the batch is bounded by the write round trip
 // rather than by CPU.
 const clusterBatch = Number(env['CLUSTER_BACKFILL_BATCH']) || 500;
+// How often the backfill takes another page. Its own cadence rather than the
+// crawl's: at 500 rows every 10 seconds a 1.4M-row table is walked in about
+// eight hours, and the walk is a bounded indexed read either way.
+const clusterIntervalMs = (Number(env['CLUSTER_BACKFILL_SECONDS']) || 10) * 1000;
 
 // Whether the daemon's log is also written to the database, where /crawlstats
 // can stream it. On by default; an operator debugging against a production
@@ -84,6 +88,8 @@ let clusterBackfill = true;
 // stored: a restart re-walks from the start, and re-walking is cheap because
 // rows that already carry a key are read and skipped without a write.
 let clusterCursor = '';
+// Guards the walk against overlapping itself if one page runs long.
+let backfilling = false;
 let lastPurge = 0;
 let lastSources = 0;
 let lastTopicSearch = 0;
@@ -212,33 +218,6 @@ async function tick() {
       log('topics', { topics, ms: Date.now() - lastTopics });
     }
 
-    // Grouping keys for the items stored before the column existed. Runs every
-    // tick while there is anything left and then costs one indexed lookup that
-    // returns nothing, which is why it is not on a timer: the work ends on its
-    // own, and until it does there is no reason to go slower.
-    //
-    // Last in the tick on purpose. It is the only step here that nobody is
-    // waiting on — a river that still shows a duplicate for another hour is a
-    // smaller problem than a crawl that ran late.
-    if (clusterBackfill) {
-      try {
-        const filled = await q.backfillClusterKeys(db, clusterBatch, clusterCursor);
-        if (filled.cursor === null) {
-          // Walked off the end of the table. Done for the life of this process;
-          // everything stored from here on is keyed as it arrives.
-          clusterBackfill = false;
-          log('cluster-backfill-done', {});
-        } else {
-          clusterCursor = filled.cursor;
-          // Only worth a line when it actually wrote something: most passes
-          // late in the walk are over rows that were already keyed.
-          if (filled.keyed) log('cluster-backfill', filled);
-        }
-      } catch (err) {
-        log('cluster-backfill-error', { message: String(err?.message ?? err) });
-      }
-    }
-
     if (Date.now() - lastPurge > 3_600_000) {
       lastPurge = Date.now();
       const purged = await accounts.purgeExpired(db);
@@ -271,8 +250,52 @@ try {
   process.exit(1);
 }
 
+/**
+ * Key the items stored before the grouping column existed.
+ *
+ * On its own timer, and not a step of `tick()`, which is where it started and
+ * where it did not work. A tick spends minutes inside the crawl, and anything
+ * after that only runs if the process survives long enough to reach it — on a
+ * day of frequent deploys it never did, and the walk logged nothing at all
+ * while looking exactly like a backfill that had finished. Given its own timer
+ * it makes progress regardless of how long a crawl takes or when the next
+ * restart lands.
+ *
+ * It is small, indexed work against a database the crawl is already talking to,
+ * so running it alongside a crawl rather than after one costs nothing worth
+ * measuring.
+ */
+async function backfillTick() {
+  if (!clusterBackfill || stopping) return;
+  if (backfilling) return; // never let two walks overlap the same cursor
+  backfilling = true;
+
+  try {
+    const filled = await q.backfillClusterKeys(db, clusterBatch, clusterCursor);
+    if (filled.cursor === null) {
+      // Walked off the end of the table. Done for the life of this process;
+      // everything stored from here on is keyed as it arrives.
+      clusterBackfill = false;
+      clearInterval(backfillTimer);
+      log('cluster-backfill-done', {});
+    } else {
+      clusterCursor = filled.cursor;
+      // Logged on every pass that read anything, not only ones that wrote.
+      // A silent worker and an absent one are indistinguishable, which is the
+      // mistake that hid this the first time.
+      log('cluster-backfill', { scanned: filled.scanned, keyed: filled.keyed });
+    }
+  } catch (err) {
+    log('cluster-backfill-error', { message: String(err?.message ?? err) });
+  } finally {
+    backfilling = false;
+  }
+}
+
 const timer = setInterval(tick, intervalMs);
+const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
 void tick();
+void backfillTick();
 
 log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency, discoveryBatch });
 
@@ -284,6 +307,7 @@ log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency, dis
 function shutdown(signal) {
   stopping = true;
   clearInterval(timer);
+  clearInterval(backfillTimer);
 
   // Recorded before the buffer is closed, so the live log's last line is the
   // daemon saying it stopped rather than the log simply going quiet — which is
