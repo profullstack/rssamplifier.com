@@ -422,6 +422,12 @@ export default function DockPlayer() {
     const onSubmit = async (event) => {
       const form = /** @type {HTMLFormElement} */ (event.target);
       if (!form?.matches?.('form[data-soft]')) return;
+      // Somebody nearer the form already dealt with it. PostActions handles its
+      // own submits exactly this way, and the two handlers are one `data-soft`
+      // attribute away from meeting on the same form — at which point the
+      // action is posted twice, and "twice" for a vote or a queue add is a
+      // different outcome, not a slower one.
+      if (event.defaultPrevented) return;
 
       event.preventDefault();
       try {
