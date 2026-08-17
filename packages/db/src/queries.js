@@ -357,6 +357,11 @@ export async function upsertItems(db, feedId, items) {
   }));
 
   await db.batch(statements, 'write');
+  // How many items were **offered**, not how many were new. Every crawl re-sends
+  // the whole document and the conflict clause updates the rows already there,
+  // so there is no cheap way to tell the two apart here — and reading this as
+  // "new items" silently disables the crawler's backoff. `crawlFeed` derives the
+  // real figure from the change in the stored total.
   return statements.length;
 }
 
