@@ -15,10 +15,37 @@ test('scripts are removed with their contents, not unwrapped', () => {
   assert.ok(!out.includes('alert'), `script body survived: ${out}`);
   assert.ok(out.includes('before') && out.includes('after'));
 
-  for (const tag of ['style', 'iframe', 'object', 'embed', 'form', 'noscript', 'svg']) {
+  for (const tag of ['style', 'iframe', 'object', 'form', 'noscript', 'svg']) {
     const dirty = `<p>keep</p><${tag}>payload</${tag}>`;
     assert.ok(!sanitizeHtml(dirty).includes('payload'), `${tag} body survived`);
   }
+});
+
+test('void elements are dropped as tags, not as everything after them', () => {
+  // These never close, so "strip with the contents" has no closing tag to find
+  // and runs to the end of the document — which quietly deleted the rest of any
+  // article containing a <picture>. What has to go is the element; the text
+  // after it was never inside it, and a browser parses it the same way.
+  for (const tag of ['embed', 'input', 'source', 'track', 'link', 'meta', 'base']) {
+    const out = sanitizeHtml(`<p>before</p><${tag} src="x.mp4"><p>after</p>`);
+    assert.ok(!out.includes(`<${tag}`), `${tag} tag survived: ${out}`);
+    assert.ok(!out.includes('x.mp4'), `${tag} attributes survived: ${out}`);
+    assert.ok(out.includes('before') && out.includes('after'), `${tag} ate the article: ${out}`);
+  }
+});
+
+test('a picture element keeps the article that follows it', () => {
+  const html = [
+    '<p>The band went into the studio.</p>',
+    '<figure><picture><source srcset="hero.avif" type="image/avif">',
+    '<img src="https://example.com/hero.jpg" alt="hero"></picture></figure>',
+    '<p>They came out with a record.</p>',
+  ].join('');
+
+  const out = sanitizeHtml(html);
+  assert.ok(out.includes('came out with a record'), out);
+  assert.ok(out.includes('https://example.com/hero.jpg'), out);
+  assert.ok(!out.includes('<source'), out);
 });
 
 test('event handlers are dropped whatever their name', () => {
