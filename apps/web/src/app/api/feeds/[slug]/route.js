@@ -1,4 +1,4 @@
-import { q } from '@rssamplifier/db';
+import { q, authors } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../lib/db.js';
 
@@ -28,11 +28,12 @@ export async function GET(req, { params }) {
     });
   }
 
-  const [items, topics] = await Promise.all([
+  const [items, topics, credited] = await Promise.all([
     q.itemsForFeed(client, String(feed.id), limit),
     // A feed's full topic set, including the ones no other feed shares — those
     // are absent from /api/topics by design, and this is where they live.
     q.keywordsForFeed(client, String(feed.id), 25),
+    authors.authorsForFeed(client, String(feed.id)),
   ]);
 
   return new Response(
@@ -57,6 +58,28 @@ export async function GET(req, { params }) {
           source: t.source,
           strength: Number(t.count ?? 0),
           page: `${siteUrl()}/topics/${encodeURIComponent(String(t.slug))}`,
+        })),
+        // Who writes it, and the accounts they published. Inline rather than
+        // behind a second request: a caller reading a feed to decide whether
+        // to say something about it needs to know who to say it to, and making
+        // that a separate round trip per feed is how a client ends up not
+        // bothering.
+        authors: credited.map((person) => ({
+          slug: person.slug,
+          name: person.name,
+          // 'owner' publishes the feed, 'author' writes in it.
+          role: person.role,
+          site: person.site_url,
+          email: person.email,
+          confidence: Number(person.confidence ?? 0),
+          page: `${siteUrl()}/authors/${encodeURIComponent(String(person.slug))}`,
+          links: (person.links ?? []).map((l) => ({
+            network: l.network,
+            url: l.url,
+            handle: l.handle,
+            source: l.source,
+            verified: l.verified,
+          })),
         })),
         items: items.map((i) => ({
           guid: i.guid,

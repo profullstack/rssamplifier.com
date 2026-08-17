@@ -113,6 +113,26 @@ test('the same person credited twice is merged, strongest evidence winning', () 
   assert.equal(merged[0].confidence, 0.85);
 });
 
+test('a site that signs both "Jeena" and "Jeena Paradies" gets one author, under the fuller name', () => {
+  const merged = mergeCredits([
+    { name: 'Jeena Paradies', email: '', url: 'https://jeena.net', avatar: '', role: 'owner', source: 'atom-feed-author', confidence: 0.85 },
+    { name: 'Jeena', email: 'j@jeena.net', url: '', avatar: '', role: 'owner', source: 'h-card', confidence: 0.85 },
+  ]);
+
+  assert.equal(merged.length, 1, 'jeena.net really does this, and it made two author pages for one person');
+  assert.equal(merged[0].name, 'Jeena Paradies', 'the fuller name is the one somebody would search for');
+  assert.equal(merged[0].email, 'j@jeena.net', 'the shorter credit’s evidence is kept');
+});
+
+test('two different people whose names merely start alike stay apart', () => {
+  const merged = mergeCredits([
+    { name: 'Sam Ruiz', email: '', url: '', avatar: '', role: 'author', source: 'item-byline', confidence: 0.6 },
+    { name: 'Sam Okonjo', email: '', url: '', avatar: '', role: 'author', source: 'item-byline', confidence: 0.6 },
+  ]);
+
+  assert.equal(merged.length, 2, 'only a bare first name is absorbed, never two full names');
+});
+
 test('an RSS channel gives up its owner, and a post title masquerading as one does not', () => {
   const rss = `<rss><channel>
       <title>A Blog</title>

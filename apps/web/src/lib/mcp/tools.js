@@ -1,4 +1,4 @@
-import { q, newId } from '@rssamplifier/db';
+import { q, newId, authors as people } from '@rssamplifier/db';
 import { topicSlug } from '@rssamplifier/feed';
 import { submitCatalogue, hashIp } from '@rssamplifier/ingest';
 
@@ -160,13 +160,15 @@ export const TOOLS = [
       if (!found) throw invalid(`no feed with slug '${slug}'`);
 
       const limit = bounded(args?.limit, 50, 1, 200);
-      const [items, topics] = await Promise.all([
+      const [items, topics, credited] = await Promise.all([
         q.itemsForFeed(client, String(found.id), limit),
         q.keywordsForFeed(client, String(found.id), 25),
+        people.authorsForFeed(client, String(found.id)),
       ]);
 
       return {
         ...feed(found),
+        authors: credited.map(author),
         topics: topics.map((t) => ({
           slug: t.slug,
           keyword: t.keyword,
@@ -380,6 +382,95 @@ export const TOOLS = [
   },
 
   {
+    name: 'list_authors',
+    title: 'List the people behind the feeds',
+    description:
+      "The directory's authors and where else they publish — their own sites, Mastodon and Bluesky accounts, GitHub, links pages. Every link was published by the author on their own site as a rel=\"me\" claim, an h-card or JSON-LD; nothing is scraped from a platform or bought. Filter with network to find only people reachable a given way (email, fediverse, bluesky, github, website, linktree), or query to search names. Role mailboxes like info@ are never returned: they are dropped at extraction, so an address here belongs to a person.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search names.' },
+        network: {
+          type: 'string',
+          description: 'Only people with a link on this network, e.g. "email" or "fediverse".',
+        },
+        minConfidence: {
+          type: 'number',
+          minimum: 0,
+          maximum: 1,
+          description:
+            'How sure the attribution must be, 0 to 1. Default 0.6, which is what the site itself publishes. Lower it for the long tail, and expect some of it to be wrong.',
+        },
+        limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Default 50.' },
+        offset: { type: 'integer', minimum: 0, description: 'Default 0.' },
+      },
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    async run(args) {
+      const client = db();
+      const limit = bounded(args?.limit, 50, 1, 200);
+      const offset = Math.max(Number(args?.offset ?? 0) || 0, 0);
+      const minConfidence = boundedFloat(args?.minConfidence, 0.6, 0, 1);
+
+      const [rows, stats] = await Promise.all([
+        people.listAuthors(client, {
+          limit,
+          offset,
+          minConfidence,
+          network: String(args?.network ?? '').trim(),
+          query: String(args?.query ?? '').trim(),
+        }),
+        people.authorStats(client),
+      ]);
+
+      return {
+        // Said up front, because the honest answer to "who writes the small
+        // web" is that we know for a fraction of it so far and the pass is
+        // still walking. A count without that context reads as the whole.
+        known: stats.authors,
+        reachable: stats.reachable,
+        feedsChecked: stats.feedsChecked,
+        authors: rows.map(author),
+      };
+    },
+  },
+
+  {
+    name: 'get_author',
+    title: 'Get one author',
+    description:
+      'One person: where to find them, and everything in the directory they publish. The feed list is what settles whether two people with the same name are the same person.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: "The author's slug in this directory." },
+      },
+      required: ['slug'],
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    async run(args) {
+      const slug = String(args?.slug ?? '').trim();
+      if (!slug) throw invalid('slug is required');
+
+      const found = await people.authorBySlug(db(), slug);
+      if (!found) throw invalid(`no author with slug '${slug}'`);
+
+      return {
+        ...author(found),
+        feeds: (found.feeds ?? []).map((f) => ({
+          slug: f.slug,
+          title: f.title,
+          kind: f.kind,
+          // 'owner' publishes it; 'author' writes in it.
+          role: f.role,
+          itemCount: Number(f.item_count ?? 0),
+          page: `${siteUrl()}/${f.slug}`,
+        })),
+      };
+    },
+  },
+
+  {
     name: 'directory_stats',
     title: 'Directory and crawler status',
     description:
@@ -511,6 +602,37 @@ function feed(f) {
 }
 
 /**
+ * An author row, in the shape every tool returns it.
+ *
+ * `source` and `confidence` ride along rather than being flattened away
+ * because the caller is usually deciding whether to act on this — and "we read
+ * it off a rel=me link on their own site" and "we saw the icon in a footer"
+ * are not the same claim, however similar the two rows look.
+ *
+ * @param {any} a
+ * @returns {object}
+ */
+function author(a) {
+  return {
+    slug: a.slug,
+    name: a.name,
+    bio: a.bio,
+    site: a.site_url,
+    email: a.email,
+    role: a.role,
+    confidence: Number(a.confidence ?? 0),
+    page: `${siteUrl()}/authors/${a.slug}`,
+    links: (a.links ?? []).map((l) => ({
+      network: l.network,
+      url: l.url,
+      handle: l.handle,
+      source: l.source,
+      verified: l.verified,
+    })),
+  };
+}
+
+/**
  * A post row, in the shape every tool returns it.
  *
  * `feed` and `guid` travel together on purpose: they are exactly the pair
@@ -548,6 +670,26 @@ function post(i) {
 function bounded(raw, fallback, min, max) {
   const n = Number(raw ?? fallback) || fallback;
   return Math.min(Math.max(Math.trunc(n), min), max);
+}
+
+/**
+ * The same, for an argument that is a fraction rather than a count.
+ *
+ * `bounded` truncates, which is right for a limit and wrong for a confidence:
+ * it would quietly turn 0.6 into 0 and hand back the whole long tail to a
+ * caller who asked for the opposite.
+ *
+ * @param {unknown} raw
+ * @param {number} fallback
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
+function boundedFloat(raw, fallback, min, max) {
+  if (raw == null || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
 }
 
 /**

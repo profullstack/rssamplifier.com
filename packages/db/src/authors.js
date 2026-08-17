@@ -388,6 +388,31 @@ export async function countAuthors(db, opts = {}) {
 }
 
 /**
+ * Author pages worth listing in the sitemap.
+ *
+ * Ordered by confidence rather than by name, because the list is capped: if
+ * the directory ever holds more authors than one sitemap file may carry, the
+ * ones that get dropped should be the guesses and not the people we are sure
+ * about.
+ *
+ * @param {Client} db
+ * @param {number} limit
+ * @param {number} [minConfidence]
+ * @returns {Promise<Array<{ slug: string, updated_at: string }>>}
+ */
+export async function authorsForSitemap(db, limit, minConfidence = 0.6) {
+  const { rows } = await db.execute({
+    sql: `select slug, updated_at from authors
+           where confidence >= ?
+           order by confidence desc, updated_at desc
+           limit ?`,
+    args: [minConfidence, limit],
+  });
+
+  return /** @type {any} */ (rows);
+}
+
+/**
  * How far the enrichment pass has got, and what it has found.
  *
  * @param {Client} db

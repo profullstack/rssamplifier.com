@@ -522,16 +522,50 @@ export function mergeCredits(credits) {
       continue;
     }
 
-    existing.email ||= credit.email;
-    existing.url ||= credit.url;
-    existing.avatar ||= credit.avatar;
-    existing.confidence = Math.max(existing.confidence, credit.confidence);
-    // Owner outranks author: it is the stronger claim about the feed.
-    if (credit.role === 'owner') existing.role = 'owner';
-    if (!existing.source.includes(credit.source)) existing.source += `,${credit.source}`;
+    absorb(existing, credit);
   }
 
-  return [...byName.values()];
+  // A site that signs "Jeena" in one place and "Jeena Paradies" in another is
+  // one person, and jeena.net does exactly that — an h-card name and a feed
+  // author element disagreeing about how formal to be. Left alone it produced
+  // two author rows and two pages for one blogger.
+  //
+  // Only a first-name match, and only within a single document's credits,
+  // where the strongest counter-example — a group blog with a Sam and a Sam
+  // Ruiz who are different people — is rare enough to be worth the trade. The
+  // fuller name wins, because it is the one somebody would search for.
+  const names = [...byName.values()];
+  const merged = [];
+
+  for (const person of names.sort((a, b) => b.name.length - a.name.length)) {
+    const first = normalizeName(person.name).split(' ')[0];
+    const fuller = merged.find(
+      (other) =>
+        normalizeName(other.name).split(' ')[0] === first &&
+        normalizeName(other.name).split(' ').length > normalizeName(person.name).split(' ').length,
+    );
+
+    if (fuller && normalizeName(person.name).split(' ').length === 1) absorb(fuller, person);
+    else merged.push(person);
+  }
+
+  return merged;
+}
+
+/**
+ * Fold one credit's evidence into another's, strongest wins.
+ *
+ * @param {Credit} into
+ * @param {Credit} from
+ */
+function absorb(into, from) {
+  into.email ||= from.email;
+  into.url ||= from.url;
+  into.avatar ||= from.avatar;
+  into.confidence = Math.max(into.confidence, from.confidence);
+  // Owner outranks author: it is the stronger claim about the feed.
+  if (from.role === 'owner') into.role = 'owner';
+  if (!into.source.includes(from.source)) into.source += `,${from.source}`;
 }
 
 /**
