@@ -1,3 +1,5 @@
+import { mediaKind } from '../lib/media.js';
+
 /**
  * The episode, playing while you read it.
  *
@@ -15,21 +17,33 @@
  * `preload="none"` is the important attribute: an episode is tens of megabytes
  * and nobody who opened the show notes has yet said they want to hear it.
  *
+ * `inline` is the other half of that argument. Docking is right for a podcast,
+ * where the show notes are the page and the audio plays behind them. It is
+ * wrong for a video, where the video *is* the post and everything else on the
+ * page is a caption: a video post docked in the corner is the thing the reader
+ * came for, shrunk to a third of a column, with the middle of the screen given
+ * over to an apology about framing.
+ *
  * @param {{
  *   src: string,
  *   type?: string|null,
  *   title: string,
  *   seconds?: number|null,
  *   feedTitle?: string|null,
+ *   inline?: boolean,
  * }} props
  */
-export default function EpisodePlayer({ src, type, title, seconds, feedTitle }) {
-  const youtube = type === 'video/youtube';
-  const video = !youtube && /^video\//i.test(String(type ?? ''));
+export default function EpisodePlayer({ src, type, title, seconds, feedTitle, inline = false }) {
+  // The same reading of the enclosure the reader page uses to decide whether
+  // the post is watched or read. Two answers to "is this a video" that can
+  // disagree is how a page ends up rendering a docked audio bar for a video.
+  const kind = mediaKind({ audio_url: src, audio_type: type });
+  const youtube = kind === 'youtube';
+  const video = kind === 'video';
 
   return (
     <aside
-      className={`episode-player${youtube || video ? ' is-video' : ''}`}
+      className={`episode-player${youtube || video ? ' is-video' : ''}${inline ? ' is-inline' : ''}`}
       aria-label={video || youtube ? 'Episode video' : 'Episode audio'}
     >
       <div className="episode-meta">
@@ -48,8 +62,15 @@ export default function EpisodePlayer({ src, type, title, seconds, feedTitle }) 
           className="episode-video"
           src={src}
           title={title}
-          loading="lazy"
-          referrerPolicy="no-referrer"
+          // Eager when it is the post itself: a lazy frame that has not loaded
+          // is a black rectangle where the video should be.
+          loading={inline ? 'eager' : 'lazy'}
+          // No referrerPolicy, and this is not an oversight. YouTube authorizes
+          // an embed by its Referer, and `no-referrer` — which this had —
+          // leaves it with nothing to authorize: the player refused every video
+          // on the site with "Video player configuration error", Error 153.
+          // Measured on the live origin: dropping this attribute alone fixes
+          // it, and the sandbox below is not implicated either way.
           allow="accelerometer; encrypted-media; picture-in-picture; fullscreen"
           sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"
         />

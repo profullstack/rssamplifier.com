@@ -6,6 +6,7 @@ import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/tr
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { popularLanguages } from '../../../lib/languages.js';
+import { isWatchable } from '../../../lib/media.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
@@ -87,9 +88,27 @@ export default async function ReaderPage({ params, searchParams }) {
   if (!post) notFound();
 
   const postUrl = post.url ? String(post.url) : null;
-  const verdict = postUrl
-    ? await isFrameable(postUrl, siteUrl())
-    : { frameable: false, reason: 'no-url' };
+
+  const audio = post.audio_url ? String(post.audio_url) : null;
+  const mediaType = post.audio_type ? String(post.audio_type) : null;
+
+  // A video post is not a page that failed to frame.
+  //
+  // YouTube's watch page refuses framing, like most video hosts, so a video
+  // arrived here as "this site does not allow itself to be embedded" over a
+  // link out — while the embed that does work sat docked in the corner at a
+  // third of the width. The enclosure says what the post is, and when it says
+  // video the video is the post: it plays where the article would be, and the
+  // description goes under it, which is where a description goes.
+  const watchable = isWatchable(post);
+
+  // Asked only when the answer can change anything. Framing a video host is not
+  // on the table, and this is a request to somebody else's server on the way to
+  // rendering every video page.
+  const verdict =
+    postUrl && !watchable
+      ? await isFrameable(postUrl, siteUrl())
+      : { frameable: false, reason: watchable ? 'video-post' : 'no-url' };
 
   const nav = await q.neighbours(client, String(feed.created_at));
 
@@ -159,8 +178,6 @@ export default async function ReaderPage({ params, searchParams }) {
   // translated article is one it can, so the frame gives way to it.
   const readable = Boolean(translated?.contentHtml);
 
-  const audio = post.audio_url ? String(post.audio_url) : null;
-
   return (
     <div className="reader">
       <div className="reader-head">
@@ -217,7 +234,48 @@ export default async function ReaderPage({ params, searchParams }) {
        * through sanitizeHtml, which is an allowlist and drops scripts,
        * handlers, embeds and unsafe URL schemes.
        */}
-      {readable ? (
+      {watchable ? (
+        <>
+          {/*
+           * The player, where the article would be, with the video loaded and
+           * one click from playing. Nothing is autoplayed: a video that starts
+           * talking because somebody opened a page is the behaviour every
+           * reader of this directory left somewhere else to avoid.
+           */}
+          <EpisodePlayer
+            inline
+            src={audio}
+            type={mediaType}
+            title={title}
+            seconds={post.audio_seconds ? Number(post.audio_seconds) : null}
+            feedTitle={String(feed.title)}
+          />
+
+          {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
+
+          {/* The description, which for a video is show notes: links, chapters
+              and credits the player itself does not carry. */}
+          {article && !summary && (
+            <article
+              className={`reader-article${translated ? ' translated' : ''}`}
+              lang={translated ? (wanted ?? undefined) : undefined}
+              dangerouslySetInnerHTML={{ __html: article }}
+            />
+          )}
+
+          {postUrl && (
+            <p className="hint">
+              <a href={postUrl} target="_blank" rel="noopener">
+                Watch on {hostOf(postUrl)} ↗
+              </a>
+            </p>
+          )}
+
+          {/* No ad here, for the reason the framed branch has none: what fills
+              the screen is somebody else's video, and selling space around it
+              would be earning off their work. */}
+        </>
+      ) : readable ? (
         <>
           {summary && <p className="lede translated">{summary}</p>}
           <article
@@ -310,11 +368,13 @@ export default async function ReaderPage({ params, searchParams }) {
       <Comments slug={slug} guid={String(post.guid)} comments={thread} userId={userId} />
 
       {/* Docked above the toolbar, so the episode keeps playing while the
-          show notes scroll behind it. */}
-      {audio && (
+          show notes scroll behind it. Audio only: a video is already playing
+          up where the article would be, and two players on one page is one
+          player too many. */}
+      {audio && !watchable && (
         <EpisodePlayer
           src={audio}
-          type={post.audio_type ? String(post.audio_type) : null}
+          type={mediaType}
           title={title}
           seconds={post.audio_seconds ? Number(post.audio_seconds) : null}
           feedTitle={String(feed.title)}

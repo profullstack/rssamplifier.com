@@ -622,10 +622,51 @@ button:disabled {
   background: #000;
 }
 
+/* The video as the post rather than as an accompaniment: in the flow, at the
+   column's full width, and with none of the docking chrome — no fixed
+   position, no blur, no border sealing it to the bottom of the window. The
+   height cap comes off with it, because the cap existed to stop a docked video
+   eating a page it was only meant to sit beside. */
+.episode-player.is-inline {
+  position: static;
+  z-index: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  max-height: none;
+  width: auto;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Capped by the window's height rather than the column's width. 16:9 across a
+   wide screen is taller than the screen, which puts the title off the top and
+   the description two scrolls down — a video that has to be scrolled away from
+   to find out what it is. The width cap is the same limit expressed the other
+   way, so the frame shrinks instead of being letterboxed inside its own box. */
+.episode-player.is-inline .episode-video {
+  max-height: 68vh;
+  max-width: calc(68vh * 16 / 9);
+  margin-inline: auto;
+  border-radius: 10px;
+}
+
+/* The docked player's own meta line is a label on a corner box. Inline, the
+   page already carries the title in an <h1> directly above, so repeating it
+   here would be the same sentence twice. */
+.episode-player.is-inline .episode-meta {
+  display: none;
+}
+
 @media (min-width: 48rem) {
   /* On a wide screen the video sits in a corner instead of across the foot of
-     the page, so the article keeps its measure. */
-  .episode-player.is-video {
+     the page, so the article keeps its measure. Docked only — an inline player
+     is the article. */
+  .episode-player.is-video:not(.is-inline) {
     left: auto;
     right: 1.5rem;
     bottom: 1.5rem;
@@ -636,12 +677,14 @@ button:disabled {
   }
 }
 
-/* The browsing toolbar sits above the player rather than on top of it. */
-body:has(.episode-player) .toolbar {
+/* The browsing toolbar sits above the player rather than on top of it — and
+   only when there is a docked player to sit above. An inline one occupies its
+   own space in the flow and needs neither the offset nor the padding. */
+body:has(.episode-player:not(.is-inline)) .toolbar {
   bottom: calc(4.75rem + env(safe-area-inset-bottom));
 }
 
-body:has(.episode-player) {
+body:has(.episode-player:not(.is-inline)) {
   padding-bottom: 9rem;
 }
 
