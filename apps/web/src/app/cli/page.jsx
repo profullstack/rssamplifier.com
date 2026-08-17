@@ -52,11 +52,24 @@ export default function CliPage() {
       </p>
       <p>
         Node 22 or newer is the only requirement. Install somewhere else with{' '}
-        <code>RSSAMP_BIN=/usr/local/bin</code>, and uninstall by deleting{' '}
-        <code>rssamp</code> and <code>rssamplifier</code> from wherever you put them.
+        <code>RSSAMP_BIN=/usr/local/bin</code>.
       </p>
       <p>
-        Current version is <code>{VERSION}</code>. Re-running the installer upgrades in place.
+        Current version is <code>{VERSION}</code>. It manages itself from there:
+      </p>
+      <pre className="code-block">
+        <code>{`rssamp update        # pull the latest over itself
+rssamp remove        # show what uninstalling would delete
+rssamp remove --yes  # actually do it`}</code>
+      </pre>
+      <p>
+        <code>update</code> re-downloads this file over the one on your PATH, staging it alongside
+        and renaming it into place — so an interrupted upgrade leaves the working copy working
+        rather than half a file. <code>remove</code> deletes the two binaries and nothing else,
+        because there is nothing else: no config, no cache, no state anywhere on your machine.
+        Neither will touch a file it did not write, so an <code>rssamp</code> of your own further up
+        the PATH is safe, and running out of a git checkout declines rather than eating your working
+        copy.
       </p>
 
       <h2>Start here</h2>

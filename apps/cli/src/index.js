@@ -18,9 +18,9 @@
  * shebang plus the guard at the bottom make the same file executable.
  */
 
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 
 const DEFAULT_API = 'https://rssamplifier.com';
 
@@ -108,6 +108,24 @@ export const COMMANDS = [
     options: ['--json'],
     examples: ['rssamp submit example.com', 'rssamp submit subscriptions.opml'],
   },
+  {
+    name: 'update',
+    usage: 'update',
+    summary: 'Upgrade to the latest version in place',
+    detail:
+      'Re-downloads the program over itself, from whichever deployment it points at. There is no package manager in the loop, so this is the upgrade path — the same one the installer takes, minus the part that puts it on your PATH. Says so and changes nothing when you are already current.',
+    options: ['--api <url>'],
+    examples: ['rssamp update'],
+  },
+  {
+    name: 'remove',
+    usage: 'remove [--yes]',
+    summary: 'Uninstall the program',
+    detail:
+      'Deletes rssamp and rssamplifier from the directory it is installed in, and nothing else — there is no config, no cache and no state anywhere to clean up. Without --yes it prints what it would delete and stops, so you can see the paths before committing to them.',
+    options: ['--yes'],
+    examples: ['rssamp remove', 'rssamp remove --yes'],
+  },
 ];
 
 /** @type {string[]} */
@@ -123,6 +141,7 @@ export const GLOBAL_OPTIONS = [
   { flag: '--json', detail: 'Raw JSON, for piping into jq or handing to an agent.' },
   { flag: '--limit <n>', detail: 'Cap the number of results.' },
   { flag: '--offset <n>', detail: 'Skip results, for paging.' },
+  { flag: '--yes', detail: 'Confirm a destructive command. Only `remove` has one.' },
   { flag: '-h, --help', detail: 'This text.' },
   { flag: '-v, --version', detail: 'Print the version.' },
 ];
@@ -315,10 +334,120 @@ async function requestText(url) {
 }
 
 /**
+ * The names the installer writes. `update` and `remove` will touch a file only
+ * if it is called one of these, which is the guard that keeps them from acting
+ * on a checkout: `node src/index.js remove` is somebody in the repository, and
+ * deleting their working copy is not what they asked for.
+ */
+const INSTALLED_NAMES = ['rssamp', 'rssamplifier'];
+
+/**
+ * Does this content look like a copy of this program?
+ *
+ * Checked before overwriting or deleting anything. The filename alone is not
+ * enough — somebody may have their own `rssamp` on PATH — and a tool that
+ * removes files it did not write is a tool nobody should install with curl.
+ *
+ * @param {string} content
+ * @returns {boolean}
+ */
+export function looksLikeThisProgram(content) {
+  const text = String(content ?? '');
+  return text.startsWith('#!') && text.includes('rssamplifier') && text.length > 2000;
+}
+
+/**
+ * The version string a copy of this program reports, or null.
+ *
+ * Read out of the source rather than by running it: `update` wants to say what
+ * it replaced with what, and spawning a freshly downloaded file to ask is both
+ * slower and a worse idea.
+ *
+ * @param {string} content
+ * @returns {string|null}
+ */
+export function versionOf(content) {
+  const match = /export const VERSION = '([^']+)'/.exec(String(content ?? ''));
+  return match ? match[1] : null;
+}
+
+/**
+ * Where this program is installed, or null if it is not an install at all.
+ *
+ * Null means one of two things, and both are cases where `update` and `remove`
+ * must decline rather than guess: the module was imported (an npm or workspace
+ * install, whose upgrade path is the package manager), or it is being run out
+ * of a checkout under its own filename.
+ *
+ * Realpaths are compared because a symlinked install would otherwise look like
+ * an import — Node resolves the main module's symlinks before setting
+ * import.meta.url, so the two strings differ for the same file.
+ *
+ * @param {{ realpath: (p: string) => Promise<string> }} fs
+ * @param {string|undefined} argv1
+ * @returns {Promise<string|null>}
+ */
+export async function installPath(fs, argv1 = process.argv[1]) {
+  if (!argv1) return null;
+
+  try {
+    const running = await fs.realpath(argv1);
+    const self = await fs.realpath(fileURLToPath(import.meta.url));
+    if (running !== self) return null;
+
+    const name = running.slice(running.lastIndexOf('/') + 1);
+    return INSTALLED_NAMES.includes(name) ? running : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The default filesystem, as the small surface update/remove need.
+ *
+ * Injectable so the tests can exercise both without a real install to break.
+ *
+ * @returns {Promise<any>}
+ */
+async function realFs() {
+  const fs = await import('node:fs/promises');
+  return {
+    readFile: (p) => fs.readFile(p, 'utf8'),
+    writeFile: (p, data) => fs.writeFile(p, data),
+    chmod: (p, mode) => fs.chmod(p, mode),
+    rename: (from, to) => fs.rename(from, to),
+    unlink: (p) => fs.unlink(p),
+    realpath: (p) => fs.realpath(p),
+  };
+}
+
+/**
+ * The message shown when update or remove is asked of something that is not an
+ * installed copy. One place, because both commands mean the same thing by it.
+ *
+ * @param {string} verb
+ * @returns {string}
+ */
+function notAnInstallMessage(verb) {
+  return `${verb}: this is not a curl-installed copy.
+
+If you installed it with npm or pnpm, upgrade it the same way.
+If you are running it out of a checkout, git is your update command.
+A fresh install is:  curl -fsSL ${DEFAULT_API}/install.sh | sh`;
+}
+
+/**
  * Run the CLI.
  *
  * @param {string[]} argv
- * @param {{ log?: (s: string) => void, error?: (s: string) => void, readFile?: (p: string) => Promise<string> }} [io]
+ * @param {{
+ *   log?: (s: string) => void,
+ *   error?: (s: string) => void,
+ *   readFile?: (p: string) => Promise<string>,
+ *   fs?: any,
+ *   argv1?: string,
+ * }} [io] `fs` and `argv1` exist for update/remove, so the tests can drive them
+ *   against a fake install rather than the one running them.
  * @returns {Promise<number>} exit code
  */
 export async function run(argv, io = {}) {
@@ -545,6 +674,110 @@ export async function run(argv, io = {}) {
           const when = i.publishedAt ? String(i.publishedAt).slice(0, 10) : '----------';
           log(`  ${when}  ${truncate(i.title, 64)}`);
         }
+        return 0;
+      }
+
+      case 'update': {
+        const fs = io.fs ?? (await realFs());
+        const self = await installPath(fs, io.argv1);
+
+        if (!self) {
+          err(notAnInstallMessage('update'));
+          return 1;
+        }
+
+        const downloaded = await requestText(`${base}/cli/rssamp`);
+        // The same two checks the installer makes, for the same reason: a
+        // captive portal answering 200 with an HTML error page would otherwise
+        // be installed over a working program.
+        if (!looksLikeThisProgram(downloaded)) {
+          err(`update: ${base}/cli/rssamp did not return the CLI. Nothing was changed.`);
+          return 1;
+        }
+
+        const latest = versionOf(downloaded);
+        if (latest === VERSION) {
+          log(`Already on ${VERSION}, the latest.`);
+          return 0;
+        }
+
+        const dir = self.slice(0, self.lastIndexOf('/'));
+        // Written beside the target and renamed over it, never truncated in
+        // place: rename is atomic within a directory, so an interrupted update
+        // leaves the old program working rather than half a file that is not a
+        // program at all. The running process is unaffected either way — it
+        // holds the old inode open.
+        const staging = `${dir}/.rssamp.update`;
+
+        for (const name of INSTALLED_NAMES) {
+          const target = `${dir}/${name}`;
+          let existing;
+          try {
+            existing = await fs.readFile(target);
+          } catch {
+            // Only rssamp is guaranteed to be there; the long alias is a
+            // convenience the installer adds and a user may have removed.
+            continue;
+          }
+          if (!looksLikeThisProgram(existing)) {
+            err(`update: ${target} is not this program — left alone.`);
+            continue;
+          }
+
+          await fs.writeFile(staging, downloaded);
+          await fs.chmod(staging, 0o755);
+          await fs.rename(staging, target);
+          log(`Updated ${target}`);
+        }
+
+        log(`\n${VERSION} → ${latest ?? 'unknown'}`);
+        return 0;
+      }
+
+      case 'remove': {
+        const fs = io.fs ?? (await realFs());
+        const self = await installPath(fs, io.argv1);
+
+        if (!self) {
+          err(notAnInstallMessage('remove'));
+          return 1;
+        }
+
+        const dir = self.slice(0, self.lastIndexOf('/'));
+        const targets = [];
+
+        for (const name of INSTALLED_NAMES) {
+          const target = `${dir}/${name}`;
+          try {
+            const content = await fs.readFile(target);
+            // Never delete a file we did not write, even one sitting under a
+            // name we use. Somebody else's rssamp on PATH is their program.
+            if (looksLikeThisProgram(content)) targets.push(target);
+          } catch {
+            // Not there; nothing to remove.
+          }
+        }
+
+        if (targets.length === 0) {
+          err('remove: found nothing to remove.');
+          return 1;
+        }
+
+        // A dry run by default. `remove` is the one command whose whole job is
+        // destroying something, and there is no prompt to fall back on when the
+        // program is being driven by a script.
+        if (!flags.yes) {
+          log('Would remove:');
+          for (const target of targets) log(`  ${target}`);
+          log('\nNothing was deleted. Re-run with --yes to go ahead.');
+          return 0;
+        }
+
+        for (const target of targets) {
+          await fs.unlink(target);
+          log(`Removed ${target}`);
+        }
+        log(`\nReinstall any time:  curl -fsSL ${base}/install.sh | sh`);
         return 0;
       }
 
