@@ -9,8 +9,20 @@ import { q } from '@rssamplifier/db';
  * enough that the number is never what stops a real catalogue: the largest
  * subscription list anyone has actually uploaded here is 47,000 entries, and a
  * 117 MB OPML is around 700,000.
+ *
+ * Fifty million rather than one million because a million was, quietly, the
+ * cap on the whole flow. The uploader reads the file in the browser and posts
+ * the feeds, so nothing else in the path cares how big the file was — which
+ * left this as the only thing that did, and at a million feeds it stopped at
+ * roughly 200 MB of OPML. Fifty million is about ten gibibytes of it, which is
+ * more entries than the syndicated web has and therefore the right place for a
+ * limit whose job is to stop an abusive client rather than a large one.
+ *
+ * It is a per-submission ceiling, not a rate limit: what stops someone posting
+ * batches all day is `submissionCount` on /api/submit/begin and the six-hour
+ * `UPLOAD_WINDOW_MS` below, both of which are unchanged.
  */
-export const MAX_UPLOAD_FEEDS = Number(process.env['SUBMIT_MAX_FEEDS'] ?? 1_000_000);
+export const MAX_UPLOAD_FEEDS = Number(process.env['SUBMIT_MAX_FEEDS'] ?? 50_000_000);
 
 /**
  * Entries accepted in one batch request.

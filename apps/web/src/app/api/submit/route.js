@@ -2,7 +2,7 @@ import { submitCatalogue, submitOpml, hashIp } from '@rssamplifier/ingest';
 import { q, newId } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
-import { RAW_INPUT_LIMIT } from '../../../lib/submitted.js';
+import { clampRawInput } from '../../../lib/submitted.js';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -128,7 +128,7 @@ export async function POST(req) {
   await q.insertSubmission(client, {
     id: submissionId,
     kind,
-    raw_input: raw.slice(0, RAW_INPUT_LIMIT),
+    raw_input: clampRawInput(raw),
     ip_hash: ipHash,
     user_agent: req.headers.get('user-agent')?.slice(0, 300) ?? null,
   });
