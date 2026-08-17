@@ -168,6 +168,47 @@ test('what the dock cannot carry stays in the list as a plain link', () => {
   assert.equal(orphan.src, 'https://cdn.example.com/4.mp3');
 });
 
+test('a playlist row carries the handles its queue button needs', () => {
+  const entry = playlistEntry({
+    item_id: 'it_9',
+    guid: 'tag:example.com,2026:1',
+    url: 'https://example.com/ep1',
+    title: 'Episode One',
+    audio_url: 'https://cdn.example.com/1.mp3',
+    audio_type: 'audio/mpeg',
+    feed_slug: 'coder-radio',
+    feed_title: 'Coder Radio',
+  });
+
+  // Slug and guid are how /api/queue addresses a post; the item id is only so
+  // the page can ask which of fifty rows are already lined up.
+  assert.equal(entry.slug, 'coder-radio');
+  assert.equal(entry.guid, 'tag:example.com,2026:1');
+  assert.equal(entry.itemId, 'it_9');
+  assert.deepEqual(entry.lanes, ['listen', 'read']);
+});
+
+test('a row the dock cannot play is still a row you can keep', () => {
+  // The point of the distinction: queueing and playing are different questions
+  // about a post, and reading dockability as "queueable" would leave every
+  // YouTube entry on a playlist with no way to save it.
+  const entry = playlistEntry({
+    item_id: 'it_10',
+    guid: 'g3',
+    url: 'https://www.youtube.com/watch?v=abc',
+    title: 'A video',
+    audio_url: 'https://www.youtube.com/watch?v=abc',
+    audio_type: 'video/youtube',
+    feed_slug: 'a-channel',
+    feed_title: 'A Channel',
+  });
+
+  assert.equal(entry.dock, null);
+  assert.equal(entry.lane, 'watch');
+  assert.equal(entry.itemId, 'it_10');
+  assert.deepEqual(entry.lanes, ['watch', 'read']);
+});
+
 test('a row with nothing to play is not a playlist entry either', () => {
   assert.equal(playlistEntry({ title: 'A blog post', audio_url: null }), null);
   assert.equal(playlistEntry(null), null);

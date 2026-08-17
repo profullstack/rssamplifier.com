@@ -15,7 +15,7 @@
  * `/topics/[keyword]/play` for what it is given.
  */
 
-import { laneFor, trackFor } from './queue.js';
+import { laneFor, lanesOffered, trackFor } from './queue.js';
 
 /** The query that says "no, really, give me the file." */
 const RAW_PARAM = 'dl';
@@ -142,11 +142,19 @@ export function trackFrom(row) {
  * PeerTube enclosure — and those rows stay in the list as links to the file,
  * which is what they were before any of this.
  *
+ * The queue handles — slug, guid, item id and the lanes on offer — come out
+ * here too, and they are a different question from `dock`. Saving a video for
+ * later is a thing the site can do whatever the dock can carry: a YouTube post
+ * goes in the watch lane and opens on its own page when its turn comes. Reading
+ * dockability as "queueable" is how the playlists ended up with no way to keep
+ * anything on them.
+ *
  * @param {Record<string, unknown>} row a row from q.mediaForTopic
  * @returns {{
  *   id: string, src: string, type: string|null, title: string, show: string|null,
  *   showHref: string|null, postHref: string|null, seconds: number|null,
- *   dock: object|null, lane: string,
+ *   dock: object|null, lane: string, slug: string|null, guid: string,
+ *   itemId: string|null, lanes: ('read'|'listen'|'watch')[],
  * }|null}
  */
 export function playlistEntry(row) {
@@ -161,6 +169,13 @@ export function playlistEntry(row) {
     // to, and a dock entry whose title goes nowhere is worse than a plain link.
     dock: slug ? trackFor(row, { slug, feedTitle: String(row.feed_title ?? '') }) : null,
     lane: laneFor(/** @type {any} */ (row)),
+    slug,
+    // How the queue endpoint addresses a post: the two handles the site
+    // publishes. The item id is ours and never leaves the server — it is here
+    // only so the page can ask which of these are already lined up.
+    guid: String(row?.guid ?? ''),
+    itemId: row?.item_id ? String(row.item_id) : null,
+    lanes: lanesOffered(/** @type {any} */ (row)),
   };
 }
 

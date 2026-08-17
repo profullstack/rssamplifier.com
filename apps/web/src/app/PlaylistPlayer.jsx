@@ -1,4 +1,5 @@
 import { runtime } from '../lib/player.js';
+import QueueButton from './QueueButton.jsx';
 
 /**
  * A playlist, as a running order for the docked player.
@@ -27,6 +28,14 @@ import { runtime } from '../lib/player.js';
  * play on track nine queues ten through fifty behind it without the page
  * repeating itself fifty times over.
  *
+ * Each row also carries a queue button, which is the other thing a playlist is
+ * for. Playing is a now; queueing is a later, and a list of fifty episodes with
+ * no way to keep one was asking the reader to remember it. One lane per row —
+ * the lane the media itself belongs in — because the read lane is about the
+ * post rather than the file, and it is offered where the post is, behind
+ * "Notes". Fifty rows is exactly where a second button per row stops being a
+ * choice and starts being noise.
+ *
  * @param {{
  *   entries: Array<{
  *     id: string,
@@ -37,11 +46,16 @@ import { runtime } from '../lib/player.js';
  *     seconds: number|null,
  *     dock: object|null,
  *     lane: string,
+ *     slug?: string|null,
+ *     guid?: string,
+ *     itemId?: string|null,
  *   }>,
  *   label: string,
+ *   queued?: Record<string, ('read'|'listen'|'watch')[]>,
+ *   next?: string,
  * }} props
  */
-export default function PlaylistPlayer({ entries, label }) {
+export default function PlaylistPlayer({ entries, label, queued = {}, next = '/queue' }) {
   if (entries.length === 0) return null;
 
   // Only what the dock can actually carry. An embed in the middle of a running
@@ -63,6 +77,11 @@ export default function PlaylistPlayer({ entries, label }) {
         className="playlist-tracks"
         aria-label={label}
         data-dock-list={order.length > 0 ? JSON.stringify(order) : undefined}
+        // Where the running order came from, so the dock can say so. Playing a
+        // playlist is not the same as working through your queue, and a dock
+        // that called forty borrowed tracks "Queue · 39" was sending readers to
+        // a page holding one saved post and no explanation.
+        data-dock-list-href={order.length > 0 ? next : undefined}
       >
         {entries.map((entry, i) => (
           <li key={entry.id}>
@@ -93,6 +112,22 @@ export default function PlaylistPlayer({ entries, label }) {
               <a className="playlist-notes" href={entry.postHref} rel="noopener nofollow">
                 Notes
               </a>
+            )}
+
+            {/* Queueable whatever the dock can carry: a YouTube or PeerTube
+                entry has no dock payload and still belongs in the watch lane,
+                where its turn opens the post it plays on. */}
+            {entry.slug && entry.guid && (
+              <span className="playlist-queue">
+                <QueueButton
+                  slug={entry.slug}
+                  guid={entry.guid}
+                  lanes={[/** @type {'listen'|'watch'|'read'} */ (entry.lane)]}
+                  queued={entry.itemId ? (queued[entry.itemId] ?? []) : []}
+                  next={next}
+                  compact
+                />
+              </span>
             )}
           </li>
         ))}

@@ -2769,9 +2769,74 @@ html:not([data-dock]) .playlist-hint {
   color: var(--accent);
 }
 
+/* Keeping one track off a playlist. The button is the site's own queue pill,
+   with its words taken off the screen and left for a screen reader and the
+   tooltip: fifty rows each shouting "Listen later" is a wall of calls to
+   action, and the row's own job — the title of the thing — stops being the
+   thing you read. The pill on its own is the same control the reader has met
+   under every post in the directory. */
+.playlist-queue {
+  display: flex;
+  align-items: center;
+  padding-right: 0.4rem;
+}
+
+.playlist-queue .queue-button {
+  padding: 0.3rem 0.5rem;
+  border-color: transparent;
+  background: transparent;
+}
+
+.playlist-tracks li:hover .playlist-queue .queue-button,
+.playlist-queue .queue-button:focus-visible {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.playlist-queue .queue-button.on {
+  color: var(--accent);
+  background: transparent;
+}
+
+/* Off the screen rather than display:none — the label is the button's only
+   name, and a button announced as "plus" is a button nobody can use. */
+.playlist-queue .label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Keeping the whole playlist. Sits above the list, because the decision to
+   save all of it is made from the lede rather than from row forty. */
+.queue-all {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0 0 1.2rem;
+}
+
+.queue-all-note {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
 @media (max-width: 34rem) {
   .playlist-pick {
     grid-template-columns: 1.6rem minmax(0, 1fr) auto;
     gap: 0.15rem 0.5rem;
+  }
+
+  /* The pill is always drawn on a touch screen, where there is no hover to
+     reveal it with. */
+  .playlist-queue .queue-button {
+    border-color: var(--line);
   }
 }

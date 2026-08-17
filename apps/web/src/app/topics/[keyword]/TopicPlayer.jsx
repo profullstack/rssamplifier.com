@@ -1,9 +1,11 @@
-import { q } from '@rssamplifier/db';
+import { q, queue } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
+import { currentUser } from '../../../lib/auth.js';
 import { PLAYLIST_LIMIT } from '../../../lib/topicFeed.js';
-import { playlistEntry, queueRuntime, rawPlaylistPath } from '../../../lib/player.js';
+import { playlistEntry, playerPath, queueRuntime, rawPlaylistPath } from '../../../lib/player.js';
 import PlaylistPlayer from '../../PlaylistPlayer.jsx';
+import QueueAll from '../../QueueAll.jsx';
 
 /**
  * A topic's playlist, as a page you can press play on.
@@ -22,15 +24,40 @@ export default async function TopicPlayer({ topic, group = null }) {
   const client = db();
   const slug = encodeURIComponent(topic.slug);
 
-  const rows = await q.mediaForTopic(client, topic.slug, {
-    limit: PLAYLIST_LIMIT,
-    kinds: group?.kinds ?? null,
-  });
+  const [rows, user] = await Promise.all([
+    q.mediaForTopic(client, topic.slug, {
+      limit: PLAYLIST_LIMIT,
+      kinds: group?.kinds ?? null,
+    }),
+    currentUser(),
+  ]);
 
   const tracks = rows.map(playlistEntry).filter(Boolean);
   const listing = group ? `/topics/${slug}/${group.segment}` : `/topics/${slug}`;
   const hours = queueRuntime(tracks);
   const what = group ? group.item : 'episodes and tracks';
+
+  // Which of these the reader already has lined up — one statement for the
+  // whole playlist, because fifty rows asking one at a time is fifty round
+  // trips to draw fifty buttons. Only asked once there is somebody to ask
+  // about: the page is otherwise the same for everyone.
+  const queued = user
+    ? await queue.lanesForItems(
+        client,
+        String(user.id),
+        tracks.map((track) => track.itemId).filter(Boolean),
+      )
+    : /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({});
+
+  // The lanes this playlist lands in, and how much of it is already there. A
+  // topic's media is podcasts and videos together and they queue separately, so
+  // both are counted rather than assuming a playlist is one kind of thing.
+  const lanes = [...new Set(tracks.map((track) => track.lane))];
+  const already = tracks.filter((track) =>
+    (queued[String(track.itemId)] ?? []).includes(track.lane),
+  ).length;
+
+  const here = playerPath(topic.slug, group?.segment ?? null);
 
   return (
     <>
@@ -64,9 +91,23 @@ export default async function TopicPlayer({ topic, group = null }) {
               : `The ${tracks.length} most recent ${what} on this topic${hours ? `, about ${hours} of it` : ''}.`}
           </p>
 
+          {/* Above the list rather than below it: somebody who has decided to
+              keep the whole thing has decided that on the strength of the lede,
+              and should not have to scroll fifty rows to act on it. */}
+          <QueueAll
+            topic={topic.slug}
+            group={group?.segment ?? null}
+            total={tracks.length}
+            queued={already}
+            lanes={lanes}
+            next={here}
+          />
+
           <PlaylistPlayer
             entries={tracks}
             label={group ? `${topic.keyword} — ${group.heading}` : topic.keyword}
+            queued={queued}
+            next={here}
           />
         </>
       )}

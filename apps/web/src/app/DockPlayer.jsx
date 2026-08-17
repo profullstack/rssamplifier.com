@@ -55,6 +55,12 @@ export default function DockPlayer() {
   /** The lane being played, and what is left of it. */
   const [lane, setLane] = useState('listen');
   const [upNext, setUpNext] = useState(/** @type {any[]} */ ([]));
+  // Where "up next" came from, for the label: the reader's saved queue, or a
+  // playlist a page handed over — and, for the second, the page to send them
+  // back to. Held in state as well as in the ref below because the ref exists
+  // for the callbacks and this exists for the render.
+  const [source, setSource] = useState('lane');
+  const [listHref, setListHref] = useState(/** @type {string|null} */ (null));
   // A video shrunk to a thumbnail, and whether this browser will pop one out.
   const [compact, setCompact] = useState(false);
   const [canPop, setCanPop] = useState(false);
@@ -76,6 +82,7 @@ export default function DockPlayer() {
   // list — asking for a lane when the list is a topic's playlist would replace
   // the forty tracks the reader is working through with their own queue.
   const sourceRef = useRef('lane');
+  const hrefRef = useRef(/** @type {string|null} */ (null));
 
   trackRef.current = track;
   laneRef.current = lane;
@@ -101,6 +108,7 @@ export default function DockPlayer() {
           lane: laneRef.current,
           upNext: nextRef.current,
           source: sourceRef.current,
+          listHref: hrefRef.current,
           time: el ? el.currentTime : 0,
           playing: el ? !el.paused && !el.ended : false,
         }),
@@ -116,14 +124,25 @@ export default function DockPlayer() {
   const load = useCallback(
     /**
      * @param {any} next the track to play
-     * @param {{ lane?: string, at?: number, play?: boolean, list?: any[], source?: string }} [opts]
+     * @param {{
+     *   lane?: string, at?: number, play?: boolean, list?: any[],
+     *   source?: string, listHref?: string|null,
+     * }} [opts]
      */
     (next, opts = {}) => {
       if (!next?.src) return;
       resumeAt.current = Number(opts.at ?? 0);
       wantPlay.current = opts.play !== false;
       if (opts.lane) setLane(opts.lane);
-      if (opts.source) sourceRef.current = opts.source;
+      if (opts.source) {
+        sourceRef.current = opts.source;
+        setSource(opts.source);
+        // Only a page's own list has somewhere to go back to. Cleared rather
+        // than left behind when the queue takes over, or the dock would point
+        // at the playlist it stopped playing an hour ago.
+        hrefRef.current = opts.source === 'list' ? (opts.listHref ?? null) : null;
+        setListHref(hrefRef.current);
+      }
       if (opts.list) {
         // To the ref as well as to state, for the same reason the track is:
         // `advance` reads the running order off the ref, and a reader who
@@ -158,6 +177,9 @@ export default function DockPlayer() {
       const data = await res.json();
       const entries = (data.entries ?? []).filter((entry) => entry.track);
       sourceRef.current = 'lane';
+      setSource('lane');
+      hrefRef.current = null;
+      setListHref(null);
       nextRef.current = entries;
       setUpNext(entries);
     } catch {
@@ -230,6 +252,9 @@ export default function DockPlayer() {
       if (saved?.track?.src) {
         setLane(saved.lane ?? 'listen');
         sourceRef.current = saved.source ?? 'lane';
+        setSource(sourceRef.current);
+        hrefRef.current = saved.listHref ?? null;
+        setListHref(hrefRef.current);
         nextRef.current = saved.upNext ?? [];
         setUpNext(saved.upNext ?? []);
         resumeAt.current = Number(saved.time ?? 0);
@@ -394,6 +419,12 @@ export default function DockPlayer() {
     trackRef.current = null;
     setTrack(null);
     setUpNext([]);
+    // Back to the default, so the next thing a page offers the idle dock is not
+    // labelled with where the last playlist came from.
+    sourceRef.current = 'lane';
+    setSource('lane');
+    hrefRef.current = null;
+    setListHref(null);
     try {
       window.sessionStorage.removeItem(STORE);
     } catch {
@@ -460,7 +491,8 @@ export default function DockPlayer() {
             // hands the whole thing over with the track it was clicked on. The
             // order rides on an ancestor rather than on every row, so a list of
             // fifty episodes carries it once instead of fifty times.
-            const list = listFrom(play.closest('[data-dock-list]'));
+            const handover = listFrom(play.closest('[data-dock-list]'));
+            const list = handover?.list ?? null;
 
             load(next, {
               play: true,
@@ -468,6 +500,7 @@ export default function DockPlayer() {
               at,
               list: list ?? undefined,
               source: list ? 'list' : 'lane',
+              listHref: handover?.href ?? null,
             });
             // The reader's saved queue is only what comes next when the page did
             // not say. Asking for it here would throw away the playlist they
@@ -529,7 +562,14 @@ export default function DockPlayer() {
         // way to show the new state is to re-render the page — which, unlike
         // submitting the form, leaves the audio alone.
         router.refresh();
-        if (trackRef.current) loadLane(laneRef.current);
+        // Only when the dock is actually working through a lane. Now that a
+        // playlist row carries a queue button, this fires while a topic's
+        // playlist is playing — and re-asking for the lane there would swap the
+        // forty episodes the reader is halfway through for their saved queue,
+        // which is the lose-the-playlist bug the whole `source` distinction
+        // exists to prevent. Saving something for later must not change what is
+        // playing next.
+        if (trackRef.current && sourceRef.current === 'lane') loadLane(laneRef.current);
       } catch {
         // Whatever went wrong, the reader still asked for something. Let the
         // browser do it the ordinary way — through the prototype, since a
@@ -696,9 +736,21 @@ export default function DockPlayer() {
           </button>
         )}
 
-        <a href={`/queue?lane=${lane}`} title="Your queue">
-          Queue{remaining > 0 ? ` · ${remaining}` : ''}
-        </a>
+        {/* What is left, and what it is. A playlist a page handed over is not
+            the reader's queue and must not be labelled as one: forty AI
+            podcasts counted as "Queue · 39" sent people to a page holding the
+            one post they had actually saved, with nothing to explain the
+            difference. So the borrowed list says "Up next" and goes back to the
+            playlist it came from, and only the saved queue calls itself one. */}
+        {source === 'list' ? (
+          <a href={listHref ?? `/queue?lane=${lane}`} title="The playlist this is playing from">
+            Up next{remaining > 0 ? ` · ${remaining}` : ''}
+          </a>
+        ) : (
+          <a href={`/queue?lane=${lane}`} title="Your queue">
+            Queue{remaining > 0 ? ` · ${remaining}` : ''}
+          </a>
+        )}
 
         <button type="button" onClick={stop} title="Close the player" aria-label="Close the player">
           <span aria-hidden="true">✕</span>
@@ -716,8 +768,12 @@ export default function DockPlayer() {
  * what lets `advance` walk a playlist and a saved queue with one piece of code
  * instead of two that drift.
  *
+ * The page it came from comes with it, so the dock can name what it is playing
+ * and send the reader back to it rather than to their own queue, which is a
+ * different list of different things.
+ *
  * @param {Element|null} holder the nearest ancestor carrying data-dock-list
- * @returns {any[]|null} null when there is no list to take
+ * @returns {{ list: any[], href: string|null }|null} null when there is no list to take
  */
 function listFrom(holder) {
   if (!holder) return null;
@@ -727,7 +783,13 @@ function listFrom(holder) {
     if (!Array.isArray(parsed)) return null;
 
     const list = parsed.filter((entry) => entry?.src).map((track) => ({ track }));
-    return list.length > 0 ? list : null;
+    if (list.length === 0) return null;
+
+    const href = holder.getAttribute('data-dock-list-href');
+    // Same rule the soft-navigation check uses: a path on this site, never an
+    // absolute URL out of an attribute.
+    const safe = href && href.startsWith('/') && !href.startsWith('//') ? href : null;
+    return { list, href: safe };
   } catch {
     // A malformed list is a bug in a page, not a reason to refuse to play the
     // track the reader actually clicked. They get it on its own.
