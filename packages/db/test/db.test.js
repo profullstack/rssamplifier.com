@@ -106,6 +106,87 @@ test('a re-crawl fills in the thumbnail a post was stored without', async () => 
   assert.equal(again.image_url, 'https://test.example/hero.jpg');
 });
 
+test('the jobs board separates the queue that is meant to be deep from the one that is not', async () => {
+  const feed = await q.insertFeed(db, {
+    slug: 'jobs-subject',
+    feed_url: 'https://jobs.example/feed.xml',
+    site_url: 'https://jobs.example/',
+    title: 'Jobs Subject',
+    kind: 'blog',
+    // Accepted, not yet attempted — which is what a submission looks like until
+    // the crawler reaches it.
+    status: 'pending',
+  });
+
+  const before = await q.jobBacklogs(db);
+  assert.ok(before.pendingFirstCrawl >= 1, 'an unread feed is its own backlog');
+  assert.equal(typeof before.cardsPending, 'number');
+
+  // The overlap the board exists to show: the same feed, once its clock comes
+  // round, is counted by the queue that is supposed to be deep *and* by the one
+  // that is supposed to be empty. Aged by hand because insertFeed schedules a new
+  // feed an hour out rather than immediately.
+  await db.execute({
+    sql: 'update feeds set next_fetch_at = ? where id = ?',
+    args: ['2020-01-01T00:00:00.000Z', String(feed.id)],
+  });
+  const waiting = await q.jobBacklogs(db);
+  assert.ok(waiting.due >= 1, 'and is waiting in the update queue too');
+
+  await q.markCrawlSuccess(db, String(feed.id), { title: 'Jobs Subject' }, 0, 60);
+
+  const after = await q.jobBacklogs(db);
+  assert.equal(
+    after.pendingFirstCrawl,
+    before.pendingFirstCrawl - 1,
+    'reading it once takes it out of the first-crawl queue',
+  );
+  assert.ok(after.due < waiting.due, 'and out of the update queue until its next turn');
+});
+
+test('per-job activity is read off the log the poller already writes', async () => {
+  // No new bookkeeping: the poller names every line by job, so grouping the log
+  // by event is how each row on the board learns whether it is moving.
+  await q.appendCrawlLog(db, [
+    { at: nowIso(), event: 'cards', status: null, amount: 8, ms: 900, detail: '{"looked":8}' },
+    { at: nowIso(), event: 'cards', status: null, amount: 8, ms: 700, detail: '{"looked":8}' },
+    { at: nowIso(), event: 'card-error', status: 'error', subject: 'x.example', detail: 'timeout' },
+    { at: nowIso(), event: 'topics', status: null, amount: 12, ms: 300, detail: '{"topics":12}' },
+  ]);
+
+  const activity = await q.logActivity(db, 1);
+
+  assert.equal(activity.cards.lines, 2);
+  assert.equal(activity.cards.errors, 0);
+  assert.equal(activity.cards.amount, 16, 'amounts add up across the hour');
+  assert.equal(activity.cards.ms, 800, 'and the cost is the average pass, not the total');
+  assert.ok(activity.cards.lastAt);
+
+  assert.equal(activity['card-error'].errors, 1);
+  assert.equal(activity.topics.lines, 1);
+  assert.equal(activity['never-happened'], undefined, 'a job that has not run is simply absent');
+});
+
+test('a job that counts inside its payload is not mistaken for a stopped one', async () => {
+  // The bug this pins: every summary line the poller writes leaves the `amount`
+  // column null and puts its number inside `detail`, so a board reading only the
+  // column reported a discovery worker that had just checked 200 sites as
+  // stalled. Both places are read now.
+  await q.appendCrawlLog(db, [
+    { at: nowIso(), event: 'discovery', status: null, detail: '{"checked":100,"accepted":96}' },
+    { at: nowIso(), event: 'discovery', status: null, detail: '{"checked":100,"accepted":90}' },
+    // And an error line, whose detail is a message rather than JSON: json_extract
+    // raises on that instead of returning null, so it has to be excluded by shape
+    // or this whole query fails.
+    { at: nowIso(), event: 'discovery', status: 'error', detail: 'ECONNRESET' },
+  ]);
+
+  const activity = await q.logActivity(db, 1);
+  assert.equal(activity.discovery.amount, 200, 'the count comes out of the payload');
+  assert.equal(activity.discovery.lines, 3);
+  assert.equal(activity.discovery.errors, 1);
+});
+
 test('the card backfill answers each feed once and retries only the failures', async () => {
   const feed = await q.insertFeed(db, {
     slug: 'card-subject',

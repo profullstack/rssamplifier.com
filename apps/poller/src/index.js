@@ -200,11 +200,18 @@ async function tick() {
     // phases: keywords still to search, then the sites those searches turn up.
     // Both run after the crawl — an indexed blog going stale matters more than
     // finding a new one.
+    // `amount` is set alongside each event's own fields rather than instead of
+    // them: the log's amount column is what /crawlstats reads to decide whether a
+    // job is moving, and a summary line that leaves it null reports a busy worker
+    // as a stalled one. The named field stays in the payload, so the wording in
+    // the live log is unchanged.
     const searched = await drainDiscoveryKeywords(db, keywordBatch);
-    if (searched.searched || searched.failed || searched.fatal) log('discovery-search', searched);
+    if (searched.searched || searched.failed || searched.fatal) {
+      log('discovery-search', { ...searched, amount: searched.searched });
+    }
 
     const discovered = await drainDiscoveryQueue(db, discoveryBatch);
-    if (discovered.checked) log('discovery', discovered);
+    if (discovered.checked) log('discovery', { ...discovered, amount: discovered.checked });
 
     // Sources fill the queue the drain above empties. Checked on a long timer
     // and rate-limited to one source per pass: each is a request to somebody
@@ -320,7 +327,11 @@ async function backfillTick() {
       // Logged on every pass that read anything, not only ones that wrote.
       // A silent worker and an absent one are indistinguishable, which is the
       // mistake that hid this the first time.
-      log('cluster-backfill', { scanned: filled.scanned, keyed: filled.keyed });
+      log('cluster-backfill', {
+        scanned: filled.scanned,
+        keyed: filled.keyed,
+        amount: filled.keyed,
+      });
     }
   } catch (err) {
     log('cluster-backfill-error', { message: String(err?.message ?? err) });
@@ -385,7 +396,13 @@ async function cardTick() {
     }
 
     const coverage = await q.cardCoverage(db);
-    log('cards', { looked: feeds.length, found, cards, pending: coverage.pending });
+    log('cards', {
+      looked: feeds.length,
+      found,
+      cards,
+      pending: coverage.pending,
+      amount: feeds.length,
+    });
   } catch (err) {
     log('card-tick-error', { message: String(err?.message ?? err) });
   } finally {

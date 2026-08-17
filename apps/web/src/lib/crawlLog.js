@@ -107,6 +107,31 @@ export function describe(line, { name = true } = {}) {
       } queued${named}`;
     }
 
+    // The picture hunt. Three numbers, because "looked at 8 feeds" says nothing
+    // about whether it is finding anything: `found` is how many had a picture at
+    // all, `cards` how many were big enough to hand a social-media crawler.
+    case 'cards':
+      return `looked at ${n(fields.looked)} ${
+        Number(fields.looked ?? 0) === 1 ? 'feed' : 'feeds'
+      } for a picture — ${n(fields.found)} found, ${n(fields.cards)} usable as a card, ${n(
+        fields.pending,
+      )} still to check`;
+
+    case 'card-error':
+      return `could not look up a picture for ${line.subject ?? 'a feed'} — ${
+        line.detail ?? 'unknown'
+      }`;
+
+    // The walk over the posts that predate the grouping column. Both numbers
+    // matter and they are different: it reads a page of rows and only writes the
+    // ones that had no key, so `scanned` without `keyed` is the walk crossing
+    // ground it has already covered rather than doing nothing.
+    case 'cluster-backfill':
+      return `keyed older posts — ${n(fields.scanned)} scanned, ${n(fields.keyed)} keyed`;
+
+    case 'cluster-backfill-done':
+      return 'every post now has a grouping key — the backfill is finished';
+
     case 'topics':
       return `rebuilt the topics index — ${n(fields.topics)} topics`;
 
