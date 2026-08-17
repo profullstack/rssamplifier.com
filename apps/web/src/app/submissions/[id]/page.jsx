@@ -7,6 +7,7 @@ import Toolbar from '../../Toolbar.jsx';
 import AdBanner from '../../AdBanner.jsx';
 import { db } from '../../../lib/db.js';
 import { streamSrc } from '../../../lib/sse.js';
+import { describeSubmittedInput, RAW_INPUT_LIMIT } from '../../../lib/submitted.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +49,7 @@ export default async function SubmissionPage({ params }) {
     at: String(row.at),
   }));
 
+  const input = describeSubmittedInput(submission);
   const added = Number(submission.accepted_count ?? 0);
   const done = progress.waiting === 0;
   const settled = progress.crawled + progress.failed;
@@ -97,6 +99,55 @@ export default async function SubmissionPage({ params }) {
             ? 'We have emailed you the result.'
             : 'We will email you when it finishes.'}
         </p>
+      )}
+
+      {/*
+       * What was submitted, not only how it turned out.
+       *
+       * The page could say 237 feeds were crawled and never say which upload
+       * that was — which matters exactly when it is being looked at: two
+       * imports, one of them the wrong file, and nothing on either page to
+       * tell them apart. The discovery run's page has always named its
+       * keywords; this is the same thing for an import.
+       */}
+      {input && (
+        <>
+          <h2>What you submitted</h2>
+
+          <p className="muted">
+            {input.label}
+            {input.title ? ` — ${input.title}` : ''}
+            {input.owner ? ` (${input.owner})` : ''}
+          </p>
+
+          <ul className="results">
+            {input.entries.map((entry) => (
+              <li key={entry.url}>
+                <a href={entry.url} target="_blank" rel="noopener nofollow">
+                  {entry.title ?? entry.url}
+                </a>
+                {entry.title && <span className="muted"> {entry.url}</span>}
+              </li>
+            ))}
+          </ul>
+
+          {/* Honest about being a preview rather than the file: the stored copy
+              is capped, so a big catalogue is longer than both this list and
+              the copy it was read from. */}
+          {input.total > input.entries.length && (
+            <p className="muted">
+              …and {(input.total - input.entries.length).toLocaleString()} more
+              {input.truncated ? ' in the part of the upload kept here' : ''}.
+            </p>
+          )}
+
+          {input.truncated && (
+            <p className="muted">
+              Only the first {RAW_INPUT_LIMIT.toLocaleString()} characters of the upload are kept,
+              so this list may be shorter than the file was.
+            </p>
+          )}
+        </>
       )}
 
       <h2>For agents</h2>
