@@ -1206,6 +1206,12 @@ select {
   border-color: var(--muted);
 }
 
+/* The buttons are disabled for the moment a vote is in flight, which is short
+   enough that fading them would read as a flicker. Only the cursor says so. */
+.post-actions button:disabled {
+  cursor: default;
+}
+
 /* A cast vote and a saved like both read as "on": same treatment, so the state
    is legible at a glance without reading the label. */
 .post-actions button.on {
