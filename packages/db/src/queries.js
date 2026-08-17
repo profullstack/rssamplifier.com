@@ -16,7 +16,7 @@ import { newId, nowIso } from './client.js';
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
   fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at, source_kind,
-  card_url, card_width, card_height, card_type`;
+  card_url, card_width, card_height, card_type, authors_checked_at`;
 
 /** The categories the directory is browsable by. */
 export const KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];

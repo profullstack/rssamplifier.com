@@ -1,6 +1,7 @@
 import { connect, migrate, q, accounts } from '@rssamplifier/db';
 import {
   crawlDue,
+  enrichDue,
   notifyFinishedSubmissions,
   notifyFinishedDiscoveries,
   drainDiscoveryQueue,
@@ -75,6 +76,26 @@ const clusterBatch = Number(env['CLUSTER_BACKFILL_BATCH']) || 500;
 // eight hours, and the walk is a bounded indexed read either way.
 const clusterIntervalMs = (Number(env['CLUSTER_BACKFILL_SECONDS']) || 10) * 1000;
 
+// Feeds looked at for authorship per pass, and how often a pass runs.
+//
+// Deliberately the smallest batch in this file. Each feed costs three to five
+// fetches of somebody's blog, and unlike a crawl those pages are not a machine
+// interface — they are the site itself. Five a minute walks the whole
+// directory in about a week, which is far faster than people change where they
+// can be found, and slow enough that no publisher notices us doing it.
+const authorBatch = Number(env['AUTHOR_BATCH_SIZE']) || 5;
+const authorIntervalMs = (Number(env['AUTHOR_INTERVAL_SECONDS']) || 60) * 1000;
+// How long before a feed is looked at again. Long, because the answer changes
+// when somebody redesigns their blog or joins a new network, not weekly.
+const authorRecheckDays = Number(env['AUTHOR_RECHECK_DAYS']) || 90;
+// Whether to spend requests proving a rel="me" link points back. Off by
+// default: it triples the cost of an author who has three profiles, and the
+// unverified link is still the right link almost every time.
+const authorVerify = env['AUTHOR_VERIFY'] === '1' || env['AUTHOR_VERIFY'] === 'true';
+// Enrichment can be turned off outright without redeploying the crawler, which
+// is the switch to reach for if a site ever objects to the extra fetches.
+const authorEnabled = env['AUTHOR_ENRICH'] !== '0' && env['AUTHOR_ENRICH'] !== 'false';
+
 // Whether the daemon's log is also written to the database, where /crawlstats
 // can stream it. On by default; an operator debugging against a production
 // database from a laptop can turn it off so their own runs stay out of the
@@ -103,6 +124,9 @@ let backfilling = false;
 // The same guard for the card pass, which makes outbound requests and so must
 // never be allowed to stack.
 let carding = false;
+// Guards the enrichment pass against overlapping itself. A batch of five feeds
+// that each need four fetches of a slow server can outlast its own interval.
+let enriching = false;
 let lastPurge = 0;
 let lastSources = 0;
 let lastTopicSearch = 0;
@@ -369,14 +393,53 @@ async function cardTick() {
   }
 }
 
+/**
+ * Find out who writes the feeds, one small batch at a time.
+ *
+ * On its own timer for the reason the cluster backfill is: anything placed
+ * after the crawl inside `tick()` only runs when the process survives the
+ * crawl, and a pass that needs a week of steady progress cannot depend on
+ * that. It is also the slowest work in the daemon per unit — several fetches
+ * of one publisher's site — so keeping it off the crawl's clock means a slow
+ * blog delays nothing but the next author.
+ */
+async function enrichTick() {
+  if (!authorEnabled || stopping) return;
+  if (enriching) return;
+  enriching = true;
+
+  try {
+    const result = await enrichDue(db, authorBatch, {
+      verify: authorVerify,
+      recheckDays: authorRecheckDays,
+      onEvent: publishLog ? recorder.record : null,
+    });
+    // Silent when nothing was due, which is the steady state once the
+    // directory has been walked and before anything is old enough to recheck.
+    if (result.feeds) log('authors', result);
+  } catch (err) {
+    log('authors-error', { message: String(err?.message ?? err) });
+  } finally {
+    enriching = false;
+  }
+}
+
 const timer = setInterval(tick, intervalMs);
 const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
 const cardTimer = setInterval(cardTick, cardIntervalMs);
+const enrichTimer = setInterval(enrichTick, authorIntervalMs);
 void tick();
 void backfillTick();
 void cardTick();
+void enrichTick();
 
-log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency, discoveryBatch });
+log('started', {
+  intervalSeconds: intervalMs / 1000,
+  batchSize,
+  concurrency,
+  discoveryBatch,
+  authorBatch: authorEnabled ? authorBatch : 0,
+});
 
 /**
  * Shut down cleanly so Railway's SIGTERM does not sever an in-flight crawl.
@@ -388,6 +451,7 @@ function shutdown(signal) {
   clearInterval(timer);
   clearInterval(backfillTimer);
   clearInterval(cardTimer);
+  clearInterval(enrichTimer);
 
   // Recorded before the buffer is closed, so the live log's last line is the
   // daemon saying it stopped rather than the log simply going quiet — which is
@@ -396,7 +460,7 @@ function shutdown(signal) {
 
   const deadline = Date.now() + 20_000;
   const wait = setInterval(() => {
-    if (!running || Date.now() > deadline) {
+    if ((!running && !enriching) || Date.now() > deadline) {
       clearInterval(wait);
       // Whatever the last batch logged is still in memory: two seconds of lines
       // is exactly what a 20-second drain would otherwise throw away.
