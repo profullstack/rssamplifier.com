@@ -1895,3 +1895,56 @@ select {
 .live-log .is-bad span {
   color: var(--muted);
 }
+
+/*
+ * The MCP page: a documentation page, which is a shape the rest of the site
+ * does not have. Two things it needs and nothing else does — a code block you
+ * can copy a command out of, and a list of tools that reads as a reference
+ * rather than as prose.
+ */
+
+.code-block {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  /* A curl invocation is wider than the measure and must stay one line per
+   * line: rewrapping a shell command puts the break somewhere that changes
+   * what it does. */
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+
+.code-block code {
+  font-family: inherit;
+  white-space: pre;
+}
+
+.tool-list {
+  display: grid;
+  gap: 1.4rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.tool h3 {
+  margin: 0 0 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.tool p {
+  margin: 0 0 0.35rem;
+  max-width: var(--measure);
+}
+
+.tool-args {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
