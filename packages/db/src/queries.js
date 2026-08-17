@@ -351,26 +351,40 @@ export async function upsertItems(db, feedId, items) {
  * network database for minutes, and a script is a thing somebody has to
  * remember to run and to finish.
  *
- * The work is self-terminating. Each pass claims rows where cluster_key is
- * null, writes a key or the "never group this" sentinel to every one of them,
- * and so strictly shrinks the set it selects from next time. When it returns
- * zero the backfill is done and the partial index behind it has shrunk to
- * nothing.
+ * It walks the primary key with a cursor rather than searching for `cluster_key
+ * is null`. Searching would be the obvious way to write this and it is the
+ * wrong one: finding scattered null rows needs an index over the whole table to
+ * stay quick, that index cannot be built here (see 0019_item_clusters.sql), and
+ * without it the search degrades to a full scan that gets slower exactly as the
+ * work nears completion — the last few rows would cost a scan of 1.4M each.
+ * Walking the key the table is already ordered by costs one indexed range read
+ * per pass and finishes in a predictable number of them.
  *
  * @param {Client} db
  * @param {number} [limit] rows per pass
- * @returns {Promise<{ scanned: number, keyed: number }>}
+ * @param {string} [afterId] cursor: the last id of the previous pass
+ * @returns {Promise<{ scanned: number, keyed: number, cursor: string|null }>}
+ *   `cursor` is null once the walk has reached the end of the table.
  */
-export async function backfillClusterKeys(db, limit = 500) {
+export async function backfillClusterKeys(db, limit = 500, afterId = '') {
   const { rows } = await db.execute({
-    sql: `select id, title from feed_items where cluster_key is null limit ?`,
-    args: [limit],
+    sql: `select id, title, cluster_key from feed_items
+          where id > ? order by id limit ?`,
+    args: [afterId, limit],
   });
 
-  if (rows.length === 0) return { scanned: 0, keyed: 0 };
+  if (rows.length === 0) return { scanned: 0, keyed: 0, cursor: null };
+
+  const cursor = String(rows[rows.length - 1].id);
+
+  // Rows keyed on the way in are the overwhelming majority once the directory
+  // has been running a while, and rewriting them would be pure write traffic
+  // for no change.
+  const pending = rows.filter((row) => row.cluster_key === null);
+  if (pending.length === 0) return { scanned: rows.length, keyed: 0, cursor };
 
   let keyed = 0;
-  const statements = rows.map((row) => {
+  const statements = pending.map((row) => {
     const key = clusterKey(String(row.title ?? '')) ?? '';
     if (key) keyed += 1;
     return {
@@ -380,7 +394,7 @@ export async function backfillClusterKeys(db, limit = 500) {
   });
 
   await db.batch(statements, 'write');
-  return { scanned: rows.length, keyed };
+  return { scanned: rows.length, keyed, cursor };
 }
 
 /**
