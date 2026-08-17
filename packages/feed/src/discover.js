@@ -3,6 +3,8 @@
  * Turning the former into the latter is most of what makes submission painless.
  */
 
+import { looksLikePlaylist } from './playlist.js';
+
 const COMMON_PATHS = [
   '/feed',
   '/feed.xml',
@@ -123,9 +125,15 @@ export function guessFeedUrls(siteUrl) {
  *
  * @param {string} contentType
  * @param {string} body
+ * @param {string} [url] the URL it came from, which is the only thing that
+ *   identifies the plain form of an m3u
  * @returns {boolean}
  */
-export function looksLikeFeed(contentType, body) {
+export function looksLikeFeed(contentType, body, url = '') {
+  // A playlist is a feed here — a list of media with titles — so it is admitted
+  // on the same footing rather than sniffed for afterwards.
+  if (looksLikePlaylist(contentType, body, url)) return true;
+
   const ct = (contentType || '').toLowerCase();
   if (FEED_TYPES.some((t) => ct.includes(t))) {
     // application/json is only a feed if it's actually JSON Feed.

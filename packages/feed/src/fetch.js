@@ -3,6 +3,7 @@ import net from 'node:net';
 
 import { looksLikeFeed, normalizeUrl, findFeedLinks, guessFeedUrls } from './discover.js';
 import { parseFeed } from './parse.js';
+import { findPlaylistLinks } from './playlist.js';
 
 const USER_AGENT =
   'RSSAmplifierBot/1.0 (+https://rssamplifier.com/about; feed directory indexer)';
@@ -208,12 +209,20 @@ export async function resolveFeed(input) {
   const first = await safeFetch(start);
   if (!first.ok) return { ok: false, error: first.error ?? `http-${first.status}` };
 
-  if (looksLikeFeed(first.contentType, first.body)) {
+  if (looksLikeFeed(first.contentType, first.body, first.url)) {
     const feed = parseFeed(first.body, first.url);
     if (feed) return { ok: true, feedUrl: first.url, feed };
   }
 
-  const candidates = [...findFeedLinks(first.body, first.url), ...guessFeedUrls(first.url)];
+  // Playlists come last, after every feed candidate has failed. A site with
+  // both is a site that publishes a feed, and the m3u next to it is one album
+  // off it — indexing the album in place of the blog would be the wrong answer
+  // to "add this site".
+  const candidates = [
+    ...findFeedLinks(first.body, first.url),
+    ...guessFeedUrls(first.url),
+    ...findPlaylistLinks(first.body, first.url),
+  ];
 
   const seen = new Set([first.url]);
   for (const candidate of candidates) {
@@ -222,7 +231,7 @@ export async function resolveFeed(input) {
 
     const res = await safeFetch(candidate);
     if (!res.ok) continue;
-    if (!looksLikeFeed(res.contentType, res.body)) continue;
+    if (!looksLikeFeed(res.contentType, res.body, res.url)) continue;
 
     const feed = parseFeed(res.body, res.url);
     if (feed && feed.items.length > 0) return { ok: true, feedUrl: res.url, feed };
