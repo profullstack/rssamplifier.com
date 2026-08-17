@@ -140,6 +140,13 @@ export function buildRss(channel, items) {
       if (item.feed_title) {
         parts.push(`      <source url="${esc(item.feed_url ?? channel.link)}">${esc(item.feed_title)}</source>`);
       }
+      // The post's picture, in the element every reader app already looks for.
+      // RSS 2.0 has no image element of its own, so Media RSS is the only
+      // honest place to put one — and it is where the crawler reads it back
+      // from, which means a feed built here round-trips through our own parser.
+      if (item.image_url) {
+        parts.push(`      <media:thumbnail url="${esc(item.image_url)}" />`);
+      }
       if (playable(item)) {
         const length = Number.isFinite(Number(item.audio_bytes)) ? Number(item.audio_bytes) : 0;
         parts.push(
@@ -158,6 +165,7 @@ export function buildRss(channel, items) {
 <rss version="2.0"
      xmlns:atom="http://www.w3.org/2005/Atom"
      xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:media="http://search.yahoo.com/mrss/"
      xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
   <channel>
     <title>${esc(channel.title)}</title>
@@ -205,6 +213,9 @@ export function buildAtom(channel, items) {
       if (item.summary) parts.push(`    <summary type="text">${esc(item.summary)}</summary>`);
       if (item.author) parts.push(`    <author><name>${esc(item.author)}</name></author>`);
       if (item.feed_title) parts.push(`    <source><title>${esc(item.feed_title)}</title></source>`);
+      // Atom has no image element either, and the same Media RSS namespace is
+      // what YouTube's own Atom feeds use for exactly this.
+      if (item.image_url) parts.push(`    <media:thumbnail url="${esc(item.image_url)}" />`);
       if (playable(item)) {
         const length = Number.isFinite(Number(item.audio_bytes)) ? Number(item.audio_bytes) : 0;
         parts.push(
@@ -217,7 +228,7 @@ export function buildAtom(channel, items) {
     .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
   <title>${esc(channel.title)}</title>
   <subtitle>${esc(channel.description)}</subtitle>
   <id>${esc(channel.link)}</id>

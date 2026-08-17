@@ -85,6 +85,98 @@ test('items insert, dedupe by guid, and count', async () => {
   assert.equal(rows[0].title, 'Beta post', 'newest first');
 });
 
+test('a re-crawl fills in the thumbnail a post was stored without', async () => {
+  // The whole backfill for four fifths of the directory. The parser learned to
+  // find pictures the feeds were already carrying, and a post already stored
+  // under its guid would otherwise keep its empty image column forever.
+  const feed = await q.feedByUrl(db, 'https://test.example/feed.xml');
+  const id = String(feed.id);
+
+  await q.upsertItems(db, id, [{ guid: 'thumbless', title: 'No picture yet' }]);
+  await q.upsertItems(db, id, [
+    { guid: 'thumbless', title: 'No picture yet', imageUrl: 'https://test.example/hero.jpg' },
+  ]);
+
+  const found = (await q.itemsForFeed(db, id, 200)).find((r) => r.guid === 'thumbless');
+  assert.equal(found.image_url, 'https://test.example/hero.jpg');
+
+  // And a picture we already have survives a crawl that no longer offers one.
+  await q.upsertItems(db, id, [{ guid: 'thumbless', title: 'No picture yet' }]);
+  const again = (await q.itemsForFeed(db, id, 200)).find((r) => r.guid === 'thumbless');
+  assert.equal(again.image_url, 'https://test.example/hero.jpg');
+});
+
+test('the card backfill answers each feed once and retries only the failures', async () => {
+  const feed = await q.insertFeed(db, {
+    slug: 'card-subject',
+    feed_url: 'https://card.example/feed.xml',
+    site_url: 'https://card.example/',
+    title: 'Card Subject',
+    kind: 'blog',
+  });
+  const id = String(feed.id);
+
+  const pending = await q.feedsNeedingCard(db, 50);
+  assert.ok(
+    pending.some((row) => String(row.id) === id),
+    'a feed nobody has looked at is in the queue',
+  );
+
+  await q.setFeedCard(db, id, {
+    state: 'ok',
+    url: 'https://card.example/og.png',
+    width: 1200,
+    height: 630,
+    type: 'png',
+  });
+
+  const stored = await q.feedBySlug(db, 'card-subject');
+  assert.equal(stored.card_url, 'https://card.example/og.png');
+  assert.equal(Number(stored.card_width), 1200);
+  assert.equal(Number(stored.card_height), 630);
+  assert.equal(stored.card_type, 'png');
+
+  const after = await q.feedsNeedingCard(db, 50);
+  assert.ok(
+    !after.some((row) => String(row.id) === id),
+    'and is not asked again',
+  );
+
+  // "This publisher has no picture" is an answer, so it leaves the queue too —
+  // otherwise three quarters of the directory is re-fetched forever.
+  await q.setFeedCard(db, id, { state: 'none' });
+  const none = await q.feedBySlug(db, 'card-subject');
+  assert.equal(none.card_url, null, 'and the stale URL goes with it');
+  assert.ok(
+    !(await q.feedsNeedingCard(db, 50)).some((row) => String(row.id) === id),
+    'a finding of none is still a finding',
+  );
+
+  // A failed look is different: it comes back once it is old enough.
+  await q.setFeedCard(db, id, { state: 'error' });
+  assert.ok(
+    !(await q.feedsNeedingCard(db, 50)).some((row) => String(row.id) === id),
+    'not immediately, or one dead host would starve the queue',
+  );
+
+  // Aged by hand rather than by shrinking the retry window: a window of zero
+  // asks for rows checked strictly *before* now, and a row written in this same
+  // millisecond is not — which is a test that passes or fails on how fast the
+  // machine is.
+  await db.execute({
+    sql: 'update feeds set card_checked_at = ? where id = ?',
+    args: ['2020-01-01T00:00:00.000Z', id],
+  });
+  assert.ok(
+    (await q.feedsNeedingCard(db, 50)).some((row) => String(row.id) === id),
+    'but eventually',
+  );
+
+  const coverage = await q.cardCoverage(db);
+  assert.equal(coverage.error, 1);
+  assert.ok(coverage.pending >= 1, 'the other seeded feeds are still waiting');
+});
+
 test('items without a guid are skipped rather than inserted blank', async () => {
   const feed = await q.feedByUrl(db, 'https://test.example/feed.xml');
   const id = String(feed.id);

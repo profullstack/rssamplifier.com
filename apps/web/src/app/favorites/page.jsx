@@ -3,6 +3,8 @@ import { reactions } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
+import { postThumb } from '../../lib/thumbs.js';
+import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -49,9 +51,13 @@ export default async function FavoritesPage() {
               const slug = String(item.feed_slug);
               const guid = String(item.guid);
 
+              const thumb = postThumb(item);
+              const href = `/${slug}/read?p=${encodeURIComponent(guid)}`;
+
               return (
-                <li key={`${slug}:${guid}`}>
-                  <a href={`/${slug}/read?p=${encodeURIComponent(guid)}`}>{String(item.title)}</a>
+                <li key={`${slug}:${guid}`} className={thumb ? 'has-thumb' : undefined}>
+                  <Thumb src={thumb} href={href} />
+                  <a href={href}>{String(item.title)}</a>
                   <p className="meta">
                     <a href={`/${slug}`}>{String(item.feed_title)}</a>
                     {item.published_at ? ` · ${when(item.published_at)}` : ''}

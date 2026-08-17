@@ -658,3 +658,189 @@ test('an audio enclosure is not mistaken for the item image', () => {
   assert.equal(parseFeed(PODCAST_RSS).items[0].imageUrl, '');
   assert.equal(parseFeed(IMAGE_ENCLOSURE_RSS).items[0].imageUrl, 'https://p.example/1.jpg');
 });
+
+// ------------------------------------------------------------------ thumbnails
+//
+// A fifth of the directory's posts declared a picture in a media element, a
+// quarter more carried one only in the body of the post, and Atom entries were
+// stored with no image at all — which is why every YouTube channel here was
+// text-only. These cover each source the picker now reads, and the two things it
+// must refuse: an analytics beacon, and a URL that would resolve against us.
+
+const YOUTUBE_ATOM = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015"
+      xmlns:media="http://search.yahoo.com/mrss/"
+      xmlns="http://www.w3.org/2005/Atom">
+  <title>A channel</title>
+  <link rel="alternate" href="https://www.youtube.com/channel/UC1"/>
+  <entry>
+    <id>yt:video:abc123XYZ</id>
+    <yt:videoId>abc123XYZ</yt:videoId>
+    <title>A video</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=abc123XYZ"/>
+    <published>2026-08-01T00:00:00Z</published>
+    <media:group>
+      <media:title>A video</media:title>
+      <media:content url="https://www.youtube.com/v/abc123XYZ" type="application/x-shockwave-flash"/>
+      <media:thumbnail url="https://i.ytimg.com/vi/abc123XYZ/hqdefault.jpg" width="480" height="360"/>
+    </media:group>
+  </entry>
+</feed>`;
+
+test('a YouTube entry keeps the poster frame from its media:group', () => {
+  const feed = parseFeed(YOUTUBE_ATOM, 'https://www.youtube.com/feeds/videos.xml?channel_id=UC1');
+  assert.equal(feed.items[0].imageUrl, 'https://i.ytimg.com/vi/abc123XYZ/hqdefault.jpg');
+});
+
+test('a YouTube entry stripped of its media elements still gets a still', () => {
+  // What a feed looks like after a reader service or proxy has rewritten it:
+  // the video id survives and the media group does not.
+  const stripped = YOUTUBE_ATOM.replace(/<media:group>[\s\S]*<\/media:group>/, '');
+  assert.equal(
+    parseFeed(stripped).items[0].imageUrl,
+    'https://i.ytimg.com/vi/abc123XYZ/hqdefault.jpg',
+  );
+});
+
+test('the widest media:thumbnail wins', () => {
+  const many = YOUTUBE_ATOM.replace(
+    '<media:thumbnail url="https://i.ytimg.com/vi/abc123XYZ/hqdefault.jpg" width="480" height="360"/>',
+    `<media:thumbnail url="https://i.ytimg.com/vi/abc123XYZ/default.jpg" width="120"/>
+     <media:thumbnail url="https://i.ytimg.com/vi/abc123XYZ/maxres.jpg" width="1280"/>`,
+  );
+  assert.equal(parseFeed(many).items[0].imageUrl, 'https://i.ytimg.com/vi/abc123XYZ/maxres.jpg');
+});
+
+const MEDIA_RSS = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Mixed media</title>
+    <link>https://m.example/blog/</link>
+    <description>Words and pictures</description>
+    <image><url>/cover.png</url></image>
+    <item>
+      <title>Picture by media:content</title>
+      <link>https://m.example/blog/1</link>
+      <guid>1</guid>
+      <media:content url="https://m.example/still.jpg" medium="image"/>
+    </item>
+    <item>
+      <title>Video by media:content</title>
+      <link>https://m.example/blog/2</link>
+      <guid>2</guid>
+      <media:content url="https://m.example/clip.mp4" type="video/mp4"/>
+    </item>
+    <item>
+      <title>Episode art</title>
+      <link>https://m.example/blog/3</link>
+      <guid>3</guid>
+      <itunes:image href="https://m.example/ep3.png"/>
+    </item>
+    <item>
+      <title>Picture in the body</title>
+      <link>https://m.example/blog/4</link>
+      <guid>4</guid>
+      <content:encoded>&lt;p&gt;Words&lt;/p&gt;&lt;img src="../img/photo.jpg?w=900&amp;amp;h=600"&gt;</content:encoded>
+    </item>
+    <item>
+      <title>Beacons only</title>
+      <link>https://m.example/blog/5</link>
+      <guid>5</guid>
+      <content:encoded>&lt;img src="https://feeds.wordpress.com/1.0/comments/x/5/" width="1" height="1"&gt;&lt;img src="https://m.example/pixel.gif"&gt;&lt;img src="https://m.example/t.png" width="1"&gt;</content:encoded>
+    </item>
+    <item>
+      <title>Inline data only</title>
+      <link>https://m.example/blog/6</link>
+      <guid>6</guid>
+      <content:encoded>&lt;img src="data:image/gif;base64,R0lGODlhAQ"&gt;</content:encoded>
+    </item>
+  </channel>
+</rss>`;
+
+test('media:content is read as an image only when it is one', () => {
+  const items = parseFeed(MEDIA_RSS).items;
+  assert.equal(items[0].imageUrl, 'https://m.example/still.jpg');
+  // An mp4 in the image slot is the same bug as an mp3 in it.
+  assert.equal(items[1].imageUrl, '');
+});
+
+test('per-episode itunes:image is the episode picture', () => {
+  assert.equal(parseFeed(MEDIA_RSS).items[2].imageUrl, 'https://m.example/ep3.png');
+});
+
+test('a relative image in the body resolves against the post it was in', () => {
+  // Not against rssamplifier.com, which is what storing the raw src would mean.
+  assert.equal(
+    parseFeed(MEDIA_RSS).items[3].imageUrl,
+    'https://m.example/img/photo.jpg?w=900&h=600',
+  );
+});
+
+test('tracking beacons are not thumbnails', () => {
+  // Named, and sized: three beacons, none of them a picture of anything.
+  assert.equal(parseFeed(MEDIA_RSS).items[4].imageUrl, '');
+});
+
+test('an emoji, a badge and an avatar are not thumbnails either', () => {
+  // All three are real images that are never a picture of the post. The
+  // WordPress one is the reason this exists: it rewrites every smiley in a post
+  // into an <img> on s.w.org, and two feeds in the first sample of live feeds
+  // were about to be illustrated with a 72px 🙂.
+  const furniture = (src) =>
+    parseFeed(
+      MEDIA_RSS.replace(
+        '&lt;p&gt;Words&lt;/p&gt;&lt;img src="../img/photo.jpg?w=900&amp;amp;h=600"&gt;',
+        `&lt;p&gt;Words&lt;/p&gt;&lt;img src="${src}"&gt;`,
+      ),
+    ).items[3].imageUrl;
+
+  assert.equal(furniture('https://s.w.org/images/core/emoji/17.0.2/72x72/1f642.png'), '');
+  assert.equal(furniture('https://img.shields.io/badge/build-passing-green.svg'), '');
+  assert.equal(furniture('https://secure.gravatar.com/avatar/abc?s=96'), '');
+  // And the control: an ordinary picture in the same slot still comes through.
+  assert.equal(furniture('https://m.example/real.jpg'), 'https://m.example/real.jpg');
+});
+
+test('a data: URI is not stored as an image', () => {
+  assert.equal(parseFeed(MEDIA_RSS).items[5].imageUrl, '');
+});
+
+test("a channel's relative cover art is made absolute", () => {
+  assert.equal(parseFeed(MEDIA_RSS).imageUrl, 'https://m.example/cover.png');
+});
+
+test('an Atom entry finds the picture in its content', () => {
+  const atom = ATOM.replace(
+    '<summary>A summary</summary>',
+    '<summary>A summary</summary><content type="html">&lt;img src="/hero.png"&gt;&lt;p&gt;Body&lt;/p&gt;</content>',
+  );
+  assert.equal(parseFeed(atom).items[0].imageUrl, 'https://a.example/hero.png');
+});
+
+test('JSON Feed images are read from all three of its spellings', () => {
+  const withImage = JSON.stringify({
+    version: 'https://jsonfeed.org/version/1.1',
+    title: 'JSON Blog',
+    home_page_url: 'https://j.example/',
+    items: [
+      { id: '1', url: 'https://j.example/1', image: '/one.png' },
+      { id: '2', url: 'https://j.example/2', banner_image: 'https://j.example/two.png' },
+      {
+        id: '3',
+        url: 'https://j.example/3',
+        attachments: [{ url: 'https://j.example/three.png', mime_type: 'image/png' }],
+      },
+      { id: '4', url: 'https://j.example/4', content_html: '<img src="four.png">' },
+      { id: '5', url: 'https://j.example/5', content_html: '<p>No picture</p>' },
+    ],
+  });
+
+  const items = parseFeed(withImage).items;
+  assert.equal(items[0].imageUrl, 'https://j.example/one.png');
+  assert.equal(items[1].imageUrl, 'https://j.example/two.png');
+  assert.equal(items[2].imageUrl, 'https://j.example/three.png');
+  assert.equal(items[3].imageUrl, 'https://j.example/four.png');
+  assert.equal(items[4].imageUrl, '');
+});

@@ -531,6 +531,10 @@ function post(i) {
     feedTitle: i.feed_title,
     guid: i.guid,
     audioUrl: i.audio_url ?? null,
+    // What the publisher declared as the post's picture. An agent building a
+    // page out of these answers has no other way to get one, and the field is
+    // null far less often than it used to be.
+    imageUrl: i.image_url ?? null,
   };
 }
 

@@ -4,7 +4,9 @@ import { db } from '../../lib/db.js';
 import { AD_MREC, AD_TEXT, adPlan } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
+import Thumb, { Avatar } from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
+import { feedImage, postThumb } from '../../lib/thumbs.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,6 +84,7 @@ export default async function SearchPage({ searchParams }) {
           <div className="feed-list">
             {blogs.map((b) => (
               <a className="feed-row" key={String(b.slug)} href={`/${b.slug}`}>
+                <Avatar src={feedImage(b)} title={b.title} slug={b.slug} />
                 <h3>{b.title}</h3>
                 {b.description && <p>{b.description}</p>}
               </a>
@@ -105,8 +108,15 @@ export default async function SearchPage({ searchParams }) {
               ? `/${p.feed_slug}/read?p=${encodeURIComponent(String(p.guid))}`
               : null;
 
+            const thumb = postThumb(p);
+
             const entry = (
-              <article className="entry" key={`${p.guid ?? p.url ?? p.title}-${i}`}>
+              <article
+                className={thumb ? 'entry has-thumb' : 'entry'}
+                key={`${p.guid ?? p.url ?? p.title}-${i}`}
+              >
+                <Thumb src={thumb} href={href} />
+
                 <h3>{href ? <a href={href}>{p.title}</a> : p.title}</h3>
                 {p.summary && <p>{p.summary}</p>}
                 <time>
