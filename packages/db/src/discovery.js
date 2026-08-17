@@ -130,6 +130,42 @@ export async function recentRuns(db, limit = 20) {
 }
 
 /**
+ * Topics the directory covers that nobody has ever searched for.
+ *
+ * This is what closes the loop. Topics are extracted from the feeds we already
+ * have; keyword discovery finds feeds for a phrase. Until now the only thing
+ * connecting them was a person typing into a form, so the directory could know
+ * it had forty blogs about home labs and never go looking for the forty-first.
+ *
+ * Ordered by how many feeds share the topic, so the phrases tried first are the
+ * ones the directory is demonstrably about rather than one blog's vocabulary.
+ * Anything already queued as a keyword — by a person or by an earlier pass — is
+ * excluded, because searching it again spends a credit to rediscover the same
+ * results.
+ *
+ * @param {Client} db
+ * @param {{ limit?: number, minFeeds?: number }} [opts]
+ * @returns {Promise<string[]>}
+ */
+export async function unsearchedTopics(db, opts = {}) {
+  const { limit = 3, minFeeds = 3 } = opts;
+
+  const { rows } = await db.execute({
+    sql: `select t.keyword
+          from topics t
+          where t.feed_count >= ?
+            and not exists (
+              select 1 from discovery_keywords k where k.keyword = t.keyword
+            )
+          order by t.feed_count desc, t.slug asc
+          limit ?`,
+    args: [minFeeds, limit],
+  });
+
+  return rows.map((row) => String(row.keyword));
+}
+
+/**
  * Queue a run's keywords.
  *
  * @param {Client} db
