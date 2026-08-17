@@ -208,6 +208,11 @@ export default async function ReaderPage({ params, searchParams }) {
   // the same article in a language the reader asked for.
   const extracted = readable || watchable ? null : verdict.article;
 
+  // Whether a frame is on screen, which the toolbar needs to know: only a
+  // framed post can wander off the post it started on, and only then does
+  // "Open ↗" have to follow rather than point at where the reader began.
+  const framed = !watchable && !readable && verdict.frameable && Boolean(postUrl);
+
   return (
     <div className="reader">
       <div className="reader-head">
@@ -350,14 +355,27 @@ export default async function ReaderPage({ params, searchParams }) {
             <p className="lede translated">{summary}</p>
           )}
 
-          {verdict.frameable && postUrl ? (
+          {framed && postUrl ? (
             <iframe
               className="reader-frame"
-              src={postUrl}
+              // Not the publisher's URL, which is what this used to be, and
+              // what made the frame a one-click surface: a link inside it
+              // loads *into* it, and most of the web refuses to be framed, so
+              // the second click landed on "refused to connect" in the middle
+              // of the reader. Serving the page through /api/frame is what
+              // makes its links ours to point somewhere that opens — the page
+              // is still theirs, and still assembled from their server.
+              //
+              // It costs the publisher nothing extra: the request the browser
+              // used to make for the document is the request we make instead.
+              src={`/api/frame?u=${encodeURIComponent(postUrl)}`}
               title={title}
               // The framed page is a stranger's: allow it to render and
-              // navigate itself, and nothing else. No same-origin, so it can
-              // never reach into this document.
+              // navigate itself, and nothing else. No same-origin — so even
+              // though it is now served from our host, it runs with no origin
+              // at all and can never reach into this document. The response
+              // says the same thing in a header, for anyone who loads it
+              // outside this frame.
               sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
               referrerPolicy="no-referrer-when-downgrade"
               loading="eager"
@@ -462,6 +480,7 @@ export default async function ReaderPage({ params, searchParams }) {
         slug={slug}
         feedTitle={String(feed.title)}
         postUrl={postUrl}
+        framed={framed}
         prevGuid={inOrder && index > 0 ? String(posts[index - 1].guid) : null}
         nextGuid={inOrder && index < posts.length - 1 ? String(posts[index + 1].guid) : null}
         nextBlog={nav.next}

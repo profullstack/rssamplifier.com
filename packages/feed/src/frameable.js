@@ -131,17 +131,36 @@ export async function isFrameable(url, origin = 'https://rssamplifier.com') {
  * of dropped. A refusal costs no extra request: it is the same response, read
  * to the end rather than cancelled.
  *
- * A page that *can* be framed still has its body cancelled. Nothing downstream
- * wants it, and downloading a megabyte of somebody's homepage to discard it is
- * a cost paid on the reader's time.
+ * A page that *can* be framed still has its body cancelled by default. Nothing
+ * on the page rendering path wants it, and downloading a megabyte of
+ * somebody's homepage to discard it is a cost paid on the reader's time.
+ *
+ * `wantHtml: 'always'` is the exception, and it has one caller: the frame
+ * itself. Serving a framed page from our origin so its own links keep working
+ * means reading the body of a page the verdict said yes to — see reframe.js
+ * for why that is worth a download.
  *
  * @param {string} url
- * @param {{ origin?: string, wantHtml?: boolean }} [options]
- * @returns {Promise<{ frameable: boolean, reason: string, html: string|null, url: string|null }>}
+ * @param {{ origin?: string, wantHtml?: boolean|'always' }} [options]
+ * @returns {Promise<{
+ *   frameable: boolean,
+ *   reason: string,
+ *   html: string|null,
+ *   url: string|null,
+ *   status: number,
+ *   contentType: string,
+ * }>}
  */
 export async function probePage(url, options = {}) {
   const { origin = 'https://rssamplifier.com', wantHtml = true } = options;
-  const no = (reason) => ({ frameable: false, reason, html: null, url: null });
+  const no = (reason) => ({
+    frameable: false,
+    reason,
+    html: null,
+    url: null,
+    status: 0,
+    contentType: '',
+  });
 
   const normalized = normalizeUrl(url);
   if (!normalized) return no('invalid-url');
@@ -173,24 +192,25 @@ export async function probePage(url, options = {}) {
     // Redirects are followed, so what came back may not be what was asked for,
     // and relative URLs inside it resolve against where it landed.
     const finalUrl = res.url || normalized;
+    const contentType = String(res.headers.get('content-type') ?? '');
 
-    const readable =
-      wantHtml &&
-      res.ok &&
-      !verdict.frameable &&
-      String(res.headers.get('content-type') ?? '').toLowerCase().includes('html');
+    const wanted = wantHtml === 'always' ? true : Boolean(wantHtml) && !verdict.frameable;
+    const readable = wanted && res.ok && contentType.toLowerCase().includes('html');
 
     if (!readable) {
       await res.body?.cancel();
-      if (!res.ok) return no(`http-${res.status}`);
-      return { ...verdict, html: null, url: finalUrl };
+      // The status and the type still matter to a caller that asked for the
+      // body: "we did not read this" and "there was nothing here to read" are
+      // different answers, and only one of them is a failure.
+      if (!res.ok) return { ...no(`http-${res.status}`), status: res.status, contentType };
+      return { ...verdict, html: null, url: finalUrl, status: res.status, contentType };
     }
 
     clearTimeout(timer);
     timer = setTimeout(() => controller.abort(), BODY_TIMEOUT_MS);
 
     const html = await readCapped(res, MAX_HTML_BYTES);
-    return { ...verdict, html, url: finalUrl };
+    return { ...verdict, html, url: finalUrl, status: res.status, contentType };
   } catch (err) {
     const aborted = err?.name === 'AbortError';
     return no(aborted ? 'timeout' : 'fetch-failed');
