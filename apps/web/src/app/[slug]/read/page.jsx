@@ -6,7 +6,7 @@ import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/tr
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { popularLanguages } from '../../../lib/languages.js';
-import { isWatchable } from '../../../lib/media.js';
+import { isWatchable, playableMedia } from '../../../lib/media.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
@@ -101,6 +101,11 @@ export default async function ReaderPage({ params, searchParams }) {
   // video the video is the post: it plays where the article would be, and the
   // description goes under it, which is where a description goes.
   const watchable = isWatchable(post);
+
+  // What to hand the player, which is not always the enclosure: a PeerTube post
+  // plays through its embed, because the file its feed points at is a download
+  // endpoint that stops resolving when the instance re-encodes.
+  const media = playableMedia(post);
 
   // Asked only when the answer can change anything. Framing a video host is not
   // on the table, and this is a request to somebody else's server on the way to
@@ -244,7 +249,8 @@ export default async function ReaderPage({ params, searchParams }) {
            */}
           <EpisodePlayer
             inline
-            src={audio}
+            kind={media.kind}
+            src={media.src}
             type={mediaType}
             title={title}
             seconds={post.audio_seconds ? Number(post.audio_seconds) : null}
@@ -373,7 +379,8 @@ export default async function ReaderPage({ params, searchParams }) {
           player too many. */}
       {audio && !watchable && (
         <EpisodePlayer
-          src={audio}
+          kind={media.kind}
+          src={media.src}
           type={mediaType}
           title={title}
           seconds={post.audio_seconds ? Number(post.audio_seconds) : null}

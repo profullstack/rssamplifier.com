@@ -8,15 +8,20 @@
  * refusal notice over a link out, while the same post read as "a video" is a
  * player with the video in it.
  *
- * Three kinds because they are shown three ways — a YouTube embed, a `<video>`,
- * a docked `<audio>` — and one more for the ordinary case of a post that is
- * just a post.
+ * Four kinds because they are shown four ways — a YouTube embed, a PeerTube
+ * embed, a `<video>`, a docked `<audio>` — and one more for the ordinary case
+ * of a post that is just a post.
  *
- * @param {{ audio_url?: unknown, audio_type?: unknown }} post
- * @returns {'youtube'|'video'|'audio'|null}
+ * @param {{ audio_url?: unknown, audio_type?: unknown, url?: unknown }} post
+ * @returns {'youtube'|'peertube'|'video'|'audio'|null}
  */
 export function mediaKind(post) {
   if (!post?.audio_url) return null;
+
+  // Before the MIME type, because a PeerTube enclosure lies about what it is
+  // useful for: it says video/mp4 and points at a download endpoint. See
+  // peertubeEmbed below.
+  if (peertubeEmbed(post)) return 'peertube';
 
   const type = String(post.audio_type ?? '').toLowerCase();
 
@@ -36,10 +41,78 @@ export function mediaKind(post) {
 /**
  * Is the post something to watch rather than something to read?
  *
- * @param {{ audio_url?: unknown, audio_type?: unknown }} post
+ * @param {{ audio_url?: unknown, audio_type?: unknown, url?: unknown }} post
  * @returns {boolean}
  */
 export function isWatchable(post) {
   const kind = mediaKind(post);
-  return kind === 'youtube' || kind === 'video';
+  return kind === 'youtube' || kind === 'peertube' || kind === 'video';
+}
+
+/**
+ * PeerTube's embed URL for a post, if that is what the post is.
+ *
+ * The enclosure a PeerTube feed publishes is not something to hand a `<video>`
+ * element. It points at `/download/videos/generate/<uuid>?videoFileIds=<n>`,
+ * and measured against two live instances that endpoint is:
+ *
+ *   - not durable — `videoFileIds` names a particular encoded file, so it stops
+ *     resolving when the instance re-encodes or prunes. video.tedomum.net
+ *     answers 404 for the id in its own current feed.
+ *   - not streamable even when it answers — peertube.hackerfoo.com returns 200
+ *     with `content-disposition: attachment` and no `accept-ranges`, which is a
+ *     download, not a source a player can seek.
+ *
+ * The embed is keyed on the short id in the permalink instead, so it survives
+ * everything the file ids do not, and it is a real player rather than a bare
+ * file. Same conclusion as YouTube, arrived at from the opposite direction:
+ * there the watch page refuses framing, here the file refuses to behave like
+ * one.
+ *
+ * Recognised on the permalink rather than on the enclosure: `/w/<id>` is
+ * PeerTube's canonical watch path and `/videos/watch/<uuid>` its older one. The
+ * enclosure must be a video on the same host, which is what keeps an ordinary
+ * blog that happens to use `/w/` out of this branch.
+ *
+ * @param {{ audio_url?: unknown, audio_type?: unknown, url?: unknown }} post
+ * @returns {string|null}
+ */
+export function peertubeEmbed(post) {
+  const type = String(post?.audio_type ?? '').toLowerCase();
+  if (!type.startsWith('video/') || type === 'video/youtube') return null;
+
+  let watch;
+  let media;
+  try {
+    watch = new URL(String(post?.url ?? ''));
+    media = new URL(String(post?.audio_url ?? ''));
+  } catch {
+    return null;
+  }
+
+  if (watch.protocol !== 'https:' && watch.protocol !== 'http:') return null;
+  if (watch.hostname !== media.hostname) return null;
+
+  const match =
+    watch.pathname.match(/^\/w\/([\w-]{6,})\/?$/) ??
+    watch.pathname.match(/^\/videos\/watch\/([\w-]{6,})\/?$/);
+  if (!match) return null;
+
+  return `${watch.origin}/videos/embed/${match[1]}`;
+}
+
+/**
+ * The URL to hand the player, which is not always the enclosure.
+ *
+ * @param {{ audio_url?: unknown, audio_type?: unknown, url?: unknown }} post
+ * @returns {{ kind: 'youtube'|'peertube'|'video'|'audio'|null, src: string|null }}
+ */
+export function playableMedia(post) {
+  const kind = mediaKind(post);
+  if (!kind) return { kind: null, src: null };
+
+  return {
+    kind,
+    src: kind === 'peertube' ? peertubeEmbed(post) : String(post.audio_url),
+  };
 }
