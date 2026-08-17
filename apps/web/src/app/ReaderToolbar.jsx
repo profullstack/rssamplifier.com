@@ -1,3 +1,5 @@
+import OpenFramed from './OpenFramed.jsx';
+
 /**
  * The toolbar that survives the article.
  *
@@ -8,12 +10,16 @@
  * reading — so it is a sibling of Toolbar rather than a variant of it.
  *
  * Server-rendered plain links, like the other one: no JavaScript, nothing to
- * hydrate, and it works inside the reader shell on a phone.
+ * hydrate, and it works inside the reader shell on a phone. The one exception
+ * is "Open ↗" on a framed post, and only because the frame can now be
+ * navigated — see OpenFramed. Every other control here is still a plain link,
+ * and the exception disappears the moment there is no frame.
  *
  * @param {{
  *   slug: string,
  *   feedTitle: string,
  *   postUrl?: string|null,
+ *   framed?: boolean,
  *   prevGuid?: string|null,
  *   nextGuid?: string|null,
  *   nextBlog?: string|null,
@@ -23,6 +29,7 @@ export default function ReaderToolbar({
   slug,
   feedTitle,
   postUrl,
+  framed = false,
   prevGuid,
   nextGuid,
   nextBlog,
@@ -58,14 +65,17 @@ export default function ReaderToolbar({
 
       <span className="sep" aria-hidden="true" />
 
-      {postUrl && (
+      {postUrl &&
         // The framed page cannot be bookmarked or shared from the address bar,
         // so the escape hatch to the real article has to be explicit.
-        <a href={postUrl} target="_blank" rel="noopener" title="Open the original page">
-          <span className="label">Open</span>
-          <span aria-hidden="true">↗</span>
-        </a>
-      )}
+        (framed ? (
+          <OpenFramed href={postUrl} />
+        ) : (
+          <a href={postUrl} target="_blank" rel="noopener" title="Open the original page">
+            <span className="label">Open</span>
+            <span aria-hidden="true">↗</span>
+          </a>
+        ))}
 
       <a className="primary" href={nextBlog ? `/${nextBlog}` : '/random'} title="Another blog">
         <span aria-hidden="true">✦</span>
