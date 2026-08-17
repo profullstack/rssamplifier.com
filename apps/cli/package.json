@@ -1,7 +1,7 @@
 {
   "name": "@profullstack/rssamplifier",
-  "version": "0.1.0",
-  "description": "CLI for rssamplifier.com — submit feeds, search the directory, export OPML",
+  "version": "0.3.0",
+  "description": "CLI for rssamplifier.com — find feeds by topic, search the directory, export OPML, submit blogs",
   "type": "module",
   "main": "src/index.js",
   "bin": {

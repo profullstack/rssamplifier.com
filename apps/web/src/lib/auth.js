@@ -3,6 +3,7 @@ import { SESSION_COOKIE, resolveSession, sessionCookieOptions } from '@rssamplif
 import { hashIp } from '@rssamplifier/ingest';
 
 import { db, siteUrl } from './db.js';
+import { SIGNED_IN_HINT_COOKIE } from './session-hint.js';
 
 /**
  * Reading and writing the signed-in reader, from a request.
@@ -32,21 +33,34 @@ export async function currentUser() {
 }
 
 /**
- * Put the session cookie on the response.
+ * Put the session cookie on the response, and a hint beside it.
+ *
+ * The session cookie is httpOnly, which is what keeps it out of reach of a
+ * script on the page — and also out of reach of the masthead, which wants to
+ * know whether to offer "Sign up" without reading the session on the server and
+ * making every static page in the directory dynamic. The hint holds no token and
+ * grants nothing: it is deliberately readable, and the only thing it can do if
+ * forged is show or hide one link.
+ *
+ * It carries the session's own attributes, so the two expire together.
  *
  * @param {string} token
  */
 export async function setSessionCookie(token) {
   const store = await cookies();
-  store.set(SESSION_COOKIE, token, sessionCookieOptions(siteUrl()));
+  const options = sessionCookieOptions(siteUrl());
+  store.set(SESSION_COOKIE, token, options);
+  store.set(SIGNED_IN_HINT_COOKIE, '1', { ...options, httpOnly: false });
 }
 
 /**
- * Remove the session cookie.
+ * Remove the session cookie, and the hint with it.
  */
 export async function clearSessionCookie() {
   const store = await cookies();
-  store.set(SESSION_COOKIE, '', { ...sessionCookieOptions(siteUrl()), maxAge: 0 });
+  const options = sessionCookieOptions(siteUrl());
+  store.set(SESSION_COOKIE, '', { ...options, maxAge: 0 });
+  store.set(SIGNED_IN_HINT_COOKIE, '', { ...options, httpOnly: false, maxAge: 0 });
 }
 
 /**

@@ -603,6 +603,94 @@ test('topics: keywords are replaced wholesale, and the rollup drops single-feed 
   await rm(dir3, { recursive: true, force: true });
 });
 
+test('topic search ranks matches, and a topic export is the feeds on that topic', async () => {
+  const dirT = await mkdtemp(join(tmpdir(), 'rssamp-topicsearch-'));
+  const dbT = connect({ url: `file:${join(dirT, 'search.db')}` });
+  await migrate(dbT);
+
+  // Four subjects that between them cover every tier of the ranking, plus two
+  // that are only reachable by typing a phrase.
+  const subjects = [
+    { slug: 'lab', feeds: 2 },
+    { slug: 'homelab', feeds: 5 },
+    { slug: 'homelabbing', feeds: 4 },
+    { slug: 'myhomelab', feeds: 9 },
+    { slug: '100-days', feeds: 3 },
+    { slug: 'quantum-physics', feeds: 5 },
+  ];
+
+  for (const subject of subjects) {
+    for (let i = 0; i < subject.feeds; i += 1) {
+      const slug = `${subject.slug}-${i}`;
+      const { id } = await q.insertFeed(dbT, {
+        slug,
+        feed_url: `https://${slug}.example/feed.xml`,
+        title: `${subject.slug} ${i}`,
+      });
+      await q.replaceFeedKeywords(dbT, id, [
+        { slug: subject.slug, keyword: subject.slug, words: 1, count: 5, source: 'category' },
+      ]);
+    }
+  }
+  await q.refreshTopics(dbT);
+
+  const ranked = (await q.listTopics(dbT, { query: 'homelab' })).map((t) => String(t.slug));
+  assert.deepEqual(
+    ranked,
+    ['homelab', 'homelabbing', 'myhomelab'],
+    'exact first, then prefix, then contains — regardless of how many feeds each has',
+  );
+  // 'lab' is a substring of none of the ranked slugs' *start*, but it is inside
+  // all of them, so a contains-search must reach further than a prefix one.
+  assert.equal((await q.listTopics(dbT, { query: 'lab' })).length, 4);
+  assert.equal(await q.countTopics(dbT, 2, 'homelab'), 3, 'the count follows the same filter');
+
+  // The index is a table of slugs, so the term is slugged before it is matched:
+  // nobody has to know the slugging rules to search for a two-word subject.
+  for (const spelling of ['quantum physics', 'Quantum Physics', 'quantum-physics', 'quantum  physics']) {
+    assert.deepEqual(
+      (await q.listTopics(dbT, { query: spelling })).map((t) => String(t.slug)),
+      ['quantum-physics'],
+      `"${spelling}" finds the topic`,
+    );
+    assert.equal(await q.countTopics(dbT, 2, spelling), 1, `"${spelling}" counts the same`);
+  }
+
+  // Slugging is the same normalisation the topic pages do, so a plural finds
+  // the singular topic the directory merged it into.
+  assert.deepEqual(
+    (await q.listTopics(dbT, { query: '100 days' })).map((t) => String(t.slug)),
+    ['100-days'],
+  );
+
+  // '%' and '_' are LIKE's wildcards. Slugging strips them from any real term,
+  // but a term that is nothing else keeps its raw form — and must still be
+  // escaped, or a search for '%' would answer with the whole index.
+  assert.equal((await q.listTopics(dbT, { query: '%' })).length, 0);
+
+  // An empty query is "no search", not "search for nothing".
+  assert.equal((await q.listTopics(dbT, { query: '   ' })).length, subjects.length);
+
+  const exported = [];
+  for await (const row of q.eachFeedForExport(dbT, 2, { topic: 'homelab' })) {
+    exported.push(String(row.slug));
+  }
+  assert.deepEqual(
+    exported.sort(),
+    ['homelab-0', 'homelab-1', 'homelab-2', 'homelab-3', 'homelab-4'],
+    'a page size smaller than the result set must not drop or repeat a feed',
+  );
+
+  // The topic filter composes with the kind filter rather than replacing it.
+  const podcasts = [];
+  for await (const row of q.eachFeedForExport(dbT, 100, { kind: 'podcast', topic: 'homelab' })) {
+    podcasts.push(String(row.slug));
+  }
+  assert.deepEqual(podcasts, [], 'none of these feeds is a podcast');
+
+  await rm(dirT, { recursive: true, force: true });
+});
+
 test('item categories survive a round trip through storage', async () => {
   const dir4 = await mkdtemp(join(tmpdir(), 'rssamp-itemcat-'));
   const db4 = connect({ url: `file:${join(dir4, 'cat.db')}` });

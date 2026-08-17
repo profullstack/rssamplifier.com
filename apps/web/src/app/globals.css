@@ -78,28 +78,90 @@ a {
   margin: 0 auto;
   padding: 0 1.25rem;
   display: flex;
-  align-items: baseline;
+  /* Centred rather than baseline-aligned: an image has no baseline of its own
+     beyond its bottom edge, so aligning to one would hang the nav off the foot
+     of the logo instead of level with it. */
+  align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
   flex-wrap: wrap;
 }
 
+/* The wordmark is now the logo file rather than type, so the anchor is sized by
+   what it holds: a flex box, which also drops the descender gap an inline image
+   would otherwise leave under it. Height is what is pinned and width follows —
+   the strip stays the same depth whatever the asset's aspect turns out to be. */
 .wordmark {
-  font-family: var(--serif);
-  font-size: 1.4rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
   text-decoration: none;
 }
 
-.wordmark span {
-  color: var(--accent);
+/* The <picture> is a plain inline box around the image, so it needs the same
+   treatment or it reintroduces the descender gap the flex box just removed. */
+.wordmark picture {
+  display: flex;
 }
 
+.wordmark img {
+  display: block;
+  height: 2rem;
+  width: auto;
+}
+
+/* Mobile first, and on a phone that means closed: thirteen links in a row is
+   most of a small screen, so the nav starts folded behind the label and the
+   wordmark gets the strip to itself. From 48rem up (below) it is a row again and
+   the label disappears — the same markup, laid out for the space there is. */
 .masthead nav {
+  display: none;
+  flex-direction: column;
+  gap: 0.9rem;
+  font-size: 0.95rem;
+  /* Full width so it drops beneath the wordmark rather than beside it, which is
+     what .masthead-inner's flex-wrap does with a third item this wide. */
+  width: 100%;
+  padding-top: 1rem;
+}
+
+/* The checkbox is the state and the label is the control, so the checkbox
+   itself is only ever reached by keyboard: kept in the layout at zero size
+   rather than display:none, which would take it out of the tab order. */
+.nav-checkbox {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.nav-checkbox:checked ~ nav {
   display: flex;
-  gap: 1.4rem;
+}
+
+.nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   font-size: 0.9rem;
+  color: var(--muted);
+  cursor: pointer;
+  /* A tap target rather than a line of text. */
+  padding: 0.35rem 0.1rem;
+  user-select: none;
+}
+
+.nav-toggle:hover {
+  color: var(--ink);
+}
+
+/* The focus ring belongs on the label, since that is what a reader sees; the
+   checkbox it comes from has no size to draw one around. */
+.nav-checkbox:focus-visible ~ .nav-toggle {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
 }
 
 .masthead nav a {
@@ -107,11 +169,21 @@ a {
   text-decoration: none;
   border-bottom: 1px solid transparent;
   padding-bottom: 2px;
+  /* An underline that runs the width of the column reads as a rule rather than
+     as a link, so the open menu keeps its marks to the text. */
+  align-self: flex-start;
 }
 
 .masthead nav a:hover {
   color: var(--ink);
   border-bottom-color: var(--accent);
+}
+
+/* Signed in, so "Sign up" is the one thing in the nav that cannot apply. Driven
+   by the hint cookie via a class on <html>, set before the masthead paints —
+   see the script at the top of the layout. */
+.signed-in .nav-signup {
+  display: none;
 }
 
 /* ---------------------------------------------------------------- type */
@@ -1220,8 +1292,8 @@ body:has(.reader) .masthead {
   margin-bottom: 0.5rem;
 }
 
-body:has(.reader) .wordmark {
-  font-size: 1rem;
+body:has(.reader) .wordmark img {
+  height: 1.4rem;
 }
 
 body:has(.reader) .masthead nav {
@@ -1436,6 +1508,26 @@ select {
 @media (min-width: 48rem) {
   .masthead {
     padding: 1.75rem 0;
+  }
+
+  /* Room for a row, so no menu to open: the label goes and the nav comes back
+     whatever the checkbox happens to say, which matters because the state
+     survives a resize. */
+  .nav-toggle,
+  .nav-checkbox {
+    display: none;
+  }
+
+  .masthead nav,
+  .nav-checkbox:checked ~ nav {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.75rem 1.2rem;
+    font-size: 0.9rem;
+    width: auto;
+    padding-top: 0;
   }
 }
 
@@ -2849,5 +2941,67 @@ html:not([data-dock]) .playlist-hint {
      reveal it with. */
   .playlist-queue .queue-button {
     border-color: var(--line);
+  }
+}
+
+/* ---------------------------------------------------------------- cli install
+
+   The homepage strip and the footer line that carry the install command. Both
+   exist to make one line of shell copyable from where somebody already is,
+   rather than from a page they have to go and find. */
+
+.install-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 1.5rem;
+  align-items: center;
+  margin: 2.5rem 0 1rem;
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.install-strip p {
+  margin: 0;
+}
+
+.install-strip .code-block {
+  /* Already inside a bordered surface, so the block's own frame would read as
+     a box drawn inside a box. */
+  border: 0;
+  padding: 0;
+  background: none;
+}
+
+/* Scoped under .install-strip so it outranks the `.install-strip p` reset
+   above, which is more specific than a bare class and would otherwise flatten
+   this margin. */
+.install-strip .install-links {
+  margin-top: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.install-links a {
+  color: var(--muted);
+}
+
+.footer-install code {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  /* The command must not rewrap: a shell line broken across two is a line
+     somebody pastes wrong. It scrolls instead. */
+  white-space: nowrap;
+  overflow-x: auto;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+@media (max-width: 40rem) {
+  .install-strip {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.9rem;
   }
 }

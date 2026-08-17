@@ -1,4 +1,4 @@
-import { clusterKey, dedupeItems } from '@rssamplifier/feed';
+import { clusterKey, dedupeItems, topicSlug } from '@rssamplifier/feed';
 
 import { newId, nowIso } from './client.js';
 
@@ -603,7 +603,7 @@ export async function feedsForTopic(db, slug, opts = {}) {
   const filter = kindFilter(normalizeKinds(kinds));
 
   const { rows } = await db.execute({
-    sql: `select f.slug, f.title, f.description, f.site_url, f.category, f.item_count,
+    sql: `select f.slug, f.title, f.description, f.site_url, f.feed_url, f.category, f.item_count,
                  k.keyword, k.count, k.source
           from feed_keywords k
           join feeds f on f.id = k.feed_id
@@ -801,21 +801,81 @@ export async function mediaForTopic(db, slug, opts = {}) {
 }
 
 /**
- * The topics index, from the rollup.
+ * A search term, as a LIKE pattern that cannot smuggle in a wildcard.
+ *
+ * `%` and `_` are LIKE's own metacharacters, so a user searching for "100_days"
+ * would otherwise match anything with "100" and any character before "days".
+ * The backslash is declared with `escape` at each call site.
+ *
+ * @param {string} term
+ * @returns {string}
+ */
+function likeTerm(term) {
+  return term.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
+ * A search term as the index stores it.
+ *
+ * The topics index is a table of slugs, so a search for "quantum physics"
+ * matched nothing while "quantum-physics" matched — which asked the caller to
+ * know the slugging rules before they could ask a question. Running the term
+ * through the same function that minted the slugs makes the two spellings one
+ * search, and it is the same normalisation every single-topic route already
+ * does to the keyword in its URL.
+ *
+ * A term that slugs to nothing — punctuation only — keeps its raw form rather
+ * than becoming the empty string, so it searches and finds nothing instead of
+ * silently turning into "list everything".
+ *
+ * @param {string|null} query
+ * @returns {string}
+ */
+function searchSlug(query) {
+  const raw = typeof query === 'string' ? query.trim().toLowerCase() : '';
+  if (!raw) return '';
+  return topicSlug(raw) || raw;
+}
+
+/**
+ * The topics index, from the rollup, optionally searched.
+ *
+ * `query` is ranked rather than filtered: exact slug first, then slugs that
+ * start with the term, then slugs that merely contain it, each tier by feed
+ * count. Prefix-only matching hides `myhomelab` from a search for "homelab",
+ * and contains-only matching answers "rust" with "trustworthy" ahead of the
+ * language — ranking is what gets both right, and the caller can stop reading
+ * as soon as the results stop looking relevant.
  *
  * @param {Client} db
- * @param {{ limit?: number, offset?: number, minFeeds?: number }} [opts]
+ * @param {{ limit?: number, offset?: number, minFeeds?: number, query?: string|null }} [opts]
  * @returns {Promise<object[]>}
  */
 export async function listTopics(db, opts = {}) {
-  const { limit = 200, offset = 0, minFeeds = 2 } = opts;
+  const { limit = 200, offset = 0, minFeeds = 2, query = null } = opts;
+  const term = searchSlug(query);
 
+  if (!term) {
+    const { rows } = await db.execute({
+      sql: `select slug, keyword, feed_count from topics
+            where feed_count >= ?
+            order by feed_count desc, slug asc
+            limit ? offset ?`,
+      args: [minFeeds, limit, offset],
+    });
+    return rows;
+  }
+
+  const escaped = likeTerm(term);
   const { rows } = await db.execute({
     sql: `select slug, keyword, feed_count from topics
-          where feed_count >= ?
-          order by feed_count desc, slug asc
+          where feed_count >= ? and slug like ? escape '\\'
+          order by case when slug = ? then 0
+                        when slug like ? escape '\\' then 1
+                        else 2 end,
+                   feed_count desc, slug asc
           limit ? offset ?`,
-    args: [minFeeds, limit, offset],
+    args: [minFeeds, `%${escaped}%`, term, `${escaped}%`, limit, offset],
   });
   return rows;
 }
@@ -823,12 +883,23 @@ export async function listTopics(db, opts = {}) {
 /**
  * @param {Client} db
  * @param {number} [minFeeds]
+ * @param {string|null} [query] the same term {@link listTopics} was given
  * @returns {Promise<number>}
  */
-export async function countTopics(db, minFeeds = 2) {
+export async function countTopics(db, minFeeds = 2, query = null) {
+  const term = searchSlug(query);
+
+  if (!term) {
+    const { rows } = await db.execute({
+      sql: 'select count(*) as n from topics where feed_count >= ?',
+      args: [minFeeds],
+    });
+    return Number(rows[0]?.n ?? 0);
+  }
+
   const { rows } = await db.execute({
-    sql: 'select count(*) as n from topics where feed_count >= ?',
-    args: [minFeeds],
+    sql: `select count(*) as n from topics where feed_count >= ? and slug like ? escape '\\'`,
+    args: [minFeeds, `%${likeTerm(term)}%`],
   });
   return Number(rows[0]?.n ?? 0);
 }
@@ -1495,6 +1566,37 @@ export async function existingFeedKeys(db, pageSize = 5000) {
 }
 
 /**
+ * The YouTube channels the directory already indexes.
+ *
+ * Discovery normally starts from a list somebody else maintains. This one
+ * starts from the directory itself: every channel here was already judged worth
+ * a page, and the playlists on it — a course, a conference track, an album —
+ * are the ordered works the channel feed flattens into "newest upload first".
+ *
+ * Ordered by rowid so the slice a run takes is stable between passes, which is
+ * what lets the caller rotate through the whole set by run number instead of
+ * storing a cursor.
+ *
+ * @param {Client} db
+ * @returns {Promise<string[]>} channel ids
+ */
+export async function youtubeChannelIds(db) {
+  const { rows } = await db.execute(
+    `select feed_url from feeds
+     where feed_url like '%youtube.com/feeds/videos.xml?channel_id=%'
+     order by rowid`,
+  );
+
+  const ids = [];
+  for (const row of rows) {
+    const match = String(row.feed_url).match(/[?&]channel_id=(UC[\w-]{10,})/);
+    if (match) ids.push(match[1]);
+  }
+
+  return ids;
+}
+
+/**
  * Record a failed crawl and push the next attempt out.
  *
  * @param {Client} db
@@ -1877,13 +1979,22 @@ export async function allFeedsForExport(db, limit = 5000) {
  * directory, and a cursor on a duplicated title would either skip the rest of
  * that title or repeat it forever. `id` is the primary key, so the pair is.
  *
+ * `topic` narrows the export to one topic slug. It is an EXISTS rather than a
+ * join because this query's contract is "a page of *feeds*", and the keyset
+ * cursor below is on (title, id) of feeds alone. feed_keywords is keyed on
+ * (feed_id, slug), so a join happens not to duplicate anything today — but it
+ * would be one relaxed constraint away from emitting a feed twice, which in an
+ * OPML export is a duplicate subscription and in a keyset cursor is a row that
+ * gets skipped when the page boundary falls between the copies. A semi-join
+ * cannot express that bug.
+ *
  * @param {Client} db
- * @param {{ afterTitle?: string|null, afterId?: string|null, limit?: number, kind?: string|null }} [cursor]
+ * @param {{ afterTitle?: string|null, afterId?: string|null, limit?: number, kind?: string|null, topic?: string|null }} [cursor]
  * @returns {Promise<object[]>}
  */
 export async function feedsForExportPage(
   db,
-  { afterTitle = null, afterId = null, limit = 2000, kind = null } = {},
+  { afterTitle = null, afterId = null, limit = 2000, kind = null, topic = null } = {},
 ) {
   const resuming = afterTitle !== null && afterId !== null;
 
@@ -1892,11 +2003,13 @@ export async function feedsForExportPage(
           from feeds
           where status <> 'dead'
             ${kind ? 'and category = ?' : ''}
+            ${topic ? 'and exists (select 1 from feed_keywords k where k.feed_id = feeds.id and k.slug = ?)' : ''}
             ${resuming ? 'and (title > ? or (title = ? and id > ?))' : ''}
           order by title asc, id asc
           limit ?`,
     args: [
       ...(kind ? [kind] : []),
+      ...(topic ? [topic] : []),
       ...(resuming ? [afterTitle, afterTitle, afterId] : []),
       limit,
     ],
@@ -1911,17 +2024,23 @@ export async function feedsForExportPage(
  * whole directory in memory — it is tens of thousands of rows and only grows,
  * and the endpoints that use it stream their output as the pages arrive.
  *
+ * The filters are named rather than positional. They are both nullable strings
+ * and they read alike at a call site, so `(db, 2000, 'homelab')` silently means
+ * "the homelab *category*" — a filter that matches nothing and exports an empty
+ * document, which looks like a dead directory rather than like a mistake.
+ *
  * @param {Client} db
  * @param {number} [pageSize]
- * @param {string|null} [kind] one category, or null for the whole directory
+ * @param {{ kind?: string|null, topic?: string|null }} [filters]
  * @returns {AsyncGenerator<object, void, void>}
  */
-export async function* eachFeedForExport(db, pageSize = 2000, kind = null) {
+export async function* eachFeedForExport(db, pageSize = 2000, filters = {}) {
+  const { kind = null, topic = null } = filters;
   let afterTitle = null;
   let afterId = null;
 
   for (;;) {
-    const rows = await feedsForExportPage(db, { afterTitle, afterId, limit: pageSize, kind });
+    const rows = await feedsForExportPage(db, { afterTitle, afterId, limit: pageSize, kind, topic });
     if (rows.length === 0) return;
 
     for (const row of rows) yield row;

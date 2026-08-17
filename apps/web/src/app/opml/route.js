@@ -2,6 +2,7 @@ import { opmlHead, opmlOutline, opmlFoot } from '@rssamplifier/feed';
 import { q } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
+import { slugFromUrl } from '../../lib/topicGroups.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,15 +24,33 @@ export const dynamic = 'force-dynamic';
  * `?limit=` caps the export for callers that want a sample instead, and
  * `?kind=blog` / `?kind=podcast` exports one category — which is the form a
  * podcast app actually wants, since it has no use for forty thousand blogs.
+ *
+ * `?topic=homelab` exports one topic, and is the cut most consumers actually
+ * want. A reader that loads all fifty thousand feeds has subscribed to the
+ * whole web; the interesting artifact is "the hundred-odd feeds about the thing
+ * I care about", which is small enough to hand to a reader, an agent or another
+ * tool's subscription list without it becoming that tool's whole world. The
+ * keyword is normalised the same way /topics/<keyword> normalises it, so a
+ * caller can pass the phrase it read rather than having to know the slug.
  */
 export async function GET(request) {
   const params = new URL(request.url).searchParams;
   const limit = parseLimit(params.get('limit'));
   const kind = q.normalizeKind(params.get('kind'));
+  const rawTopic = params.get('topic');
+  // An empty or punctuation-only ?topic= slugs to '', which must mean "no
+  // topic" rather than "the topic whose slug is the empty string" — the latter
+  // matches nothing and would export an empty list that looks like a dead
+  // directory.
+  const topic = rawTopic ? slugFromUrl(rawTopic) || null : null;
   const client = db();
 
-  const title = kind ? `RSS Amplifier — ${kind}s` : 'RSS Amplifier — full directory';
-  const filename = kind ? `rssamplifier-${kind}s.opml` : 'rssamplifier.opml';
+  const title = topicTitle(topic, kind);
+  const filename = topic
+    ? `rssamplifier-${topic}.opml`
+    : kind
+      ? `rssamplifier-${kind}s.opml`
+      : 'rssamplifier.opml';
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -40,7 +59,7 @@ export async function GET(request) {
 
       try {
         let written = 0;
-        for await (const row of q.eachFeedForExport(client, 2000, kind)) {
+        for await (const row of q.eachFeedForExport(client, 2000, { kind, topic })) {
           if (limit !== null && written >= limit) break;
 
           controller.enqueue(
@@ -75,6 +94,23 @@ export async function GET(request) {
       'cache-control': 'public, max-age=600',
     },
   });
+}
+
+/**
+ * The OPML document's own title, which is what a reader files the import under.
+ *
+ * Worth naming precisely: several of these imported into one reader are
+ * otherwise several folders all called "RSS Amplifier".
+ *
+ * @param {string|null} topic
+ * @param {string|null} kind
+ * @returns {string}
+ */
+function topicTitle(topic, kind) {
+  if (topic && kind) return `RSS Amplifier — ${topic} (${kind}s)`;
+  if (topic) return `RSS Amplifier — ${topic}`;
+  if (kind) return `RSS Amplifier — ${kind}s`;
+  return 'RSS Amplifier — full directory';
 }
 
 /**

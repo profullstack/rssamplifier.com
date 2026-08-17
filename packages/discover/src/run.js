@@ -27,7 +27,11 @@ export async function runSource(db, sourceId, opts = {}) {
 
   let urls;
   try {
-    urls = await source.run({ ...opts, limit: opts.limit ?? source.limit });
+    // A source that needs to know what the directory already holds says so with
+    // a `context` hook. Inside the try because a failed context read is a failed
+    // run — it must be recorded, not thrown past the run row.
+    const context = source.context ? await source.context(db) : {};
+    urls = await source.run({ ...context, ...opts, limit: opts.limit ?? source.limit });
   } catch (err) {
     // A source that is down is not a failure of the directory. Recorded as a
     // failed run so it is visible, and tried again on the next schedule.

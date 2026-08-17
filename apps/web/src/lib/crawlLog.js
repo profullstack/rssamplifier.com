@@ -90,8 +90,22 @@ export function describe(line, { name = true } = {}) {
       return `read ${name} — ${n(fields.found)} feeds listed, ${n(fields.queued)} new`;
     }
 
-    case 'discovery-topics':
-      return `looked for more of what we already cover — ${n(fields.keywords)} keywords queued`;
+    case 'discovery-topics': {
+      // The payload carries the keywords themselves, not a count — the same
+      // shape 'migrated' below carries, and the poller has always sent it that
+      // way. Passing it to n() asked Number() what ['home lab', 'rss'] is worth
+      // and printed the answer: NaN.
+      //
+      // Both shapes are read because the line is worth showing either way, and
+      // naming the terms is the useful half: "3 keywords queued" does not tell a
+      // reader whether the directory is chasing something sensible.
+      const terms = Array.isArray(fields.keywords) ? fields.keywords.map(String) : [];
+      const count = terms.length || Number(fields.keywords ?? 0);
+      const named = terms.length ? `: ${terms.join(', ')}` : '';
+      return `looked for more of what we already cover — ${n(count)} ${
+        count === 1 ? 'keyword' : 'keywords'
+      } queued${named}`;
+    }
 
     case 'topics':
       return `rebuilt the topics index — ${n(fields.topics)} topics`;

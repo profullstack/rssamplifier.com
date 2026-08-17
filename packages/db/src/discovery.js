@@ -395,6 +395,26 @@ export async function lastRunAt(db, provider) {
 }
 
 /**
+ * How many times a source has run.
+ *
+ * A source that walks a list too large to read in one pass needs to know where
+ * it got to. This is that cursor, derived rather than stored: the runs are
+ * already recorded, and counting them is cheaper than a column only one source
+ * would ever write to.
+ *
+ * @param {Client} db
+ * @param {string} provider
+ * @returns {Promise<number>}
+ */
+export async function countRuns(db, provider) {
+  const { rows } = await db.execute({
+    sql: 'select count(*) as n from discovery_runs where provider = ?',
+    args: [provider],
+  });
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
  * @param {Client} db
  * @returns {Promise<number>}
  */

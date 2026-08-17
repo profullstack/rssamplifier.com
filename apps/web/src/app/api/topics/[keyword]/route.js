@@ -79,6 +79,13 @@ export async function GET(req, { params }) {
           title: f.title,
           description: f.description,
           siteUrl: f.site_url,
+          // The feed's own address, not ours. Without it a caller that wanted
+          // to *subscribe* to what a topic turned up had to fetch every feed's
+          // page to find one URL each — so the endpoint answered "here are 126
+          // feeds about homelabs" while withholding the only field that makes
+          // that answer actionable. /opml?topic= is the bulk form of the same
+          // thing.
+          feedUrl: f.feed_url,
           kind: f.category,
           itemCount: f.item_count,
           // How this feed came to be on this topic: the publisher's own tag, or
