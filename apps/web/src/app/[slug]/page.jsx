@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { q, accounts, queue, authors as people } from '@rssamplifier/db';
+import { q, alerts, queue, authors as people } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
@@ -10,7 +10,7 @@ import { feedCard, postThumb } from '../../lib/thumbs.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import AuthorLinks from '../AuthorLinks.jsx';
-import FollowButton from '../FollowButton.jsx';
+import FollowControls from '../FollowControls.jsx';
 import PlayButton from '../PlayButton.jsx';
 import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
@@ -103,9 +103,11 @@ export default async function FeedPage({ params }) {
   ]);
 
   // Only asked once we know there is someone to ask about.
-  const [following, queued] = user
+  const [follow, queued] = user
     ? await Promise.all([
-        accounts.isFollowing(client, String(user.id), String(feed.id)),
+        // Following and alerting in one row, because the two controls sit side
+        // by side and asking twice would be two queries for one answer.
+        alerts.feedFollowState(client, String(user.id), String(feed.id)),
         // One statement for the whole page. Asking per post would be fifty
         // round trips to decide what fifty buttons say.
         queue.lanesForItems(
@@ -114,7 +116,10 @@ export default async function FeedPage({ params }) {
           posts.map((p) => String(p.id)),
         ),
       ])
-    : [false, /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({})];
+    : [
+        { following: false, alerts: false },
+        /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({}),
+      ];
 
   // A blog page is the longest read on the site — up to fifty summaries — so it
   // is the one place a rectangle earns its keep, sat in the flow where somebody
@@ -216,10 +221,12 @@ export default async function FeedPage({ params }) {
             a click that lands flips the button in place rather than reloading
             fifty posts. A signed-out reader is not shown a dead button: the
             endpoint sends them to sign in and back here afterwards. */}
-        <FollowButton
+        <FollowControls
           endpoint="/api/follows"
+          kind="feed"
           slug={String(feed.slug)}
-          following={following}
+          following={follow.following}
+          alerts={follow.alerts}
           signedIn={Boolean(user)}
           next={`/${slug}`}
           label="Follow"

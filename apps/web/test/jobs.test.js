@@ -31,6 +31,7 @@ function busy(overrides = {}) {
       discovery: { lines: 6, errors: 0, amount: 60, lastAt: at, ms: 900 },
       'cluster-backfill': { lines: 360, errors: 0, amount: 12_000, lastAt: at, ms: 90 },
       topics: { lines: 4, errors: 0, amount: 0, lastAt: at, ms: 300 },
+      alerts: { lines: 30, errors: 0, amount: 48, lastAt: at, ms: 600 },
       ...overrides.activity,
     },
     fetchedLastHour: overrides.fetchedLastHour ?? 1_500,
@@ -140,6 +141,32 @@ test('an uncountable backlog is null rather than zero', () => {
   assert.equal(clusters.backlog, null);
   assert.equal(clusters.state, 'working', 'it is moving, and the log says so');
   assert.equal(clusters.eta, null, 'and no estimate is invented from it');
+});
+
+test('a quiet alert pass is idle, not stalled', () => {
+  // The one job whose steady state is doing nothing: most hours nobody an
+  // account follows publishes anything. A board that called that "stalled"
+  // would cry wolf every night, so an alert pass with no throughput and a log
+  // line behind it is idle — and the alarm is kept for a pass that has stopped
+  // running at all.
+  const alerts = find(busy(), 'alerts');
+  assert.equal(alerts.backlog, null, 'a backlog here is a query per account');
+  assert.equal(alerts.state, 'working', 'it sent something this hour');
+  assert.equal(alerts.eta, null, 'and nothing to estimate against');
+
+  // A pass that ran and found nothing to send. This is why the poller logs the
+  // pass whenever it had anybody to consider rather than only when it sent
+  // something: without that line there is no `lastAt`, and a quiet night would
+  // read as a sender that had stopped.
+  const quiet = find(
+    busy({ activity: { alerts: { lines: 30, errors: 0, amount: 0, lastAt: '2026-08-17T10:00:00.000Z', ms: 40 } } }),
+    'alerts',
+  );
+  assert.equal(quiet.state, 'idle');
+
+  // And one that has genuinely never run still says so.
+  const absent = find(busy({ activity: { alerts: undefined } }), 'alerts');
+  assert.equal(absent.state, 'stalled');
 });
 
 test('every job reports when it last ran, from the log it already writes', () => {

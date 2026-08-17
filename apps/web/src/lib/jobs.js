@@ -136,6 +136,20 @@ export function jobRows({ backlogs, activity, fetchedLastHour, keywordQueue, can
       events: ['cluster-backfill', 'cluster-backfill-done', 'cluster-backfill-error'],
     },
     {
+      key: 'alerts',
+      label: 'Alerts',
+      what: 'Tells readers about new posts on the blogs and topics they asked about',
+      // Nothing to count. A backlog here would be "posts published since each
+      // account's watermark", which is a query per account against the largest
+      // table in the database — and the answer is almost always zero. The pass
+      // reports what it sent instead, so this row shows movement rather than a
+      // total, the way the cluster walk above does.
+      backlog: null,
+      rate: activity.alerts?.amount ?? 0,
+      rateNote: 'posts alerted',
+      events: ['alerts', 'alert-error', 'purged-alerts'],
+    },
+    {
       key: 'housekeeping',
       label: 'Housekeeping',
       what: 'Rebuilds the topics index, clears expired sessions, prunes the logs',
