@@ -16,16 +16,29 @@
 --
 -- Collapsing the middle case into NULL would leave every ungroupable row in the
 -- worker's queue for good, and it would re-examine them on every pass forever.
+--
+-- Adding a nullable column with no default is O(1) in SQLite: it rewrites the
+-- table header, not the rows. That is the only reason this file is safe to run
+-- against a table with 1.4M rows in it.
 alter table feed_items add column cluster_key text;
 
--- The river reads recent items and groups them. Leading with published_at keeps
--- that scan on the same axis the river already orders by, so grouping costs no
--- extra pass over the table.
-create index if not exists feed_items_cluster_idx
-  on feed_items (published_at desc, cluster_key);
-
--- How the backfill worker finds what it has not reached yet. Partial, so it
--- indexes only the shrinking set of un-keyed rows and disappears to nothing
--- once the backfill has drained.
-create index if not exists feed_items_cluster_backfill_idx
-  on feed_items (id) where cluster_key is null;
+-- Deliberately no indexes on feed_items here, and this is the interesting part.
+--
+-- The first version of this migration created two: one on (published_at desc,
+-- cluster_key) to cover the river, and a partial one on the un-keyed rows to
+-- feed the backfill. Neither can be built. Over 1.4M rows the index build runs
+-- past the libSQL client's timeout, the statement dies with "fetch failed", and
+-- because a migration file is not transactional and is only recorded once every
+-- statement in it has succeeded, the boot that attempted it left the column
+-- applied and the file unrecorded — so the next boot re-ran the ALTER, hit
+-- "duplicate column name", and the crawler stayed down until a human fixed it.
+--
+-- Neither index was load-bearing:
+--
+--   * The river filters on feed_id and orders by published_at, both already
+--     indexed. It only *selects* cluster_key, and grouping happens in JS.
+--   * The backfill walks the primary key with a cursor instead of searching for
+--     null rows, which is why it no longer needs an index to find its work.
+--
+-- If they are ever wanted, they have to be built out of band against Turso
+-- directly, not from a statement the poller runs at boot.

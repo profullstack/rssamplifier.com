@@ -77,8 +77,13 @@ const recorder = createRecorder({
 let running = false;
 let stopping = false;
 // Whether any item still lacks a grouping key. Latches off for good once the
-// backfill drains, so a finished migration costs nothing on every later tick.
+// walk reaches the end of the table, so a finished backfill costs nothing on
+// every later tick.
 let clusterBackfill = true;
+// How far through feed_items the walk has got. Held in memory rather than
+// stored: a restart re-walks from the start, and re-walking is cheap because
+// rows that already carry a key are read and skipped without a write.
+let clusterCursor = '';
 let lastPurge = 0;
 let lastSources = 0;
 let lastTopicSearch = 0;
@@ -217,10 +222,18 @@ async function tick() {
     // smaller problem than a crawl that ran late.
     if (clusterBackfill) {
       try {
-        const filled = await q.backfillClusterKeys(db, clusterBatch);
-        if (filled.scanned) log('cluster-backfill', filled);
-        // Nothing left to key. Stop asking for the rest of this process's life.
-        else clusterBackfill = false;
+        const filled = await q.backfillClusterKeys(db, clusterBatch, clusterCursor);
+        if (filled.cursor === null) {
+          // Walked off the end of the table. Done for the life of this process;
+          // everything stored from here on is keyed as it arrives.
+          clusterBackfill = false;
+          log('cluster-backfill-done', {});
+        } else {
+          clusterCursor = filled.cursor;
+          // Only worth a line when it actually wrote something: most passes
+          // late in the walk are over rows that were already keyed.
+          if (filled.keyed) log('cluster-backfill', filled);
+        }
       } catch (err) {
         log('cluster-backfill-error', { message: String(err?.message ?? err) });
       }
