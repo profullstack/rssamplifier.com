@@ -42,13 +42,15 @@ export const metadata = {
     // the root copy serves everything that asks for /favicon.ico without ever
     // having parsed a page — feed readers, link unfurlers, an old bookmark bar.
     shortcut: [{ url: '/favicon.ico', type: 'image/x-icon' }],
-    // All nine are recut from /apple-icon.png rather than from the favicon
-    // artwork, because a home-screen icon is a different drawing of the same
-    // mark. iOS composites it on its own ground and rounds the corners itself,
-    // so it wants what that file already is — opaque on #fbfaf8, and inset far
-    // enough that the rounding does not clip the megaphone. The favicon cuts
-    // above are transparent and edge-to-edge, which is right for a 16px tab and
-    // wrong here. The small end is not dead weight either: an iPhone old enough
+    // All nine come off /favicon.png, the master the whole set is cut from, but
+    // flattened rather than resized: a home-screen icon is the same mark drawn
+    // for a different surface. iOS composites it on its own ground and rounds
+    // the corners itself, so it wants these opaque on #fbfaf8 and inset far
+    // enough that the rounding cannot clip the megaphone. The favicon cuts above
+    // are transparent and edge-to-edge, which is right for a 16px tab and wrong
+    // here; /apple-icon.png at the root is a copy of the 180 below, for the
+    // clients that look for that name without reading the markup.
+    // The small end is not dead weight either: an iPhone old enough
     // to ask for the 57 takes the *first* apple-touch-icon it can use rather
     // than the best fit, which is why this list runs largest to smallest.
     apple: [
@@ -196,7 +198,10 @@ export default function RootLayout({ children }) {
                 optimiser has nothing to decide and would only put a render-
                 blocking round trip in front of the first paint. Width and height
                 are the intrinsic pixels, so the strip reserves its space before
-                the file lands and the nav below it never jumps. */}
+                the file lands and the nav below it never jumps — which means
+                they have to be rechecked whenever the asset is recut, and both
+                variants have to agree on them, since only one <img> carries
+                them however the <picture> below resolves. */}
             <a className="wordmark" href="/">
               {/* Two files rather than one, because the logo's "RSS" half and
                   the megaphone are near-black and disappear into the dark
@@ -206,7 +211,7 @@ export default function RootLayout({ children }) {
                   is the element that actually renders either way. */}
               <picture>
                 <source srcSet="/logo-dark.png" media="(prefers-color-scheme: dark)" />
-                <img src="/logo.png" alt="RSS Amplifier" width="646" height="96" />
+                <img src="/logo.png" alt="RSS Amplifier" width="1256" height="192" />
               </picture>
             </a>
 

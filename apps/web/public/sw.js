@@ -21,7 +21,10 @@
 // subscription — the endpoint belongs to the registration, not to the script —
 // but it would go on running the old script, which drops every push on the
 // floor, until something evicted it.
-const VERSION = 'v4';
+//
+// v5 is a pure artwork bump: both logos were recut and the home-screen icons
+// were redrawn from the current mark, under the names they already had.
+const VERSION = 'v5';
 const SHELL = `shell-${VERSION}`;
 const ASSETS = `assets-${VERSION}`;
 
@@ -30,11 +33,14 @@ const OFFLINE_URL = '/offline';
 // a brand that only appears once you are back online is worse than none.
 // Both logos, because which one the masthead asks for is decided by the
 // reader's colour scheme and the install has no way to know which that is.
+// The icon is the one the manifest names, not the root alias beside it: an
+// install that precached a different URL than the manifest asks for is an
+// install holding two copies of the same drawing.
 const SHELL_URLS = [
   OFFLINE_URL,
   '/logo.png',
   '/logo-dark.png',
-  '/icon-192.png',
+  '/icons/icon-192x192.png',
   '/manifest.webmanifest',
 ];
 
