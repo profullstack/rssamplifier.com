@@ -40,6 +40,7 @@ export const STATIC_PAGES = [
   { path: '/submit', changefreq: 'weekly', priority: '0.7' },
   { path: '/signup', changefreq: 'monthly', priority: '0.6' },
   { path: '/about', changefreq: 'monthly', priority: '0.5' },
+  { path: '/privacy', changefreq: 'yearly', priority: '0.3' },
 ];
 
 /**
