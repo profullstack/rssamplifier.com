@@ -42,7 +42,7 @@ export async function GET(req) {
   const [rows, total, stats] = await Promise.all([
     authors.listAuthors(client, { limit, offset, minConfidence, network, query }),
     authors.countAuthors(client, { minConfidence }),
-    authors.authorStats(client),
+    authors.authorStats(client, { minConfidence }),
   ]);
 
   return json({
@@ -51,6 +51,9 @@ export async function GET(req) {
     // needed its own filtered query per request is not worth the round trip.
     total,
     reachable: stats.reachable,
+    // Blogs that publish an account but name nobody. Not authors, and not in
+    // the list below — see /api/feeds/{slug}.links, which is where they live.
+    feedsWithLinks: stats.feedsWithLinks,
     limit,
     offset,
     minConfidence,

@@ -81,12 +81,24 @@ export async function claimAuthorSlug(db, name, fallbackUrl = '') {
  * @param {{ id: string, feed_url: string }} feed
  * @param {Array<import('@rssamplifier/feed').Credit>} credits
  * @param {Array<{ network: string, url: string, handle?: string, source: string, verified?: boolean }>} [links]
- *   links to attach to the single credited author, ignored when there are several
- * @returns {Promise<{ people: number, links: number }>}
+ *   accounts found on the feed's site. Always stored against the feed; also
+ *   copied onto the author when there is exactly one of them.
+ * @returns {Promise<{ people: number, links: number, feedLinks: number }>}
  */
 export async function storeCredits(db, feed, credits, links = []) {
   const merged = mergeCredits(credits.filter(Boolean));
-  if (merged.length === 0) return { people: 0, links: 0 };
+
+  // The feed's own accounts, stored whether or not anybody was named. This is
+  // the common case on the small web and it used to be thrown away: a blog
+  // with a Mastodon link in its footer and no byline anywhere published a way
+  // to reach whoever writes it, and an empty `merged` meant returning before
+  // anything was written. On a probe of fifteen production feeds twelve had at
+  // least one account and only nine named a person, so a third of what the
+  // directory could find was being discarded for want of a name to file it
+  // under.
+  const feedLinks = await a.addFeedLinks(db, feed.id, links);
+
+  if (merged.length === 0) return { people: 0, links: 0, feedLinks };
 
   let people = 0;
   let stored = 0;
@@ -132,14 +144,16 @@ export async function storeCredits(db, feed, credits, links = []) {
     // Links found on a page belong to *a* person, and a page crediting three
     // people does not say which. Attributing a footer's Mastodon account to
     // all three would be wrong twice out of three times, so a multi-author
-    // feed keeps only what each credit carried on its own.
+    // feed keeps only what each credit carried on its own — and the footer's
+    // accounts stay on the feed above, which is the claim that is actually
+    // true of a group blog.
     if (merged.length === 1) own.push(...links);
 
     stored += await a.addAuthorLinks(db, id, own);
     people += 1;
   }
 
-  return { people, links: stored };
+  return { people, links: stored, feedLinks };
 }
 
 /**
@@ -285,11 +299,12 @@ export async function enrichDue(db, batchSize = 10, opts = {}) {
   const recheckBefore = new Date(Date.now() - recheckDays * 86_400_000).toISOString();
 
   const due = await a.dueForAuthors(db, batchSize, recheckBefore);
-  if (due.length === 0) return { feeds: 0, people: 0, links: 0 };
+  if (due.length === 0) return { feeds: 0, people: 0, links: 0, feedLinks: 0 };
 
   let feeds = 0;
   let people = 0;
   let links = 0;
+  let feedLinks = 0;
 
   for (const feed of due) {
     const started = Date.now();
@@ -306,6 +321,7 @@ export async function enrichDue(db, batchSize = 10, opts = {}) {
       feeds += 1;
       people += result.people;
       links += result.links;
+      feedLinks += result.feedLinks ?? 0;
       report(opts.onEvent, feed, started, { ok: true, amount: result.people, detail: null });
     } catch (err) {
       await a.markAuthorsChecked(db, String(feed.id)).catch(() => {});
@@ -317,7 +333,7 @@ export async function enrichDue(db, batchSize = 10, opts = {}) {
     }
   }
 
-  return { feeds, people, links };
+  return { feeds, people, links, feedLinks };
 }
 
 /**

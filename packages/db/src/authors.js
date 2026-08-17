@@ -215,6 +215,74 @@ export async function addAuthorLinks(db, authorId, links) {
 }
 
 /**
+ * Store where a feed can be found, independent of who writes it.
+ *
+ * Deliberately a separate table from `author_links` rather than an author row
+ * with a blank name. Inventing a person to hang a Mastodon account on would
+ * put a fiction in the one table the site publishes as real people; saying
+ * "this blog is on Mastodon" claims exactly as much as we know.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @param {Array<{ network: string, url: string, handle?: string, source: string, verified?: boolean }>} links
+ * @returns {Promise<number>} rows written, not rows offered
+ */
+export async function addFeedLinks(db, feedId, links) {
+  let written = 0;
+
+  for (const link of links) {
+    if (!link?.url || !link?.network) continue;
+
+    const { rowsAffected } = await db.execute({
+      sql: `insert into feed_links
+              (id, feed_id, network, url, handle, source, verified, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict (feed_id, url) do update set
+              source = case when excluded.source = 'rel-me' then excluded.source else source end,
+              verified = max(verified, excluded.verified)`,
+      args: [
+        newId(),
+        feedId,
+        link.network,
+        link.url,
+        link.handle || null,
+        link.source,
+        link.verified ? 1 : 0,
+        nowIso(),
+      ],
+    });
+    written += Number(rowsAffected ?? 0);
+  }
+
+  return written;
+}
+
+/**
+ * Where one feed can be found.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @returns {Promise<Array<{ network: string, url: string, handle: string|null, source: string, verified: boolean }>>}
+ */
+export async function linksForFeed(db, feedId) {
+  const { rows } = await db.execute({
+    sql: `select network, url, handle, source, verified
+            from feed_links
+           where feed_id = ?
+           order by verified desc, network asc`,
+    args: [feedId],
+  });
+
+  return rows.map((link) => ({
+    network: String(link.network),
+    url: String(link.url),
+    handle: link.handle == null ? null : String(link.handle),
+    source: String(link.source),
+    verified: Number(link.verified) === 1,
+  }));
+}
+
+/**
  * Credit an author on a feed.
  *
  * @param {Client} db
@@ -418,21 +486,38 @@ export async function authorsForSitemap(db, limit, minConfidence = 0.6) {
  * @param {Client} db
  * @returns {Promise<{ authors: number, links: number, feedsChecked: number, feedsWithAuthor: number, reachable: number }>}
  */
-export async function authorStats(db) {
+export async function authorStats(db, opts = {}) {
   const one = async (sql) => Number((await db.execute(sql)).rows[0]?.n ?? 0);
+  const floor = async (sql) =>
+    Number((await db.execute({ sql, args: [Number(opts.minConfidence ?? 0)] })).rows[0]?.n ?? 0);
 
   return {
-    authors: await one('select count(*) as n from authors'),
+    // Counted against the same floor the caller publishes at, or every author
+    // when none is given. The two must agree: a page saying "9 of 6 can be
+    // reached" is what happens when the numerator ignores a filter the
+    // denominator applies.
+    authors: await floor('select count(*) as n from authors where confidence >= ?'),
     links: await one('select count(*) as n from author_links'),
     feedsChecked: await one('select count(*) as n from feeds where authors_checked_at is not null'),
     feedsWithAuthor: await one('select count(distinct feed_id) as n from feed_authors'),
     // The number that matters for outreach: authors with at least one way to
     // contact them, rather than authors whose name we happen to know.
-    reachable: await one(
+    //
+    // Any link counts, not a shortlist of the messaging ones. An email is the
+    // easiest thing to act on, but a Mastodon account, a LinkedIn profile or
+    // just the person's own site with a contact form on it are all ways to
+    // reach somebody — and counting only the first few made the directory look
+    // far less useful than it is.
+    reachable: await floor(
       `select count(distinct a.id) as n from authors a
          join author_links l on l.author_id = a.id
-        where l.network in ('email', 'fediverse', 'bluesky', 'twitter', 'linkedin', 'linktree')`,
+        where a.confidence >= ?`,
     ),
+    // Feeds with somewhere to write to, whether or not a person is named. The
+    // wider number, and the honest one for "how much of this directory could
+    // we contact": a blog with a Mastodon in the footer and no byline is
+    // reachable even though nobody is.
+    feedsWithLinks: await one('select count(distinct feed_id) as n from feed_links'),
   };
 }
 

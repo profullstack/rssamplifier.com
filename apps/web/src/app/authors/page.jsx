@@ -65,7 +65,7 @@ export default async function AuthorsPage({ searchParams }) {
       query,
     }),
     authors.countAuthors(client, { minConfidence: MIN_CONFIDENCE }),
-    authors.authorStats(client),
+    authors.authorStats(client, { minConfidence: MIN_CONFIDENCE }),
   ]);
 
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -173,7 +173,8 @@ export default async function AuthorsPage({ searchParams }) {
       )}
 
       <p className="hint">
-        {stats.reachable} of {stats.authors} can be reached somewhere. Machine-readable:{' '}
+        {stats.reachable} of {stats.authors} can be reached somewhere, and {stats.feedsWithLinks}{' '}
+        blogs publish an account without naming anybody. Machine-readable:{' '}
         <a href="/api/authors">JSON</a>
       </p>
 

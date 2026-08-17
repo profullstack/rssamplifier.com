@@ -28,12 +28,13 @@ export async function GET(req, { params }) {
     });
   }
 
-  const [items, topics, credited] = await Promise.all([
+  const [items, topics, credited, feedLinks] = await Promise.all([
     q.itemsForFeed(client, String(feed.id), limit),
     // A feed's full topic set, including the ones no other feed shares — those
     // are absent from /api/topics by design, and this is where they live.
     q.keywordsForFeed(client, String(feed.id), 25),
     authors.authorsForFeed(client, String(feed.id)),
+    authors.linksForFeed(client, String(feed.id)),
   ]);
 
   return new Response(
@@ -59,6 +60,11 @@ export async function GET(req, { params }) {
           strength: Number(t.count ?? 0),
           page: `${siteUrl()}/topics/${encodeURIComponent(String(t.slug))}`,
         })),
+        // Where the blog itself can be found, whoever writes it. Separate
+        // from `authors` because it is a weaker and different claim: these are
+        // the accounts the site links to, which on a group blog belong to the
+        // publication and on an unsigned blog are the only handle on anybody.
+        links: feedLinks,
         // Who writes it, and the accounts they published. Inline rather than
         // behind a second request: a caller reading a feed to decide whether
         // to say something about it needs to know who to say it to, and making

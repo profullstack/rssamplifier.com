@@ -93,11 +93,12 @@ export default async function FeedPage({ params }) {
   const feed = await q.feedBySlug(client, slug);
   if (!feed) notFound();
 
-  const [posts, nav, topics, credited, user] = await Promise.all([
+  const [posts, nav, topics, credited, feedLinks, user] = await Promise.all([
     q.itemsForFeed(client, String(feed.id), 50),
     q.neighbours(client, String(feed.created_at)),
     q.keywordsForFeed(client, String(feed.id)),
     people.authorsForFeed(client, String(feed.id)),
+    people.linksForFeed(client, String(feed.id)),
     currentUser(),
   ]);
 
@@ -271,7 +272,7 @@ export default async function FeedPage({ params }) {
           them. */}
       {credited.length > 0 && (
         <section className="feed-authors">
-          <h2>{credited.length === 1 ? 'Written by' : 'Written by'}</h2>
+          <h2>Written by</h2>
           <ul>
             {credited.map((person) => (
               <li key={String(person.id)}>
@@ -280,6 +281,21 @@ export default async function FeedPage({ params }) {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {/* The blog's own accounts. Shown when nobody is named — which is a
+          third of the small web, and where they are the only way to reach
+          whoever writes it — and for a group blog, where they belong to the
+          publication rather than to any one of the bylines.
+
+          Suppressed for a single-author feed, because there the same links are
+          already sitting under that person's name and saying them twice adds
+          nothing but a second row of chips. */}
+      {feedLinks.length > 0 && !(credited.length === 1) && (
+        <section className="feed-authors">
+          <h2>{credited.length > 1 ? 'This blog elsewhere' : 'Elsewhere'}</h2>
+          <AuthorLinks links={feedLinks} />
         </section>
       )}
 

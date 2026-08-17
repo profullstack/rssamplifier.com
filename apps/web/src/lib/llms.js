@@ -152,6 +152,8 @@ export async function llmsTxt(opts = {}) {
     '- Each feed has a stable page at /{slug} carrying schema.org Blog or PodcastSeries JSON-LD.',
     '- Each author has a page at /authors/{slug} carrying schema.org Person with sameAs.',
     '- Author links come from what the author published about themselves — rel="me", h-card, JSON-LD sameAs — never from a data broker. Role mailboxes are dropped at extraction, so an email in /api/authors belongs to a person. Each link carries the source it was read from and whether the account links back, so you can decide how much to trust it.',
+    '- Recognised networks: their own site, email, Mastodon and the wider fediverse, Bluesky, X, LinkedIn, GitHub, GitLab, Codeberg, SourceHut, YouTube, Twitch, Instagram, Threads, TikTok, Reddit, Mastodon-style links pages (Linktree, bio.link and friends), Micro.blog, Substack, Medium, DEV, Tumblr, Telegram, Matrix, XMPP, Nostr, Keybase, ORCID, Flickr, SoundCloud, Bandcamp, Goodreads, Stack Overflow, Patreon and Ko-fi.',
+    '- A blog with accounts but no byline has them at /api/feeds/{slug} under `links` rather than under `authors`. About a third of the directory is this shape, so check both.',
     '- Please identify yourself in your user-agent. Rate limits are generous but real.',
     '',
     '## Feeds',

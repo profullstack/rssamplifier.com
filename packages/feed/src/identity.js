@@ -203,6 +203,20 @@ const PROFILE_PATTERNS = [
   { network: 'soundcloud', host: /^(?:www\.)?soundcloud\.com$/, path: /^\/([\w-]{1,60})\/?$/ },
   { network: 'bandcamp', host: /^([\w-]{1,60})\.bandcamp\.com$/, path: /^\/?$/, fromHost: true },
   { network: 'substack', host: /^([\w-]{1,60})\.substack\.com$/, path: /^\/?$/, fromHost: true },
+  // micro.blog belongs here more than most: it is a small-web host whose users
+  // are exactly the people this directory indexes, and it publishes rel="me"
+  // by default.
+  { network: 'microblog', host: /^(?:www\.)?micro\.blog$/, path: /^\/([\w.-]{1,60})\/?$/ },
+  { network: 'tumblr', host: /^([\w-]{1,32})\.tumblr\.com$/, path: /^\/?$/, fromHost: true },
+  // A researcher's permanent identifier. Academic blogs are a real slice of the
+  // directory and an ORCID is the one link on them that never rots.
+  { network: 'orcid', host: /^(?:www\.)?orcid\.org$/, path: /^\/(\d{4}-\d{4}-\d{4}-\d{3}[\dX])\/?$/i },
+  // Nostr through the web clients that resolve a pubkey to a profile. The
+  // `nostr:` URI form is handled in classifyLink, since it is not http.
+  { network: 'nostr', host: /^njump\.me$/, path: /^\/(npub1[\w]{20,70})\/?$/ },
+  { network: 'nostr', host: /^(?:www\.)?primal\.net$/, path: /^\/p\/(npub1[\w]{20,70})\/?$/ },
+  { network: 'nostr', host: /^snort\.social$/, path: /^\/p\/(npub1[\w]{20,70})\/?$/ },
+  { network: 'nostr', host: /^iris\.to$/, path: /^\/(npub1[\w]{20,70})\/?$/ },
 ];
 
 /**
@@ -440,6 +454,23 @@ export function classifyLink(value, base = '') {
   if (/^mailto:/i.test(raw)) {
     const address = personalEmail(raw);
     return address ? { network: 'email', url: `mailto:${address}`, handle: address } : null;
+  }
+
+  // The schemes that are an identity without being a web page. Handled before
+  // normalizeIdentityUrl, which only admits http and https by design.
+  const nostr = raw.match(/^nostr:(npub1[\w]{20,70})$/i);
+  if (nostr) {
+    const npub = nostr[1].toLowerCase();
+    // Stored as a resolvable URL rather than the bare URI: a link somebody can
+    // click is worth more on a page than a scheme most browsers ignore, and
+    // the pubkey is still the handle.
+    return { network: 'nostr', url: `https://njump.me/${npub}`, handle: npub };
+  }
+
+  const xmpp = raw.match(/^xmpp:([^?\s]+@[^?\s]+)/i);
+  if (xmpp) {
+    const jid = xmpp[1].toLowerCase();
+    return { network: 'xmpp', url: `xmpp:${jid}`, handle: jid };
   }
 
   const url = normalizeIdentityUrl(raw, base);

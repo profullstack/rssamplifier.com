@@ -192,6 +192,75 @@ test('a page crediting two people keeps its links off both of them', async () =>
   );
 });
 
+test('a blog with accounts but no byline keeps its accounts', async () => {
+  const feed = await seedFeed({
+    slug: 'unsigned',
+    feedUrl: 'https://unsigned.example/feed.xml',
+    siteUrl: 'https://unsigned.example/',
+  });
+
+  const fetcher = fakeFetch({
+    'https://unsigned.example/': `<html><head><link rel="me" href="https://hachyderm.io/@unsigned"></head>
+      <body><footer><a href="https://www.linkedin.com/in/someone">LinkedIn</a>
+      <a href="https://x.com/unsigned">X</a></footer></body></html>`,
+  });
+
+  const result = await enrichFeedAuthors(db, feed, { fetch: fetcher, resolve: fakeResolve([]) });
+
+  assert.equal(result.people, 0, 'nobody is named, and nobody is invented to hold the links');
+  assert.ok(result.feedLinks > 0, 'this is a third of the small web; the accounts used to be thrown away');
+
+  const links = await a.linksForFeed(db, feed.id);
+  const networks = links.map((l) => l.network).sort();
+  assert.deepEqual(networks, ['fediverse', 'linkedin', 'twitter']);
+
+  assert.deepEqual(await a.authorsForFeed(db, feed.id), [], 'and still no fictional person');
+});
+
+test("a group blog's footer accounts go to the blog, not to each byline", async () => {
+  const feed = await seedFeed({ slug: 'trio', feedUrl: 'https://trio.example/feed.xml' });
+  const pageLinks = [
+    { network: 'fediverse', url: 'https://mastodon.social/@trioblog', handle: '@trioblog', source: 'page-link' },
+  ];
+
+  await storeCredits(
+    db,
+    { id: feed.id, feed_url: 'https://trio.example/feed.xml' },
+    [
+      { name: 'Ida Bloom', email: '', url: '', avatar: '', role: 'author', source: 'item-byline', confidence: 0.6 },
+      { name: 'Tomas Vega', email: '', url: '', avatar: '', role: 'author', source: 'item-byline', confidence: 0.6 },
+    ],
+    pageLinks,
+  );
+
+  const authorsOn = await a.authorsForFeed(db, feed.id);
+  assert.equal(authorsOn.length, 2);
+  assert.ok(
+    authorsOn.every((person) => person.links.length === 0),
+    'still not attributed to either of them — the page does not say which',
+  );
+
+  const onFeed = await a.linksForFeed(db, feed.id);
+  assert.equal(onFeed.length, 1, 'but no longer discarded: it belongs to the publication');
+  assert.equal(onFeed[0].network, 'fediverse');
+});
+
+test('storing the same feed links twice does not duplicate them', async () => {
+  const feed = await seedFeed({ slug: 'twice', feedUrl: 'https://twice.example/feed.xml' });
+  const links = [
+    { network: 'fediverse', url: 'https://mastodon.social/@twice', handle: '@twice', source: 'page-link' },
+  ];
+
+  await storeCredits(db, { id: feed.id, feed_url: 'https://twice.example/feed.xml' }, [], links);
+  await storeCredits(db, { id: feed.id, feed_url: 'https://twice.example/feed.xml' }, [], [
+    { ...links[0], source: 'rel-me' },
+  ]);
+
+  const stored = await a.linksForFeed(db, feed.id);
+  assert.equal(stored.length, 1, 'the pass re-runs over the directory every 90 days');
+  assert.equal(stored[0].source, 'rel-me', 'and a better provenance replaces a weaker one');
+});
+
 test('the whole pass runs off a site that publishes an h-card and a Linktree', async () => {
   const feed = await seedFeed({
     slug: 'delta',

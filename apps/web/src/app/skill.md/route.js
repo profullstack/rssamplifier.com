@@ -49,6 +49,10 @@ is not a search engine for the whole web.
   their own site as a \`rel="me"\` claim, an h-card or JSON-LD; role mailboxes
   are dropped at extraction, so an address here belongs to a person.
 - \`GET ${base}/api/authors/{slug}\` — one author, with everything they publish.
+- \`GET ${base}/api/feeds/{slug}\` also carries \`authors\` and \`links\`. \`links\` is
+  the blog's own accounts — Mastodon, Bluesky, X, LinkedIn, GitHub and the rest
+  — which is what a blog with no byline has instead of an author, and roughly a
+  third of the directory is that shape.
 - \`GET ${base}/opml\` — the whole directory as a subscription list, one
   category with \`?kind=\`, or one subject with \`?topic=\`.
 - \`GET ${base}/search?q=\` — search the directory.

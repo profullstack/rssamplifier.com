@@ -141,7 +141,7 @@ export const TOOLS = [
     name: 'get_feed',
     title: 'Get one feed',
     description:
-      "One blog or podcast: its metadata, the topics it is filed under — including the ones no other feed shares — and its recent posts. Each post carries the feed slug and guid that read_post takes. Use the slug from search or list_feeds, not the site's own URL.",
+      "One blog or podcast: its metadata, who writes it, where it can be found elsewhere, the topics it is filed under — including the ones no other feed shares — and its recent posts. `authors` is people; `links` is the blog's own accounts, which is what an unsigned blog has instead. Each post carries the feed slug and guid that read_post takes. Use the slug from search or list_feeds, not the site's own URL.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -160,15 +160,20 @@ export const TOOLS = [
       if (!found) throw invalid(`no feed with slug '${slug}'`);
 
       const limit = bounded(args?.limit, 50, 1, 200);
-      const [items, topics, credited] = await Promise.all([
+      const [items, topics, credited, feedLinks] = await Promise.all([
         q.itemsForFeed(client, String(found.id), limit),
         q.keywordsForFeed(client, String(found.id), 25),
         people.authorsForFeed(client, String(found.id)),
+        people.linksForFeed(client, String(found.id)),
       ]);
 
       return {
         ...feed(found),
         authors: credited.map(author),
+        // Where the blog itself is, whoever writes it. On a blog with no
+        // byline these are the only way to reach anybody, and roughly a third
+        // of the small web publishes accounts without publishing a name.
+        links: feedLinks,
         topics: topics.map((t) => ({
           slug: t.slug,
           keyword: t.keyword,
@@ -420,7 +425,7 @@ export const TOOLS = [
           network: String(args?.network ?? '').trim(),
           query: String(args?.query ?? '').trim(),
         }),
-        people.authorStats(client),
+        people.authorStats(client, { minConfidence }),
       ]);
 
       return {
@@ -430,6 +435,9 @@ export const TOOLS = [
         known: stats.authors,
         reachable: stats.reachable,
         feedsChecked: stats.feedsChecked,
+        // Blogs with an account but no byline. Their links are on the feed,
+        // via get_feed, because there is no person to file them under.
+        feedsWithLinks: stats.feedsWithLinks,
         authors: rows.map(author),
       };
     },

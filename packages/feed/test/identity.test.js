@@ -46,6 +46,38 @@ test('tracking parameters and scheme differences collapse to one URL', () => {
   assert.equal(a, b);
 });
 
+test('the networks people actually answer on are all recognised', () => {
+  const cases = [
+    ['https://www.linkedin.com/in/janedoe', 'linkedin', 'janedoe'],
+    ['https://x.com/janedoe', 'twitter', 'janedoe'],
+    ['https://twitter.com/janedoe', 'twitter', 'janedoe'],
+    ['https://mastodon.social/@jane', 'fediverse', '@jane@mastodon.social'],
+    ['https://bsky.app/profile/jane.bsky.social', 'bluesky', 'jane.bsky.social'],
+    ['https://micro.blog/jane', 'microblog', 'jane'],
+    ['https://jane.tumblr.com', 'tumblr', 'jane'],
+    ['https://orcid.org/0000-0002-1825-0097', 'orcid', '0000-0002-1825-0097'],
+  ];
+
+  for (const [url, network, handle] of cases) {
+    const hit = classifyLink(url);
+    assert.equal(hit?.network, network, url);
+    assert.equal(hit?.handle, handle, url);
+  }
+
+  // A LinkedIn company page is an organisation, not somebody to write to.
+  assert.equal(classifyLink('https://www.linkedin.com/company/acme'), null);
+});
+
+test('an identity that is not a web page still resolves', () => {
+  const nostr = classifyLink('nostr:npub1sn0wdenkukak0d9dfczzeacvhkrgz92ak56egt7vdgzn8pv2wfqqhrjdv9');
+  assert.equal(nostr?.network, 'nostr');
+  // Stored as something a reader can click, with the pubkey kept as the handle.
+  assert.ok(nostr.url.startsWith('https://njump.me/npub1'));
+
+  assert.equal(classifyLink('xmpp:jane@example.com')?.network, 'xmpp');
+  assert.equal(classifyLink('https://njump.me/npub1sn0wdenkukak0d9dfczzeacvhkrgz92ak56egt7vdgzn8pv2wfqqhrjdv9')?.network, 'nostr');
+});
+
 test('a link that is not a profile at all is refused', () => {
   assert.equal(classifyLink('https://example.com/about'), null);
   assert.equal(classifyLink('javascript:alert(1)'), null);
