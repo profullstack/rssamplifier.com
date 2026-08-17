@@ -313,6 +313,110 @@ test('an ordinary blog stays a blog in every format', () => {
   assert.equal(parseFeed(JSON_FEED).kind, 'blog');
 });
 
+/**
+ * The shape kulturbanause.de publishes: a design blog whose tutorials embed
+ * screen recordings, which WordPress turns into <enclosure type="video/mp4">.
+ * One post in ten carries one, and that post is thousands of words long.
+ */
+const BLOG_WITH_A_CLIP_RSS = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>A design blog</title>
+    <link>https://design.example/</link>
+    <description>Tutorials</description>
+    <item>
+      <title>Figma and AI agents</title>
+      <guid>https://design.example/1</guid>
+      <description>A short excerpt of the tutorial.</description>
+      <content:encoded>${'<p>Paragraph of the actual tutorial.</p>'.repeat(60)}</content:encoded>
+      <enclosure url="https://media.design.example/demo.mp4" type="video/mp4" length="9867221"/>
+    </item>
+    <item>
+      <title>Another tutorial, no clip</title>
+      <guid>https://design.example/2</guid>
+      <content:encoded>${'<p>More words.</p>'.repeat(60)}</content:encoded>
+    </item>
+    <item>
+      <title>A third</title>
+      <guid>https://design.example/3</guid>
+      <content:encoded>${'<p>More words.</p>'.repeat(60)}</content:encoded>
+    </item>
+  </channel>
+</rss>`;
+
+test('a blog post with a clip in it does not make the feed a video feed', () => {
+  const feed = parseFeed(BLOG_WITH_A_CLIP_RSS);
+
+  // The bug this is here for: reading "has a video enclosure" as "is a video
+  // feed" filed 723 ordinary blogs under /videos, and served their posts as
+  // episodes with the article dropped.
+  assert.equal(feed.kind, 'blog');
+
+  // The enclosure is still kept. The post has a video on it; it is just not a
+  // video, and the player still has something to play.
+  assert.equal(feed.items[0].audio.url, 'https://media.design.example/demo.mp4');
+  assert.equal(feed.items[0].audio.type, 'video/mp4');
+});
+
+/** A PeerTube instance feed: every entry is a video, and the text is a caption. */
+const VIDEO_SHOW_RSS = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>An instance</title>
+    <link>https://tube.example/</link>
+    <description>Videos</description>
+    <item>
+      <title>Episode one</title>
+      <guid>https://tube.example/w/aaaaaa</guid>
+      <link>https://tube.example/w/aaaaaa</link>
+      <description>A sentence about the video.</description>
+      <enclosure url="https://tube.example/download/1.mp4" type="video/mp4" length="1"/>
+    </item>
+    <item>
+      <title>Episode two</title>
+      <guid>https://tube.example/w/bbbbbb</guid>
+      <link>https://tube.example/w/bbbbbb</link>
+      <description>Another sentence.</description>
+      <enclosure url="https://tube.example/download/2.mp4" type="video/mp4" length="1"/>
+    </item>
+    <item>
+      <title>Episode three, with notes</title>
+      <guid>https://tube.example/w/cccccc</guid>
+      <link>https://tube.example/w/cccccc</link>
+      <description>${'Chapter markers and credits. '.repeat(80)}</description>
+      <enclosure url="https://tube.example/download/3.mp4" type="video/mp4" length="1"/>
+    </item>
+  </channel>
+</rss>`;
+
+test('a feed whose items are the videos is still a video feed', () => {
+  // And it stays one when a single entry is talkative. Written as "no entry
+  // carries an article" this rule called framatube.org a blog on the strength
+  // of one 1,497-character description.
+  assert.equal(parseFeed(VIDEO_SHOW_RSS).kind, 'video');
+});
+
+test('a JSON Feed article with a video attached is an article', () => {
+  const json = JSON.stringify({
+    version: 'https://jsonfeed.org/version/1.1',
+    title: 'A JSON blog',
+    home_page_url: 'https://json.example/',
+    items: [
+      {
+        id: '1',
+        url: 'https://json.example/1',
+        title: 'A post with a demo in it',
+        content_html: '<p>Paragraph of the actual post.</p>'.repeat(60),
+        attachments: [{ url: 'https://json.example/demo.mp4', mime_type: 'video/mp4' }],
+      },
+      { id: '2', url: 'https://json.example/2', title: 'No demo', content_html: '<p>Words.</p>' },
+      { id: '3', url: 'https://json.example/3', title: 'None here', content_html: '<p>Words.</p>' },
+    ],
+  });
+
+  assert.equal(parseFeed(json).kind, 'blog');
+});
+
 test('an atom feed with an audio enclosure link is a blog', () => {
   const atom = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">

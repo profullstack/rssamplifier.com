@@ -5,3 +5,4 @@ export * as accounts from './src/accounts.js';
 export * as reactions from './src/reactions.js';
 export * as translations from './src/translations.js';
 export * as discovery from './src/discovery.js';
+export * as extracts from './src/extracts.js';

@@ -127,6 +127,74 @@ function hasVideoEnclosure(item) {
 }
 
 /**
+ * How much prose an item carries of its own, in characters of text.
+ *
+ * The one measurement that separates an attachment from an episode. A show
+ * publishes the media and a paragraph about it; an article publishes the
+ * article, and whatever it attached is illustration.
+ *
+ * @param {any} item
+ * @returns {number}
+ */
+function bodyLength(item) {
+  // Every format's name for the same thing, RSS and Atom first and JSON Feed's
+  // two last, so one measurement serves all four parsers.
+  const html =
+    text(item?.['content:encoded']) ||
+    text(item?.description) ||
+    text(item?.content) ||
+    text(item?.content_html) ||
+    text(item?.content_text) ||
+    text(item?.summary) ||
+    '';
+
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().length;
+}
+
+/**
+ * Longer than this and an item is an article, whatever it has attached.
+ *
+ * Chosen against the case that prompted this: kulturbanause.de publishes design
+ * tutorials with screen recordings embedded, and the post that was being served
+ * as a video carries 14,679 characters of German prose around two clips. Video
+ * shows that write real notes clear this too — which is why the podcast
+ * namespace is an alternative signal below rather than an additional one.
+ */
+const ARTICLE_TEXT = 1200;
+
+/**
+ * Is the media the feed, or is it attached to a feed of articles?
+ *
+ * Two independent tests, because either one alone has a false positive. A blog
+ * that posts nothing but short video notes would pass the length test; a video
+ * show with one text announcement in it would fail the density one. Requiring
+ * both is what kulturbanause fails twice over: one item in ten carries an
+ * enclosure, and that item is a 14,000-character tutorial.
+ *
+ * Both are majorities rather than absolutes, and the second one has to be.
+ * Written as "no media item carries an article" this called framatube.org a
+ * blog: five of five entries are videos, and one of the five has a 1,497
+ * character description. A feed is what most of it is.
+ *
+ * @param {any[]} sample
+ * @param {any[]} withMedia the sampled items that carry the enclosure
+ * @returns {boolean}
+ */
+function isShowShaped(sample, withMedia) {
+  if (withMedia.length === 0) return false;
+
+  // Most of the feed is the media...
+  if (withMedia.length * 2 <= sample.length) return false;
+
+  // ...and most of the media is not an article with a file on it.
+  const brief = withMedia.filter((item) => bodyLength(item) < ARTICLE_TEXT).length;
+  return brief * 2 > withMedia.length;
+}
+
+/**
  * Is this a YouTube channel or playlist feed?
  *
  * YouTube's Atom feeds are identifiable without looking at the URL they were
@@ -150,20 +218,33 @@ function isYouTube(node) {
  *
  * Order matters, and it is the order of how specific the evidence is. A
  * declared medium first, because it is the publisher saying so rather than us
- * guessing. Then video, because a video feed frequently also carries audio
- * metadata. Then podcast, which is a publisher who filled in the podcast
- * namespaces. Everything else is a blog, which is what the overwhelming
- * majority of the directory is.
+ * guessing. Then YouTube, because a channel feed says so in its own namespace
+ * and nothing else needs weighing. Then video, which is an enclosure *and*
+ * corroboration that the enclosure is the point. Then podcast, which is a
+ * publisher who filled in the podcast namespaces. Everything else is a blog,
+ * which is what the overwhelming majority of the directory is.
  *
- * Music is deliberately not inferred from an audio enclosure. It used to be —
- * the reasoning was that audio without podcast tags is a track rather than an
- * episode — and in the directory it produced 198 feeds of which none were
- * music. What attaches an mp3 to a post is a blog: an AI read-through of the
- * article, a conference talk, a cross-posted episode, a field recording in a
- * travelogue. Narrated blogs are common enough now that "has audio" says
- * nothing about the publisher's intent, and a category that cannot be read off
- * the document is better left to `podcast:medium` and the curated list than
- * filled with everything that happens to carry a file.
+ * One correction, arrived at twice from opposite ends of the directory: an
+ * attachment is not a genre. A post with a file on it is still a post, and
+ * every rule here that read "carries media" as "is media" was wrong in
+ * production.
+ *
+ * Video used to be any video enclosure on any of the first five items. WordPress
+ * attaches `<enclosure type="video/mp4">` to any post with a clip embedded in
+ * it, so a design blog that screen-recorded a Figma session published exactly
+ * the shape a video show does; of 400 feeds sampled from the ones this had put
+ * under /videos, 399 were ordinary blogs. The enclosure now has to be
+ * corroborated.
+ *
+ * Music used to be audio without podcast tags — a track rather than an episode,
+ * went the reasoning — and it produced 198 feeds of which none were music. What
+ * attaches an mp3 to a post is a blog: an AI read-through of the article, a
+ * conference talk, a cross-posted episode, a field recording in a travelogue.
+ * Narrated blogs are common enough now that "has audio" says nothing about the
+ * publisher's intent, and no corroboration rescues it — Health Rising and
+ * Reflective altruism narrate *every* post, so even a ratio test reads them as
+ * albums. So music is not inferred at all: it comes from `podcast:medium` and
+ * the curated list, and nothing else.
  *
  * Only the first few items are inspected: a feed's entries are homogeneous, and
  * scanning all of a 500-episode archive to learn what the first three already
@@ -180,9 +261,19 @@ function kindOfChannel(channel, items) {
   const sample = items.slice(0, 5);
 
   if (isYouTube(channel) || sample.some(isYouTube)) return KIND_VIDEO;
-  if (sample.some(hasVideoEnclosure)) return KIND_VIDEO;
 
-  if (PODCAST_CHANNEL_TAGS.some((tag) => channel?.[tag] !== undefined)) return KIND_PODCAST;
+  const podcastTags = PODCAST_CHANNEL_TAGS.some((tag) => channel?.[tag] !== undefined);
+
+  // The enclosure has to be corroborated: either by a publisher who filled in
+  // the podcast namespace, or by the feed being shaped like a show rather than
+  // like a blog that occasionally attaches something. See above.
+  const withVideo = sample.filter(hasVideoEnclosure);
+  if (withVideo.length > 0 && (podcastTags || isShowShaped(sample, withVideo))) return KIND_VIDEO;
+
+  if (podcastTags) return KIND_PODCAST;
+
+  // No audio branch, deliberately. Audio without a declared medium is a blog
+  // that narrated itself, and `declaredMedium` above is the only way to music.
 
   return KIND_BLOG;
 }
@@ -616,12 +707,14 @@ function parseJsonFeed(raw) {
 
   // JSON Feed carries media as attachments, and podcast publishers that emit
   // it also tend to carry the RSS one through the `_itunes` extension.
-  const attachmentTypes = j.items
-    .slice(0, 5)
-    .flatMap((it) => (Array.isArray(it?.attachments) ? it.attachments : []))
-    .map((a) => String(a?.mime_type ?? ''));
+  const sample = j.items.slice(0, 5);
+  const typesOf = (it) =>
+    (Array.isArray(it?.attachments) ? it.attachments : []).map((a) => String(a?.mime_type ?? ''));
 
-  const video = attachmentTypes.some((type) => VIDEO_TYPE.test(type));
+  // Corroborated the same way as the RSS path: a JSON Feed article with a clip
+  // attached to it is an article. See kindOfChannel.
+  const withVideo = sample.filter((it) => typesOf(it).some((type) => VIDEO_TYPE.test(type)));
+  const video = isShowShaped(sample, withVideo);
 
   return {
     title: j.title ?? '(untitled)',

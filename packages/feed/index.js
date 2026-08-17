@@ -5,6 +5,7 @@ export { extractKeywords, feedTopics, tokenize, topicSlug, singularize } from '.
 export { sanitizeHtml, textLength } from './src/sanitize.js';
 export { normalizeUrl, findFeedLinks, guessFeedUrls, looksLikeFeed } from './src/discover.js';
 export { safeFetch, resolveFeed, isBlockedAddress, isPublicHost } from './src/fetch.js';
-export { isFrameable, framingVerdict } from './src/frameable.js';
+export { isFrameable, framingVerdict, probePage } from './src/frameable.js';
+export { readableArticle, MAX_HTML_BYTES } from './src/extract.js';
 export { assessFeed, DEFAULT_RULES } from './src/worthiness.js';
 export { assessRelevance, keywordStems, feedText, stem } from './src/relevance.js';

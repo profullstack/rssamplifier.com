@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { mediaKind, isWatchable, peertubeEmbed, playableMedia } from '../src/lib/media.js';
+import {
+  mediaKind,
+  isEpisode,
+  isWatchable,
+  peertubeEmbed,
+  playableMedia,
+} from '../src/lib/media.js';
 
 /** A PeerTube item, exactly as the feed stores one. */
 const PEERTUBE = {
@@ -121,4 +127,35 @@ test('an enclosure with no type is treated as audio, not as a black rectangle', 
 test('a type that is not media at all still does not become a video', () => {
   assert.equal(mediaKind({ audio_url: 'https://e/x', audio_type: 'application/pdf' }), 'audio');
   assert.equal(isWatchable({ audio_url: 'https://e/x', audio_type: 'application/pdf' }), false);
+});
+
+test('a video with an article around it is not an episode', () => {
+  const post = { audio_url: 'https://media.example/demo.mp4', audio_type: 'video/mp4' };
+  const article = '<p>Paragraph of the actual tutorial.</p>'.repeat(60);
+
+  // Both answers are true at once, and conflating them is what dropped the
+  // article: there is a video to play, and the video is not what the post is.
+  assert.equal(isWatchable(post), true);
+  assert.equal(isEpisode(post, article), false);
+});
+
+test('a video with a caption around it is an episode', () => {
+  const post = { audio_url: 'https://media.example/demo.mp4', audio_type: 'video/mp4' };
+
+  assert.equal(isEpisode(post, '<p>A sentence about the video.</p>'), true);
+  assert.equal(isEpisode(post, null), true);
+});
+
+test('a post with no media is not an episode, however short it is', () => {
+  assert.equal(isEpisode({}, ''), false);
+  assert.equal(isEpisode({ url: 'https://example.com/1' }, 'hi'), false);
+});
+
+test('markup does not count towards the length of an article', () => {
+  const post = { audio_url: 'https://media.example/demo.mp4', audio_type: 'video/mp4' };
+
+  // A caption wrapped in enough tags to clear the threshold on bytes alone is
+  // still a caption.
+  const dressed = `<div class="wrapper"><span class="a">${'<b></b>'.repeat(400)}</span>Short.</div>`;
+  assert.equal(isEpisode(post, dressed), true);
 });

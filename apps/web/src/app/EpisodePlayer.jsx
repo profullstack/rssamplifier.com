@@ -31,6 +31,7 @@ import { mediaKind } from '../lib/media.js';
  *   seconds?: number|null,
  *   feedTitle?: string|null,
  *   inline?: boolean,
+ *   attached?: boolean,
  *   kind?: 'youtube'|'peertube'|'video'|'audio'|null,
  * }} props
  */
@@ -41,6 +42,7 @@ export default function EpisodePlayer({
   seconds,
   feedTitle,
   inline = false,
+  attached = false,
   kind: given = null,
 }) {
   // The caller's reading when it has one, because for an embed `src` is no
@@ -52,15 +54,26 @@ export default function EpisodePlayer({
   const embed = kind === 'youtube' || kind === 'peertube';
   const video = kind === 'video';
 
+  // What the player is looking at. `attached` is the caller saying this file
+  // came with an article rather than being one: an mp4 in a tutorial is not an
+  // episode of anything, and labelling it "Watch" over the author's name told
+  // the reader they had opened a video when they had opened a blog post.
+  const watch = video || embed;
+  const noun = watch ? 'video' : 'audio';
+
   return (
     <aside
       className={`episode-player${embed || video ? ' is-video' : ''}${inline ? ' is-inline' : ''}`}
-      aria-label={video || embed ? 'Episode video' : 'Episode audio'}
+      aria-label={`${attached ? 'Attached' : 'Episode'} ${noun}`}
     >
       <div className="episode-meta">
-        <span className="eyebrow">{video || embed ? 'Watch' : 'Listen'}</span>
-        <strong title={title}>{title}</strong>
-        {feedTitle && <span className="show">{feedTitle}</span>}
+        <span className="eyebrow">
+          {attached ? (watch ? 'Video' : 'Audio') : watch ? 'Watch' : 'Listen'}
+        </span>
+        {/* The post's own title, repeated over the player, reads as the name of
+            the episode. An attachment has no name of its own to give. */}
+        {!attached && <strong title={title}>{title}</strong>}
+        {feedTitle && !attached && <span className="show">{feedTitle}</span>}
         {seconds ? <span className="runtime">{formatRuntime(seconds)}</span> : null}
       </div>
 

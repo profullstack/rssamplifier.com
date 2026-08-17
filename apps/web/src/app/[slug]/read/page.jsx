@@ -1,12 +1,13 @@
 import { notFound } from 'next/navigation';
 import { q, reactions, translations } from '@rssamplifier/db';
-import { isFrameable, sanitizeHtml } from '@rssamplifier/feed';
+import { sanitizeHtml } from '@rssamplifier/feed';
 import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/translate';
 
-import { db, siteUrl } from '../../../lib/db.js';
+import { db } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { popularLanguages } from '../../../lib/languages.js';
-import { isWatchable, playableMedia } from '../../../lib/media.js';
+import { isEpisode, isWatchable, playableMedia } from '../../../lib/media.js';
+import { readerView } from '../../../lib/reader.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
@@ -107,19 +108,24 @@ export default async function ReaderPage({ params, searchParams }) {
   // endpoint that stops resolving when the instance re-encodes.
   const media = playableMedia(post);
 
-  // Asked only when the answer can change anything. Framing a video host is not
-  // on the table, and this is a request to somebody else's server on the way to
-  // rendering every video page.
-  const verdict =
-    postUrl && !watchable
-      ? await isFrameable(postUrl, siteUrl())
-      : { frameable: false, reason: watchable ? 'video-post' : 'no-url' };
-
-  const nav = await q.neighbours(client, String(feed.created_at));
-
   // Reactions hang off the item id, which never leaves the server: the page and
   // the API both address a post as (slug, guid).
   const itemId = String(post.id);
+
+  // Asked only when the answer can change anything. Framing a video host is not
+  // on the table, and this is a request to somebody else's server on the way to
+  // rendering every video page.
+  //
+  // When the answer is "you may not frame this", the same response is read for
+  // the article rather than thrown away — see lib/reader.js. That is the whole
+  // point: a refusal used to end the reader's job, and now it only changes how
+  // the post is rendered.
+  const verdict =
+    postUrl && !watchable
+      ? await readerView({ itemId, url: postUrl })
+      : { frameable: false, reason: watchable ? 'video-post' : 'no-url', article: null };
+
+  const nav = await q.neighbours(client, String(feed.created_at));
   const user = await currentUser();
   const userId = user ? String(user.id) : null;
 
@@ -151,12 +157,20 @@ export default async function ReaderPage({ params, searchParams }) {
   // the cache without a userId. See /api/translate.
   const source = await translations.itemText(client, itemId);
 
+  // The body to translate, which is now the extracted article when the feed
+  // itself carried only a summary. Before this, asking for a language on a
+  // summary-only feed translated a headline and left the reader on an English
+  // card — the translator had nothing else to work with. It does now.
+  const translatable = source?.content_html
+    ? String(source.content_html)
+    : (verdict.article?.html ?? null);
+
   const attempt = wanted
     ? await ensureTranslation(client, {
         itemId,
         title: String(post.title),
         summary: post.summary === null ? null : String(post.summary),
-        contentHtml: source?.content_html ? String(source.content_html) : null,
+        contentHtml: translatable,
         targetLang: wanted,
         sourceLang: feed.language === null ? null : String(feed.language),
         userId,
@@ -177,11 +191,22 @@ export default async function ReaderPage({ params, searchParams }) {
     ? translated.contentHtml
     : source?.content_html
       ? sanitizeHtml(String(source.content_html))
-      : null;
+      : // Sanitized before it was stored, so it does not go round again.
+        (verdict.article?.html ?? null);
 
   // Framing is what the reader does with a post it cannot show itself. A
   // translated article is one it can, so the frame gives way to it.
   const readable = Boolean(translated?.contentHtml);
+
+  // Whether the media is the post or a file attached to one. Judged on what the
+  // feed shipped rather than on what is being rendered, so the answer does not
+  // change when a reader asks for a translation.
+  const episode = isEpisode(post, source?.content_html ?? null);
+
+  // The article we read off a page that refused to be framed — used only when
+  // there is no translation to show in its place, since a translated body is
+  // the same article in a language the reader asked for.
+  const extracted = readable || watchable ? null : verdict.article;
 
   return (
     <div className="reader">
@@ -249,6 +274,7 @@ export default async function ReaderPage({ params, searchParams }) {
            */}
           <EpisodePlayer
             inline
+            attached={!episode}
             kind={media.kind}
             src={media.src}
             type={mediaType}
@@ -259,9 +285,16 @@ export default async function ReaderPage({ params, searchParams }) {
 
           {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
 
-          {/* The description, which for a video is show notes: links, chapters
-              and credits the player itself does not carry. */}
-          {article && !summary && (
+          {/* The body, whether it is show notes or a whole article.
+            *
+            * This was gated on `!summary`, and that gate was the bug: a feed
+            * that ships both a <description> and a full <content:encoded> — a
+            * WordPress blog, which is most of them — had the article thrown
+            * away and the two-line excerpt shown in its place. The reader had
+            * the post and refused to render it. There is no case where having
+            * an excerpt is a reason to withhold the text it is an excerpt of.
+            */}
+          {article && (
             <article
               className={`reader-article${translated ? ' translated' : ''}`}
               lang={translated ? (wanted ?? undefined) : undefined}
@@ -272,7 +305,7 @@ export default async function ReaderPage({ params, searchParams }) {
           {postUrl && (
             <p className="hint">
               <a href={postUrl} target="_blank" rel="noopener">
-                Watch on {hostOf(postUrl)} ↗
+                {episode ? 'Watch on' : 'Read the original on'} {hostOf(postUrl)} ↗
               </a>
             </p>
           )}
@@ -329,6 +362,43 @@ export default async function ReaderPage({ params, searchParams }) {
               referrerPolicy="no-referrer-when-downgrade"
               loading="eager"
             />
+          ) : extracted ? (
+            <>
+              {/*
+               * The article, read off the page the site would not let us frame.
+               *
+               * This is the branch that used to be a dead end: a notice saying
+               * the site refuses to be embedded, a one-line summary, and a
+               * button sending the reader somewhere else to do the one thing
+               * they came here for. The refusal is still real — it is why the
+               * frame is not here — but it is no longer the reader's problem,
+               * so it is not the reader's notice either.
+               *
+               * Sanitized on the way into the database, by the same allowlist
+               * every other body on this page goes through.
+               */}
+              <p className="meta">
+                {extracted.byline ? `${extracted.byline} · ` : ''}
+                {extracted.siteName ?? hostOf(postUrl ?? '')}
+              </p>
+
+              <article className="reader-article" dangerouslySetInnerHTML={{ __html: extracted.html }} />
+
+              {postUrl && (
+                <p className="hint">
+                  <a href={postUrl} target="_blank" rel="noopener">
+                    Read the original on {hostOf(postUrl)} ↗
+                  </a>
+                </p>
+              )}
+
+              {/*
+               * No ad, and the reason is the one already written a few lines
+               * down: an ad here would be money made off somebody else's
+               * writing. That this page rendered their article rather than
+               * framing it changes how it got here, not whose it is.
+               */}
+            </>
           ) : (
             <div className="reader-fallback">
               <p className="notice">
