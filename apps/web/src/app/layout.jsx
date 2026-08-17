@@ -130,15 +130,15 @@ export default function RootLayout({ children }) {
                 are the intrinsic pixels, so the strip reserves its space before
                 the file lands and the nav below it never jumps. */}
             <a className="wordmark" href="/">
-              {/* Two files rather than one, because the logo's "Amplifier" half
-                  is near-black and disappears into the dark palette. <picture>
-                  rather than a CSS filter so each version keeps its own colour,
-                  and rather than two <img>s so only the matching one is ever
-                  fetched. The alt lives on the <img>, which is the element that
-                  actually renders either way. */}
+              {/* Two files rather than one, because the logo's "RSS" half and
+                  the megaphone are near-black and disappear into the dark
+                  palette. <picture> rather than a CSS filter so each version
+                  keeps its own colour, and rather than two <img>s so only the
+                  matching one is ever fetched. The alt lives on the <img>, which
+                  is the element that actually renders either way. */}
               <picture>
                 <source srcSet="/logo-dark.png" media="(prefers-color-scheme: dark)" />
-                <img src="/logo.png" alt="RSS Amplifier" width="532" height="96" />
+                <img src="/logo.png" alt="RSS Amplifier" width="646" height="96" />
               </picture>
             </a>
 
