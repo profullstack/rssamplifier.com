@@ -2,7 +2,7 @@ import { q } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { PLAYLIST_LIMIT } from '../../../lib/topicFeed.js';
-import { queueRuntime, rawPlaylistPath, trackFrom } from '../../../lib/player.js';
+import { playlistEntry, queueRuntime, rawPlaylistPath } from '../../../lib/player.js';
 import PlaylistPlayer from '../../PlaylistPlayer.jsx';
 
 /**
@@ -27,7 +27,7 @@ export default async function TopicPlayer({ topic, group = null }) {
     kinds: group?.kinds ?? null,
   });
 
-  const tracks = rows.map(trackFrom).filter(Boolean);
+  const tracks = rows.map(playlistEntry).filter(Boolean);
   const listing = group ? `/topics/${slug}/${group.segment}` : `/topics/${slug}`;
   const hours = queueRuntime(tracks);
   const what = group ? group.item : 'episodes and tracks';
@@ -65,7 +65,7 @@ export default async function TopicPlayer({ topic, group = null }) {
           </p>
 
           <PlaylistPlayer
-            tracks={tracks}
+            entries={tracks}
             label={group ? `${topic.keyword} — ${group.heading}` : topic.keyword}
           />
         </>

@@ -55,6 +55,9 @@ export default function DockPlayer() {
   /** The lane being played, and what is left of it. */
   const [lane, setLane] = useState('listen');
   const [upNext, setUpNext] = useState(/** @type {any[]} */ ([]));
+  // A video shrunk to a thumbnail, and whether this browser will pop one out.
+  const [compact, setCompact] = useState(false);
+  const [canPop, setCanPop] = useState(false);
 
   const mediaRef = useRef(/** @type {HTMLMediaElement|null} */ (null));
   // Where to drop the needle once the element has metadata — a resume after a
@@ -68,6 +71,11 @@ export default function DockPlayer() {
   const trackRef = useRef(/** @type {any} */ (null));
   const laneRef = useRef('listen');
   const nextRef = useRef(/** @type {any[]} */ ([]));
+  // Where "up next" came from: the reader's saved queue, or a running order a
+  // page handed over. It decides whether a reload may re-ask the server for the
+  // list — asking for a lane when the list is a topic's playlist would replace
+  // the forty tracks the reader is working through with their own queue.
+  const sourceRef = useRef('lane');
 
   trackRef.current = track;
   laneRef.current = lane;
@@ -92,6 +100,7 @@ export default function DockPlayer() {
           track: current,
           lane: laneRef.current,
           upNext: nextRef.current,
+          source: sourceRef.current,
           time: el ? el.currentTime : 0,
           playing: el ? !el.paused && !el.ended : false,
         }),
@@ -107,14 +116,22 @@ export default function DockPlayer() {
   const load = useCallback(
     /**
      * @param {any} next the track to play
-     * @param {{ lane?: string, at?: number, play?: boolean, list?: any[] }} [opts]
+     * @param {{ lane?: string, at?: number, play?: boolean, list?: any[], source?: string }} [opts]
      */
     (next, opts = {}) => {
       if (!next?.src) return;
       resumeAt.current = Number(opts.at ?? 0);
       wantPlay.current = opts.play !== false;
       if (opts.lane) setLane(opts.lane);
-      if (opts.list) setUpNext(opts.list);
+      if (opts.source) sourceRef.current = opts.source;
+      if (opts.list) {
+        // To the ref as well as to state, for the same reason the track is:
+        // `advance` reads the running order off the ref, and a reader who
+        // presses next before the render lands would otherwise step through an
+        // empty list and stop.
+        nextRef.current = opts.list;
+        setUpNext(opts.list);
+      }
       // Written straight to the ref as well as to state: state lands on the
       // next render, and until it does every "is the dock busy" check — the
       // page offer scan being the one that matters — would answer no and load
@@ -139,7 +156,10 @@ export default function DockPlayer() {
       });
       if (!res.ok) return;
       const data = await res.json();
-      setUpNext((data.entries ?? []).filter((entry) => entry.track));
+      const entries = (data.entries ?? []).filter((entry) => entry.track);
+      sourceRef.current = 'lane';
+      nextRef.current = entries;
+      setUpNext(entries);
     } catch {
       // Offline, or signed out mid-session. The current track keeps playing;
       // it just has nothing queued after it.
@@ -173,6 +193,29 @@ export default function DockPlayer() {
     }
   }, [load]);
 
+  /**
+   * Flag the play control for whatever is loaded, wherever it is on the page.
+   *
+   * The playlist page no longer knows what is playing — the dock does — so the
+   * row highlight has to come from out here. Matched on an attribute rather
+   * than by parsing the JSON payload of every control: a topic's playlist is
+   * fifty of them, and this runs again on every navigation.
+   */
+  const mark = useCallback(() => {
+    const src = trackRef.current?.src ?? '';
+    for (const node of document.querySelectorAll('[data-dock-src]')) {
+      if (src && node.getAttribute('data-dock-src') === src) {
+        node.setAttribute('data-dock-current', '');
+      } else {
+        node.removeAttribute('data-dock-current');
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    mark();
+  }, [mark, track]);
+
   useEffect(() => {
     // Says "there is a roaming player on this page", which is what lets the CSS
     // stand the page's own docked transport down. Set from script and only from
@@ -186,6 +229,8 @@ export default function DockPlayer() {
       const saved = JSON.parse(window.sessionStorage.getItem(STORE) ?? 'null');
       if (saved?.track?.src) {
         setLane(saved.lane ?? 'listen');
+        sourceRef.current = saved.source ?? 'lane';
+        nextRef.current = saved.upNext ?? [];
         setUpNext(saved.upNext ?? []);
         resumeAt.current = Number(saved.time ?? 0);
         wantPlay.current = Boolean(saved.playing);
@@ -198,7 +243,16 @@ export default function DockPlayer() {
         // navigated — leaves "up next" counting things that are no longer
         // there. Only for a reader who is actually working through a queue:
         // somebody who simply pressed play on a post has nothing to re-ask.
-        if (saved.track.entryId || (saved.upNext ?? []).length > 0) {
+        //
+        // And only when the list *is* the queue. A topic's playlist is a
+        // running order the page handed over, not anything the server holds —
+        // re-asking would answer with the reader's own queue and quietly
+        // replace forty episodes of AI podcasts with whatever they saved for
+        // later, which is the same lose-the-playlist bug one level up.
+        if (
+          sourceRef.current === 'lane' &&
+          (saved.track.entryId || (saved.upNext ?? []).length > 0)
+        ) {
           loadLane(saved.lane ?? 'listen');
         }
       }
@@ -207,31 +261,38 @@ export default function DockPlayer() {
     }
 
     scan();
+    mark();
 
     // Every way a new page can arrive: our own soft navigations, the back
-    // button, and anything else that swaps the document's body out. Cheaper
-    // than it looks — the callback returns immediately whenever the dock has a
-    // track, which is most of the time it is running at all — and coalesced
-    // besides, since a page that streams its own updates (the crawl progress
-    // pages do) would otherwise fire this on every row it adds.
+    // button, and anything else that swaps the document's body out. Coalesced,
+    // since a page that streams its own updates (the crawl progress pages do)
+    // would otherwise fire this on every row it adds — and both halves are
+    // cheap: `scan` returns immediately whenever the dock has a track, and
+    // `mark` touches only the play controls a page actually renders.
     let pending = 0;
-    const observer = new MutationObserver(() => {
-      if (pending || trackRef.current) return;
+    const arrived = () => {
+      if (pending) return;
       pending = window.setTimeout(() => {
         pending = 0;
         scan();
+        // Redrawn while something is playing as well as while nothing is,
+        // because that is when it matters: walk from a topic's playlist to a
+        // show and back, and the row still says which episode is in the dock.
+        mark();
       }, 100);
-    });
+    };
+
+    const observer = new MutationObserver(arrived);
     observer.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener('popstate', scan);
+    window.addEventListener('popstate', arrived);
 
     return () => {
       observer.disconnect();
       window.clearTimeout(pending);
-      window.removeEventListener('popstate', scan);
+      window.removeEventListener('popstate', arrived);
       document.documentElement.removeAttribute('data-dock');
     };
-  }, [scan, loadLane]);
+  }, [scan, mark, loadLane]);
 
   /* ------------------------------------------------------- applying the track */
 
@@ -395,8 +456,23 @@ export default function DockPlayer() {
               }
             }
 
-            load(next, { play: true, lane: which, at });
-            loadLane(which);
+            // A page that ships its own running order — a topic's playlist —
+            // hands the whole thing over with the track it was clicked on. The
+            // order rides on an ancestor rather than on every row, so a list of
+            // fifty episodes carries it once instead of fifty times.
+            const list = listFrom(play.closest('[data-dock-list]'));
+
+            load(next, {
+              play: true,
+              lane: which,
+              at,
+              list: list ?? undefined,
+              source: list ? 'list' : 'lane',
+            });
+            // The reader's saved queue is only what comes next when the page did
+            // not say. Asking for it here would throw away the playlist they
+            // just pressed play on.
+            if (!list) loadLane(which);
           }
         } catch {
           /* fall through to whatever the button would have done */
@@ -470,6 +546,35 @@ export default function DockPlayer() {
     };
   }, [load, loadLane, router]);
 
+  /* --------------------------------------------------------------- the video */
+
+  // Whether this browser will pop a video out into its own always-on-top
+  // window. Asked at runtime rather than assumed: Chrome and Safari have the
+  // API, Firefox does the same thing through its own control on the video and
+  // exposes nothing to script, and a button that throws is worse than no
+  // button. Read in an effect because it is a fact about the browser, and the
+  // first render is the server's.
+  useEffect(() => {
+    setCanPop(Boolean(document.pictureInPictureEnabled));
+  }, []);
+
+  // The popout. Worth having beyond the novelty: the picture-in-picture window
+  // outlives the tab being scrolled, hidden behind another window, or switched
+  // away from entirely — the one place the dock cannot follow the reader, and
+  // the browser can.
+  const popOut = useCallback(async () => {
+    const el = /** @type {any} */ (mediaRef.current);
+    if (!el?.requestPictureInPicture) return;
+
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await el.requestPictureInPicture();
+    } catch {
+      // Refused — no video track yet, or a `disablePictureInPicture` the
+      // publisher set. The video is still playing in the dock either way.
+    }
+  }, []);
+
   // The position is written on the way out of the page as well as periodically:
   // pagehide is the one event that fires for a reload, a form post and the back
   // button alike, and without it a reload lands a minute behind where it left.
@@ -493,7 +598,9 @@ export default function DockPlayer() {
 
   return (
     <aside
-      className={`episode-player dock-player${video ? ' is-video' : ''}`}
+      className={`episode-player dock-player${video ? ' is-video' : ''}${
+        video && compact ? ' is-thumb' : ''
+      }`}
       aria-label="Now playing"
     >
       <div className="episode-meta">
@@ -512,6 +619,11 @@ export default function DockPlayer() {
           controls
           playsInline
           preload="metadata"
+          // The episode's own artwork, standing in until there are frames to
+          // show. `preload="metadata"` means a video that has been loaded but
+          // not started has nothing to paint, and a black rectangle in the
+          // corner of the window says nothing about what is in it.
+          poster={track.image ?? undefined}
           src={track.src}
           onEnded={() => advance(1, true)}
           onPause={remember}
@@ -555,6 +667,35 @@ export default function DockPlayer() {
           <span aria-hidden="true">»</span>
         </button>
 
+        {/* Two sizes and a way out of the window, for video only — an audio
+            dock is a scrubber and has nothing to make bigger or smaller.
+
+            The glyphs are geometric shapes and an arrow for the same reason the
+            skip buttons are guillemets: the obvious picks are not in the core
+            font sets. ⧉, the picture-in-picture glyph everything else uses,
+            renders as an empty box on a machine with only DejaVu and
+            Liberation installed — which is most Linux desktops and this one.
+            Checked rather than assumed, by rasterising each candidate against
+            the replacement glyph. */}
+        {video && (
+          <button
+            type="button"
+            onClick={() => setCompact((was) => !was)}
+            title={compact ? 'Show the video full size' : 'Shrink the video to a thumbnail'}
+            aria-pressed={compact}
+          >
+            <span aria-hidden="true">{compact ? '▭' : '▫'}</span>
+            <span className="label">{compact ? 'Bigger' : 'Thumbnail'}</span>
+          </button>
+        )}
+
+        {video && canPop && (
+          <button type="button" onClick={popOut} title="Pop the video out of the page">
+            <span aria-hidden="true">↗</span>
+            <span className="label">Pop out</span>
+          </button>
+        )}
+
         <a href={`/queue?lane=${lane}`} title="Your queue">
           Queue{remaining > 0 ? ` · ${remaining}` : ''}
         </a>
@@ -565,6 +706,33 @@ export default function DockPlayer() {
       </div>
     </aside>
   );
+}
+
+/**
+ * The running order a page is offering, in the shape the queue uses.
+ *
+ * Page lists carry bare tracks — they have no queue entries, because nothing
+ * about a topic's playlist is saved anywhere. Wrapping them as `{ track }` is
+ * what lets `advance` walk a playlist and a saved queue with one piece of code
+ * instead of two that drift.
+ *
+ * @param {Element|null} holder the nearest ancestor carrying data-dock-list
+ * @returns {any[]|null} null when there is no list to take
+ */
+function listFrom(holder) {
+  if (!holder) return null;
+
+  try {
+    const parsed = JSON.parse(holder.getAttribute('data-dock-list') ?? '[]');
+    if (!Array.isArray(parsed)) return null;
+
+    const list = parsed.filter((entry) => entry?.src).map((track) => ({ track }));
+    return list.length > 0 ? list : null;
+  } catch {
+    // A malformed list is a bug in a page, not a reason to refuse to play the
+    // track the reader actually clicked. They get it on its own.
+    return null;
+  }
 }
 
 /**
