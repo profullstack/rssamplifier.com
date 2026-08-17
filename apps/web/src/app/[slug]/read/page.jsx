@@ -3,11 +3,12 @@ import { q, reactions, translations } from '@rssamplifier/db';
 import { sanitizeHtml } from '@rssamplifier/feed';
 import { ensureTranslation, languageName, normalizeLang } from '@rssamplifier/translate';
 
-import { db } from '../../../lib/db.js';
+import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { popularLanguages } from '../../../lib/languages.js';
 import { isEpisode, isWatchable, playableMedia } from '../../../lib/media.js';
 import { readerView } from '../../../lib/reader.js';
+import { shareText } from '../../../lib/share.js';
 import { AD_MREC } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
@@ -230,6 +231,26 @@ export default async function ReaderPage({ params, searchParams }) {
   // to show and something to play.
   const listenable = !watchable && !readable && !framed && !extracted && Boolean(media.src);
 
+  // Where this post lives, absolute, because a shared link is pasted somewhere
+  // that has no idea what host it came from.
+  //
+  // The language rides along only when the URL asked for it. `wanted` also
+  // carries the account's own reading preference, and a reader who set theirs
+  // to Swedish should not be sending everyone they know a Swedish link.
+  const asIn = normalizeLang(lang);
+  const shareHref =
+    `${siteUrl()}/${slug}/read?p=${encodeURIComponent(String(post.guid))}` +
+    (asIn ? `&lang=${encodeURIComponent(asIn)}` : '');
+
+  // The gist, in whatever language the page is being read in, falling back to
+  // the body when the feed shipped no summary — a post with nothing but a
+  // headline still shares fine, it just shares as a headline and a link.
+  const blurb = shareText({
+    title,
+    summary: summary ?? article ?? extracted?.html ?? '',
+    url: shareHref,
+  });
+
   return (
     <div className="reader">
       <div className="reader-head">
@@ -275,6 +296,9 @@ export default async function ReaderPage({ params, searchParams }) {
           liked={mine.liked}
           vote={mine.vote}
           signedIn={Boolean(userId)}
+          shareUrl={shareHref}
+          shareTitle={title}
+          shareText={blurb}
         />
       </div>
 
