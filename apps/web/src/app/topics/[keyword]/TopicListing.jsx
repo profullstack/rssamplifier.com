@@ -3,7 +3,7 @@ import { SYNDICATION_FORMATS } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { AD_TEXT, adPlan } from '../../../lib/ads.js';
-import { groupsWithFeeds } from '../../../lib/topicGroups.js';
+import { PLAYABLE_KINDS, groupsWithFeeds } from '../../../lib/topicGroups.js';
 import Ad from '../../Ad.jsx';
 import AdBanner from '../../AdBanner.jsx';
 
@@ -85,6 +85,14 @@ export default async function TopicListing({ topic, counts, group = null, page =
   const groups = groupsWithFeeds(counts);
   const what = group ? `the ${group.noun} on this topic` : 'this topic';
 
+  // Whether there is anything here to press play on. A sub-group says so
+  // outright; the whole topic is asked the same question of its counts, because
+  // a topic covered entirely by blogs has an `.m3u` that is legitimately empty
+  // and a "Play" link on it would lead to a transport with nothing in it.
+  const playlists = group
+    ? group.playlists
+    : [...PLAYABLE_KINDS].some((kind) => (counts[kind] ?? 0) > 0);
+
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
@@ -152,6 +160,15 @@ export default async function TopicListing({ topic, counts, group = null, page =
           what ".rss" means and is scanning for exactly that, and everyone else
           should be able to read past it without it competing with the list. */}
       <p className="format-links">
+        {/* Before the extensions, because it is the one on this row that most
+            readers want and the only one that works where they are standing. A
+            browser cannot play an `.m3u`, so the playlist links below are for
+            handing to a player app; this is the same queue, here. */}
+        {playlists && (
+          <a className="play-link" href={`${base}/play`}>
+            ▶ Play
+          </a>
+        )}
         <span>Subscribe:</span>
         {formatsFor(group).map((ext) => (
           <a
