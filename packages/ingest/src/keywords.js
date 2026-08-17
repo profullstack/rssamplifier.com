@@ -42,14 +42,16 @@ export const CHECK_BUDGET_MS = 60_000;
  *
  * @param {import('@libsql/client').Client} db
  * @param {{ id: string, run_id?: string, site_url: string }} candidate
- * @param {{ rules?: object }} [opts]
+ * @param {{ rules?: object, resolveImpl?: typeof resolveFeed }} [opts]
  * @returns {Promise<{ status: 'accepted'|'rejected'|'error', slug?: string, score?: number }>}
  */
 export async function checkCandidate(db, candidate, opts = {}) {
   const siteUrl = String(candidate.site_url);
   const runId = candidate.run_id ? String(candidate.run_id) : null;
 
-  const resolved = await resolveFeed(siteUrl);
+  // Injectable so a test can exercise the promotion path without a network
+  // round trip, the same way the discovery sources take a fetchImpl.
+  const resolved = await (opts.resolveImpl ?? resolveFeed)(siteUrl);
   if (!resolved.ok) {
     await discovery.markCandidate(db, String(candidate.id), {
       status: 'error',
@@ -123,6 +125,12 @@ export async function checkCandidate(db, candidate, opts = {}) {
       description: feed.description,
       language: feed.language,
       image_url: feed.imageUrl,
+      // What the parser made of it. Without this every discovered feed was
+      // stored as a blog whatever it plainly was — a PeerTube instance full of
+      // video/mp4 enclosures included — because insertFeed defaults an absent
+      // kind to 'blog'. Curated sources hid it, since they overwrite the
+      // category immediately afterwards; only an uncurated source showed it.
+      kind: feed.kind,
       status: 'active',
       item_count: feed.items.length,
       discovery_run_id: runId,
