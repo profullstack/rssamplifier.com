@@ -8,6 +8,8 @@ import {
 } from '@rssamplifier/ingest';
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 
+import { createRecorder, toEntry } from './log.js';
+
 /**
  * Feed crawler daemon.
  *
@@ -54,6 +56,19 @@ const sourceIntervalMs = (Number(env['DISCOVERY_SOURCE_INTERVAL_SECONDS']) || 18
 // the supply of topics worth searching grows at the speed of the crawler.
 const topicSearchIntervalMs = (Number(env['DISCOVERY_TOPIC_INTERVAL_SECONDS']) || 86400) * 1000;
 
+// Whether the daemon's log is also written to the database, where /crawlstats
+// can stream it. On by default; an operator debugging against a production
+// database from a laptop can turn it off so their own runs stay out of the
+// public log.
+const publishLog = env['CRAWL_LOG'] !== '0' && env['CRAWL_LOG'] !== 'false';
+
+const recorder = createRecorder({
+  append: (entries) => q.appendCrawlLog(db, entries),
+  // A failed log write is reported to stdout only. Recording it would either
+  // recurse or queue a line into the buffer that just failed to drain.
+  onError: (err) => console.error('crawl log write failed:', String(err?.message ?? err)),
+});
+
 let running = false;
 let stopping = false;
 let lastPurge = 0;
@@ -64,11 +79,17 @@ let lastTopics = 0;
 /**
  * Structured one-line log, so Railway's viewer stays greppable.
  *
+ * The same line is buffered for the database, which is how /crawlstats can show
+ * a log of a process it does not share a machine with. stdout is written first
+ * and unconditionally: it is the durable copy, and it must survive whatever the
+ * database is doing.
+ *
  * @param {string} event
  * @param {object} [fields]
  */
 function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
+  if (publishLog) recorder.record(toEntry(event, fields));
 }
 
 /**
@@ -83,7 +104,17 @@ async function tick() {
 
   try {
     const started = Date.now();
-    const { crawled, failed, items } = await crawlDue(db, batchSize, concurrency);
+
+    // Per-feed lines are recorded for the live log and deliberately kept off
+    // stdout: they are the content of a log somebody is watching, and twenty-five
+    // a minute forever is not what Railway's viewer is for. The tick summary
+    // below is the durable record of the same work.
+    const { crawled, failed, items } = await crawlDue(
+      db,
+      batchSize,
+      concurrency,
+      publishLog ? recorder.record : null,
+    );
     if (crawled || failed) {
       // The backlog is the number worth watching: crawled/failed only say the
       // tick did something, `due` says whether the crawler is keeping up.
@@ -177,6 +208,11 @@ async function tick() {
       // chart on the site looks back further than a month.
       const hours = await q.pruneCrawlHours(db);
       if (hours) log('purged-rollup', { rows: hours });
+
+      // The live log takes a row per feed crawled, so it is the one table here
+      // that would grow by six figures a week if nobody swept it.
+      const lines = await q.pruneCrawlLog(db);
+      if (lines) log('purged-log', { rows: lines });
     }
   } catch (err) {
     log('crawl-error', { message: String(err?.message ?? err) });
@@ -208,13 +244,19 @@ log('started', { intervalSeconds: intervalMs / 1000, batchSize, concurrency, dis
 function shutdown(signal) {
   stopping = true;
   clearInterval(timer);
+
+  // Recorded before the buffer is closed, so the live log's last line is the
+  // daemon saying it stopped rather than the log simply going quiet — which is
+  // what a crash looks like.
   log('stopping', { signal });
 
   const deadline = Date.now() + 20_000;
   const wait = setInterval(() => {
     if (!running || Date.now() > deadline) {
       clearInterval(wait);
-      process.exit(0);
+      // Whatever the last batch logged is still in memory: two seconds of lines
+      // is exactly what a 20-second drain would otherwise throw away.
+      void recorder.stop().finally(() => process.exit(0));
     }
   }, 250);
 }
