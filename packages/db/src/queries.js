@@ -231,13 +231,27 @@ export async function countFeedsByKind(db) {
 /**
  * Slugs that could collide with `base` — `base`, `base-2`, `base-3`, …
  *
+ * Deliberately unlimited. It used to say `limit 300`, which is fine for the one
+ * thing this was written for — settling a single submission — and quietly wrong
+ * for a bulk import: `uniqueSlug` walks base, base-2, base-3 … and takes the
+ * first slug this set does not contain, so a truncated set hands back a slug
+ * that is already in use. `insertFeedsBulk` says `on conflict do nothing`, so
+ * the row was then dropped without a word. Measured: importing two thousand
+ * feeds that shared a title into a directory already holding two thousand of
+ * them queued three hundred and silently lost the rest.
+ *
+ * The unbounded read is affordable because it is bounded by reality rather than
+ * by the table: it matches one base's variants, not the directory, and the
+ * caller asks once per base. The slug column is unique and therefore indexed,
+ * and the `like` is a literal prefix, so this is an index range scan.
+ *
  * @param {Client} db
  * @param {string} base
  * @returns {Promise<Set<string>>}
  */
 export async function takenSlugs(db, base) {
   const { rows } = await db.execute({
-    sql: 'select slug from feeds where slug = ? or slug like ? limit 300',
+    sql: 'select slug from feeds where slug = ? or slug like ?',
     args: [base, `${base}-%`],
   });
   return new Set(rows.map((r) => String(r.slug)));

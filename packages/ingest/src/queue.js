@@ -143,14 +143,24 @@ async function claimSlugs(db, entries) {
   const bases = entries.map((entry) => uniqueSlug(entry.title, entry.url));
   const taken = await q.knownSlugs(db, [...new Set(bases)]);
 
+  // Bases already widened. Without this the widening query fires once per
+  // *entry* rather than once per base, and a batch of two thousand feeds that
+  // share a title — which is what a real subscription list looks like, and what
+  // every untitled feed on one host becomes — costs two thousand sequential
+  // round trips instead of one. Locally that is invisible; against Turso it is
+  // about eighty seconds per batch, and for a file under one batch it is the
+  // whole import, spent with the bar sitting at 100%.
+  const widened = new Set();
+
   const out = [];
   for (let i = 0; i < entries.length; i += 1) {
     let slug = bases[i];
 
     if (taken.has(slug)) {
-      // Widen only for a base that actually collided: this is the query the
-      // batched lookup exists to avoid making for every row.
-      for (const s of await q.takenSlugs(db, slug)) taken.add(s);
+      if (!widened.has(bases[i])) {
+        widened.add(bases[i]);
+        for (const s of await q.takenSlugs(db, bases[i])) taken.add(s);
+      }
       slug = uniqueSlug(entries[i].title, entries[i].url, (s) => taken.has(s));
     }
 

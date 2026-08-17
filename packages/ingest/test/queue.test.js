@@ -153,3 +153,55 @@ test('a whole submission can be queued in pieces and counted as one', async () =
   assert.equal(progress.queued, 120);
   assert.equal(progress.waiting, 120);
 });
+
+test('a batch of feeds sharing one title costs a fixed number of queries', async () => {
+  // The bug this guards is invisible locally and fatal in production. The
+  // widening lookup used to fire once per *entry* rather than once per base, so
+  // two thousand feeds sharing a title cost two thousand sequential round
+  // trips. Against SQLite that is a second; against Turso it is over a minute
+  // per batch, spent with the uploader's bar sitting at 100%.
+  const entries = Array.from({ length: 400 }, (_, i) => ({
+    url: `https://same${i}.example/feed.xml`,
+    title: 'Weeknotes',
+  }));
+
+  let queries = 0;
+  const real = db.execute.bind(db);
+  db.execute = (...args) => {
+    queries += 1;
+    return real(...args);
+  };
+
+  try {
+    const res = await queueFeeds(db, entries);
+    assert.equal(res.queued, 400, 'every feed was queued');
+    assert.ok(queries < 20, `${queries} queries for one batch — it is per-entry again`);
+  } finally {
+    db.execute = real;
+  }
+});
+
+test('more than 300 feeds sharing a base slug are all kept', async () => {
+  // takenSlugs used to say `limit 300`. uniqueSlug takes the first slug the set
+  // does not contain, so a truncated set returned one already in use and
+  // insertFeedsBulk's `on conflict do nothing` dropped the row in silence.
+  const make = (prefix, n) =>
+    Array.from({ length: n }, (_, i) => ({
+      url: `https://${prefix}${i}.example/feed.xml`,
+      title: 'Overlap',
+    }));
+
+  const first = await queueFeeds(db, make('over-a', 350));
+  assert.equal(first.queued, 350);
+
+  // The second batch is where truncation used to bite: the directory already
+  // holds more variants of this base than the old limit would return.
+  const second = await queueFeeds(db, make('over-b', 200));
+  assert.equal(second.queued, 200, 'feeds past the old 300-row limit went missing');
+
+  const { rows } = await db.execute({
+    sql: "select count(*) as n, count(distinct slug) as d from feeds where slug like 'overlap%'",
+  });
+  assert.equal(Number(rows[0].n), 550);
+  assert.equal(Number(rows[0].d), 550, 'every one of them kept its own slug');
+});
