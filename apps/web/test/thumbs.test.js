@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { monogram, monogramHue, postThumb, thumbSrc } from '../src/lib/thumbs.js';
+import {
+  feedCard,
+  feedImage,
+  monogram,
+  monogramHue,
+  postThumb,
+  thumbSrc,
+} from '../src/lib/thumbs.js';
 
 test('an https image passes through unchanged', () => {
   assert.equal(thumbSrc('https://cdn.example/a.jpg'), 'https://cdn.example/a.jpg');
@@ -70,6 +77,65 @@ test('a monogram is one character of the title', () => {
   assert.equal(monogram('日記'), '日');
   assert.equal(monogram(''), '·');
   assert.equal(monogram(null), '·');
+});
+
+test('a feed falls back from its own cover art to what the crawler found', () => {
+  assert.equal(
+    feedImage({
+      image_url: 'https://cdn.example/cover.png',
+      card_url: 'https://cdn.example/og.png',
+    }),
+    'https://cdn.example/cover.png',
+    'what the publisher declared wins',
+  );
+
+  // The common case: no cover art in the feed document, an og:image on the site.
+  assert.equal(
+    feedImage({ image_url: null, card_url: 'https://cdn.example/og.png' }),
+    'https://cdn.example/og.png',
+  );
+
+  assert.equal(feedImage({ image_url: null, card_url: null }), null);
+  assert.equal(feedImage(), null);
+});
+
+test('a post with nothing of its own can borrow the feed card', () => {
+  // A row from the river, where the feed had no cover art either.
+  assert.equal(
+    postThumb({ image_url: null, feed_image: null, feed_card: 'https://cdn.example/og.png' }),
+    'https://cdn.example/og.png',
+  );
+
+  // The same on a feed's own page, where the feed is passed in whole.
+  assert.equal(
+    postThumb({ image_url: null }, { image_url: null, card_url: 'https://cdn.example/og.png' }),
+    'https://cdn.example/og.png',
+  );
+});
+
+test('only a measured, big enough picture is promised as a social card', () => {
+  assert.deepEqual(
+    feedCard({ card_url: 'https://cdn.example/og.png', card_width: 1200, card_height: 630 }),
+    { url: 'https://cdn.example/og.png', width: 1200, height: 630, large: true },
+  );
+
+  // Big enough for a card, not for the wide one.
+  assert.equal(
+    feedCard({ card_url: 'https://cdn.example/og.png', card_width: 400, card_height: 400 }).large,
+    false,
+  );
+
+  // A favicon is why this gate exists: promising it produces a broken-looking
+  // card, and the site's own generated one is better than that.
+  assert.equal(
+    feedCard({ card_url: 'https://cdn.example/icon.png', card_width: 32, card_height: 32 }),
+    null,
+  );
+
+  // A picture whose size was never measured cannot be vouched for either.
+  assert.equal(feedCard({ card_url: 'https://cdn.example/og.png' }), null);
+  assert.equal(feedCard({ card_url: null, card_width: 1200, card_height: 630 }), null);
+  assert.equal(feedCard(), null);
 });
 
 test('a feed keeps the same monogram tint everywhere it appears', () => {

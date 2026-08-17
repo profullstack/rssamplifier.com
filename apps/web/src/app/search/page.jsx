@@ -6,7 +6,7 @@ import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import Thumb, { Avatar } from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
-import { postThumb } from '../../lib/thumbs.js';
+import { feedImage, postThumb } from '../../lib/thumbs.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,7 +84,7 @@ export default async function SearchPage({ searchParams }) {
           <div className="feed-list">
             {blogs.map((b) => (
               <a className="feed-row" key={String(b.slug)} href={`/${b.slug}`}>
-                <Avatar src={b.image_url} title={b.title} slug={b.slug} />
+                <Avatar src={feedImage(b)} title={b.title} slug={b.slug} />
                 <h3>{b.title}</h3>
                 {b.description && <p>{b.description}</p>}
               </a>

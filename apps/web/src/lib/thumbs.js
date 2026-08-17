@@ -13,6 +13,20 @@
  */
 
 /**
+ * Smallest picture Open Graph will render as a card at all, and the size from
+ * which a card is rendered wide rather than as a thumbnail beside text.
+ *
+ * Duplicated from `@rssamplifier/feed`'s card module rather than imported: these
+ * are read by `generateMetadata` on a page that has no other reason to pull the
+ * feed package into the web bundle, and they are two numbers fixed by somebody
+ * else's spec. The crawl-time side owns the same constants and the card test
+ * asserts the gate there.
+ */
+const CARD_MIN = 200;
+const CARD_LARGE_WIDTH = 600;
+const CARD_LARGE_HEIGHT = 315;
+
+/**
  * Longest URL worth putting in an attribute.
  *
  * Real image URLs with a signed CDN query run to a few hundred characters. Well
@@ -75,8 +89,58 @@ export function thumbSrc(raw) {
  */
 export function postThumb(row, feed) {
   return (
-    thumbSrc(row?.image_url) ?? thumbSrc(row?.feed_image) ?? thumbSrc(feed?.image_url) ?? null
+    thumbSrc(row?.image_url) ??
+    thumbSrc(row?.feed_image) ??
+    thumbSrc(row?.feed_card) ??
+    thumbSrc(feed?.image_url) ??
+    thumbSrc(feed?.card_url) ??
+    null
   );
+}
+
+/**
+ * The picture beside a feed's name.
+ *
+ * Two columns, in order of provenance. `image_url` is what the publisher put in
+ * their feed document. `card_url` is what the crawler found by going and looking
+ * at their site — usually its `og:image` — and it exists because three quarters
+ * of the blogs here declare no cover art at all, which left three quarters of
+ * every listing as initials.
+ *
+ * @param {Record<string, unknown>} [feed]
+ * @returns {string|null}
+ */
+export function feedImage(feed) {
+  return thumbSrc(feed?.image_url) ?? thumbSrc(feed?.card_url) ?? null;
+}
+
+/**
+ * The social card for a feed's page, or null where there is honestly none.
+ *
+ * The dimensions are the whole point of the gate. A crawler handed a 32x32
+ * favicon renders a broken-looking card or none at all, and the generated card
+ * this falls back to is better than either — so a picture is only promised when
+ * the crawler measured it at crawl time and it cleared the size Open Graph
+ * asks for. `large` decides the Twitter card type rather than whether to have
+ * one.
+ *
+ * @param {Record<string, unknown>} [feed]
+ * @returns {{ url: string, width: number, height: number, large: boolean }|null}
+ */
+export function feedCard(feed) {
+  const url = thumbSrc(feed?.card_url);
+  const width = Number(feed?.card_width ?? 0);
+  const height = Number(feed?.card_height ?? 0);
+
+  if (!url || !Number.isFinite(width) || !Number.isFinite(height)) return null;
+  if (width < CARD_MIN || height < CARD_MIN) return null;
+
+  return {
+    url,
+    width,
+    height,
+    large: width >= CARD_LARGE_WIDTH && height >= CARD_LARGE_HEIGHT,
+  };
 }
 
 /**

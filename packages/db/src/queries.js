@@ -15,7 +15,8 @@ import { newId, nowIso } from './client.js';
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
-  fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at, source_kind`;
+  fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at, source_kind,
+  card_url, card_width, card_height, card_type`;
 
 /** The categories the directory is browsable by. */
 export const KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
@@ -617,7 +618,7 @@ export async function feedsForTopic(db, slug, opts = {}) {
 
   const { rows } = await db.execute({
     sql: `select f.slug, f.title, f.description, f.site_url, f.feed_url, f.category, f.item_count,
-                 f.image_url, k.keyword, k.count, k.source
+                 f.image_url, f.card_url, k.keyword, k.count, k.source
           from feed_keywords k
           join feeds f on f.id = k.feed_id
           where k.slug = ? and f.status <> 'dead'${filter.sql}
@@ -756,7 +757,7 @@ export async function itemsForTopic(db, slug, opts = {}) {
                  -- its own art is meant to show the show's, and a river of
                  -- mixed feeds reads better as a column of pictures than as a
                  -- column with gaps in it.
-                 f.image_url as feed_image
+                 f.image_url as feed_image, f.card_url as feed_card
           from feed_items i
           join feeds f on f.id = i.feed_id
           where i.feed_id in (select feed_id from picked)
@@ -1591,6 +1592,97 @@ export async function markCrawlFailure(db, id, error, errorCount, minutes) {
   });
 }
 
+/* ------------------------------------------------------------- feed cards */
+
+/**
+ * Feeds still waiting for somebody to go and look at their picture.
+ *
+ * Ordered by when we last looked, nulls first, which reads as: answer every
+ * feed that has never been checked, then retry the failures oldest-first. The
+ * partial index in 0023 covers exactly this set, so the query stays cheap as the
+ * 52,000 unchecked rows drain away — and costs nothing at all once they have.
+ *
+ * A dead feed is skipped. Its page still exists, but sending requests to a
+ * publisher who stopped responding ten crawls ago to decorate it is not a
+ * trade worth making.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @param {number} [retryAfterMs] how long a failed look is left alone
+ * @returns {Promise<object[]>}
+ */
+export async function feedsNeedingCard(db, limit = 10, retryAfterMs = 30 * 86_400_000) {
+  const { rows } = await db.execute({
+    sql: `select id, slug, site_url, image_url, card_state
+          from feeds
+          where card_state is not 'ok'
+            and status <> 'dead'
+            and (card_checked_at is null or card_checked_at < ?)
+          order by card_checked_at asc
+          limit ?`,
+    args: [nowIso(-retryAfterMs), limit],
+  });
+  return rows;
+}
+
+/**
+ * Record what the look found.
+ *
+ * `card_checked_at` is written on every outcome, including the failures: the
+ * queue above is ordered by it, so a row that failed and kept a null timestamp
+ * would be handed back on the very next pass forever, and one unreachable site
+ * would starve the rest of the directory.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {{ state: 'ok'|'none'|'error', url?: string, width?: number, height?: number, type?: string }} card
+ */
+export async function setFeedCard(db, id, card) {
+  const ok = card.state === 'ok' && card.url;
+
+  await db.execute({
+    sql: `update feeds set
+            card_url = ?, card_width = ?, card_height = ?, card_type = ?,
+            card_state = ?, card_checked_at = ?
+          where id = ?`,
+    args: [
+      ok ? String(card.url) : null,
+      ok && card.width ? Math.trunc(card.width) : null,
+      ok && card.height ? Math.trunc(card.height) : null,
+      ok && card.type ? String(card.type) : null,
+      card.state,
+      nowIso(),
+      id,
+    ],
+  });
+}
+
+/**
+ * How far the card backfill has got. Read by /crawlstats, and by anyone asking
+ * whether it is worth waiting for.
+ *
+ * @param {Client} db
+ * @returns {Promise<{ ok: number, none: number, error: number, pending: number }>}
+ */
+export async function cardCoverage(db) {
+  const { rows } = await db.execute(
+    `select
+       sum(case when card_state = 'ok' then 1 else 0 end) as ok,
+       sum(case when card_state = 'none' then 1 else 0 end) as none,
+       sum(case when card_state = 'error' then 1 else 0 end) as error,
+       sum(case when card_state is null then 1 else 0 end) as pending
+     from feeds`,
+  );
+
+  const row = rows[0] ?? {};
+  return {
+    ok: Number(row.ok ?? 0),
+    none: Number(row.none ?? 0),
+    error: Number(row.error ?? 0),
+    pending: Number(row.pending ?? 0),
+  };
+}
+
 /**
  * Neighbouring slugs for the browsing toolbar, in index order.
  *
@@ -1677,7 +1769,8 @@ export async function searchItems(db, query, limit = 40, mode = 'all') {
 
   const { rows } = await db.execute({
     sql: `select i.guid, i.title, i.url, i.summary, i.published_at, i.image_url,
-                 f.slug as feed_slug, f.title as feed_title, f.image_url as feed_image
+                 f.slug as feed_slug, f.title as feed_title,
+                 f.image_url as feed_image, f.card_url as feed_card
           from feed_items_fts
           join feed_items i on i.rowid = feed_items_fts.rowid
           join feeds f on f.id = i.feed_id
@@ -1703,7 +1796,7 @@ export async function searchFeeds(db, query, limit = 20, mode = 'all') {
   if (!match) return [];
 
   const { rows } = await db.execute({
-    sql: `select f.slug, f.title, f.description, f.image_url
+    sql: `select f.slug, f.title, f.description, f.image_url, f.card_url
           from feeds_fts
           join feeds f on f.rowid = feeds_fts.rowid
           where feeds_fts match ?

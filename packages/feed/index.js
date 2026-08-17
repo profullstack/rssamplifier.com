@@ -23,7 +23,17 @@ export {
 export { extractKeywords, feedTopics, tokenize, topicSlug, singularize } from './src/keywords.js';
 export { sanitizeHtml, textLength } from './src/sanitize.js';
 export { normalizeUrl, findFeedLinks, guessFeedUrls, looksLikeFeed } from './src/discover.js';
-export { safeFetch, resolveFeed, isBlockedAddress, isPublicHost } from './src/fetch.js';
+export { safeFetch, safeFetchBytes, resolveFeed, isBlockedAddress, isPublicHost } from './src/fetch.js';
+export { imageSize } from './src/imagesize.js';
+export {
+  findFeedCard,
+  probeImage,
+  cardCandidatesFromPage,
+  cardFit,
+  CARD_MIN,
+  CARD_LARGE_WIDTH,
+  CARD_LARGE_HEIGHT,
+} from './src/card.js';
 export {
   scrapeFeed,
   buildFeedFromPage,

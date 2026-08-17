@@ -146,6 +146,124 @@ export async function safeFetch(url) {
 }
 
 /**
+ * Fetch the *start* of a binary file, with the same guards as safeFetch.
+ *
+ * For asking how big an image is without downloading it. A `Range` header keeps
+ * a well-behaved server from sending more than the header bytes, and the read
+ * loop enforces the cap regardless — plenty of hosts ignore Range, and one that
+ * answers a ranged request with a 40MB body must not be able to stream us out of
+ * memory just because it declined to cooperate.
+ *
+ * Separate from `safeFetch` rather than a flag on it, because that function's
+ * contract is a decoded string: running an image through a UTF-8 decoder and
+ * back is both lossy and pointless.
+ *
+ * @param {string} url
+ * @param {number} [maxBytes]
+ * @returns {Promise<{ ok: boolean, status: number, contentType: string, bytes: Uint8Array, url: string, error?: string }>}
+ */
+export async function safeFetchBytes(url, maxBytes = 64 * 1024) {
+  const empty = new Uint8Array(0);
+  const normalized = normalizeUrl(url);
+  if (!normalized) {
+    return { ok: false, status: 0, contentType: '', bytes: empty, url, error: 'invalid-url' };
+  }
+
+  const target = new URL(normalized);
+  if (!(await isPublicHost(target.hostname))) {
+    return {
+      ok: false,
+      status: 0,
+      contentType: '',
+      bytes: empty,
+      url: normalized,
+      error: 'blocked-host',
+    };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const res = await fetch(normalized, {
+      headers: {
+        'user-agent': USER_AGENT,
+        accept: 'image/*,*/*',
+        range: `bytes=0-${maxBytes - 1}`,
+      },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+
+    const finalHost = new URL(res.url).hostname;
+    if (finalHost !== target.hostname && !(await isPublicHost(finalHost))) {
+      return {
+        ok: false,
+        status: res.status,
+        contentType: '',
+        bytes: empty,
+        url: res.url,
+        error: 'blocked-redirect',
+      };
+    }
+
+    // 206 is the cooperative answer and 200 the whole file; both are fine, and
+    // 416 means the file is shorter than the range we asked for, which is a
+    // refusal to be treated as one.
+    const ok = res.status === 200 || res.status === 206;
+
+    return {
+      ok,
+      status: res.status,
+      contentType: res.headers.get('content-type') ?? '',
+      bytes: ok ? await readCappedBytes(res, maxBytes) : empty,
+      url: res.url,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      contentType: '',
+      bytes: empty,
+      url: normalized,
+      error: err?.name === 'AbortError' ? 'timeout' : 'fetch-failed',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Read at most `limit` bytes of a response, then hang up.
+ *
+ * @param {Response} res
+ * @param {number} limit
+ * @returns {Promise<Uint8Array>}
+ */
+async function readCappedBytes(res, limit) {
+  if (!res.body) return new Uint8Array(0);
+
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+
+  while (total < limit) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+
+  // Cancelled rather than drained: the point of the exercise is not to download
+  // the file.
+  await reader.cancel().catch(() => {});
+
+  return chunks.length === 1 && chunks[0].length <= limit
+    ? chunks[0]
+    : concat(chunks, Math.min(total, limit));
+}
+
+/**
  * Read a response body, stopping at MAX_BYTES.
  *
  * @param {Response} res

@@ -6,7 +6,7 @@ import { currentUser } from '../../lib/auth.js';
 import { adPlan } from '../../lib/ads.js';
 import { lanesOffered, trackFor } from '../../lib/queue.js';
 import { shareText } from '../../lib/share.js';
-import { postThumb } from '../../lib/thumbs.js';
+import { feedCard, postThumb } from '../../lib/thumbs.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import FollowButton from '../FollowButton.jsx';
@@ -27,12 +27,56 @@ export async function generateMetadata({ params }) {
   const feed = await q.feedBySlug(db(), slug);
   if (!feed) return { title: 'Not found' };
 
+  const title = String(feed.title);
+  const description = feed.description
+    ? String(feed.description)
+    : `Latest ${(CATEGORIES[String(feed.category)] ?? CATEGORIES.blog).item} from ${feed.title}.`;
+
+  // The publisher's own picture as the shared card, where the crawler has been
+  // and measured one big enough to survive a social-media crop. Where it has
+  // not, this stays undefined and the site's generated card in
+  // opengraph-image.jsx applies — which is the better answer than promising a
+  // favicon, and the reason this page had no card of its own until the crawler
+  // learned to check.
+  const card = feedCard(feed);
+  const url = `${siteUrl()}/${slug}`;
+
   return {
-    title: String(feed.title),
-    description: feed.description
-      ? String(feed.description)
-      : `Latest ${(CATEGORIES[String(feed.category)] ?? CATEGORIES.blog).item} from ${feed.title}.`,
-    alternates: { canonical: `${siteUrl()}/${slug}` },
+    title,
+    description,
+    alternates: { canonical: url },
+
+    // Spread rather than set to undefined, and this is not a style choice: a key
+    // that is *present* and undefined is read by Next as "this page has no
+    // openGraph", which clears the card the layout's opengraph-image.jsx would
+    // otherwise supply. Written the obvious way, a feed with no picture of its
+    // own ended up with no card at all — worse than the generated one it had
+    // before anybody thought about cards.
+    ...(card
+      ? {
+          // Restated in full rather than added to: a page's openGraph block
+          // replaces the layout's rather than merging into it, so naming an
+          // image here would otherwise drop the site name and the type too.
+          openGraph: {
+            type: 'website',
+            siteName: 'RSS Amplifier',
+            url,
+            title,
+            description,
+            images: [{ url: card.url, width: card.width, height: card.height }],
+          },
+
+          // The dimensions decide the shape, not whether to have one: under the
+          // large card's minimum, a wide card renders as a stretched mess, and
+          // the small one is what the picture is actually the right size for.
+          twitter: {
+            card: card.large ? 'summary_large_image' : 'summary',
+            title,
+            description,
+            images: [card.url],
+          },
+        }
+      : {}),
   };
 }
 
