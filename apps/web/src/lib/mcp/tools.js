@@ -191,7 +191,7 @@ export const TOOLS = [
         query: {
           type: 'string',
           description:
-            'Search the topic index. Matches are ranked: the exact topic, then topics starting with the term, then topics containing it.',
+            'Search the topic index. A phrase works as well as a slug — "quantum physics" and "quantum-physics" are the same search. Matches are ranked: the exact topic, then topics starting with the term, then topics containing it.',
         },
         min: {
           type: 'integer',
