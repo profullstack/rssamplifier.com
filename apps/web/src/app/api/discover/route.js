@@ -78,15 +78,47 @@ export async function POST(req) {
   }
 
   const runId = newId();
+  const browser = wantsHtml(req);
 
-  const result = await discoverFromKeywords(client, keywords, {
+  // A browser is sent to the status page the moment the run exists, rather than
+  // holding the form open for the inline budget — up to eighty-five seconds of
+  // blank tab, which is the whole reason this page felt broken. The status page
+  // streams the same work as it happens, so nothing is hidden by answering
+  // early; it is only shown somewhere better.
+  //
+  // An agent still gets the finished counts in one call. That is the documented
+  // contract of this endpoint and the reason curl works at all.
+  let started;
+  let begun = false;
+  const ready = new Promise((resolve) => {
+    started = resolve;
+  });
+
+  const work = discoverFromKeywords(client, keywords, {
     runId,
     notifyEmail: email,
     ipHash,
     userAgent: req.headers.get('user-agent')?.slice(0, 300) ?? null,
+    onStarted: () => {
+      begun = true;
+      started();
+    },
   });
 
-  if (wantsHtml(req)) return redirect(`/discoveries/${runId}`);
+  if (browser) {
+    // Nothing awaits `work` after this, so its failures have to be caught here
+    // or they surface as an unhandled rejection and take the process with it.
+    // Racing rather than plainly awaiting `ready` matters: if the run cannot be
+    // created at all, that signal never comes and the request would hang until
+    // the client gave up.
+    const settled = work.catch(() => null);
+    await Promise.race([ready, settled]);
+
+    if (!begun) return redirect('/discover?error=failed');
+    return redirect(`/discoveries/${runId}`);
+  }
+
+  const result = await work;
 
   return json({
     ok: result.error === null || result.searched > 0,

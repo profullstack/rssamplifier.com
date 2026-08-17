@@ -33,6 +33,12 @@ export default async function DiscoverPage({ searchParams }) {
       {params.error === 'empty' && (
         <p className="notice">Enter at least one keyword — a phrase like “siberian huskies”.</p>
       )}
+      {params.error === 'failed' && (
+        <p className="notice">
+          The search could not be started at all. Nothing was spent — try again, and if it keeps
+          happening the search provider is the likeliest culprit.
+        </p>
+      )}
       {params.error === 'rate' && (
         <p className="notice">
           That is enough searching for one hour. Each keyword costs a search credit, so the limit is
@@ -50,8 +56,9 @@ export default async function DiscoverPage({ searchParams }) {
           required
         />
         <p className="hint">
-          The first {MAX_KEYWORDS} sites we find are checked while you wait; everything past that is
-          queued for the crawler. You will get a status page either way.
+          You go straight to a status page and watch the search happen on it — keywords going out,
+          sites coming back, and why each one was kept or dropped. It is safe to close the tab; the
+          run carries on without you.
         </p>
         <input
           type="email"

@@ -42,14 +42,16 @@ export const CHECK_BUDGET_MS = 60_000;
  *
  * @param {import('@libsql/client').Client} db
  * @param {{ id: string, run_id?: string, site_url: string }} candidate
- * @param {{ rules?: object }} [opts]
+ * @param {{ rules?: object, resolveImpl?: typeof resolveFeed }} [opts]
  * @returns {Promise<{ status: 'accepted'|'rejected'|'error', slug?: string, score?: number }>}
  */
 export async function checkCandidate(db, candidate, opts = {}) {
   const siteUrl = String(candidate.site_url);
   const runId = candidate.run_id ? String(candidate.run_id) : null;
 
-  const resolved = await resolveFeed(siteUrl);
+  // Injectable so a test can exercise the promotion path without a network
+  // round trip, the same way the discovery sources take a fetchImpl.
+  const resolved = await (opts.resolveImpl ?? resolveFeed)(siteUrl);
   if (!resolved.ok) {
     await discovery.markCandidate(db, String(candidate.id), {
       status: 'error',
@@ -123,6 +125,12 @@ export async function checkCandidate(db, candidate, opts = {}) {
       description: feed.description,
       language: feed.language,
       image_url: feed.imageUrl,
+      // What the parser made of it. Without this every discovered feed was
+      // stored as a blog whatever it plainly was — a PeerTube instance full of
+      // video/mp4 enclosures included — because insertFeed defaults an absent
+      // kind to 'blog'. Curated sources hid it, since they overwrite the
+      // category immediately afterwards; only an uncurated source showed it.
+      kind: feed.kind,
       status: 'active',
       item_count: feed.items.length,
       discovery_run_id: runId,
@@ -242,7 +250,7 @@ export async function refreshRun(db, runId, extra = {}) {
  *
  * @param {import('@libsql/client').Client} db
  * @param {string[]} keywords
- * @param {{ runId?: string, inlineLimit?: number, searchBudgetMs?: number, checkBudgetMs?: number, notifyEmail?: string|null, ipHash?: string|null, userAgent?: string|null, searchOpts?: object, rules?: object, now?: () => number }} [opts]
+ * @param {{ runId?: string, inlineLimit?: number, searchBudgetMs?: number, checkBudgetMs?: number, notifyEmail?: string|null, ipHash?: string|null, userAgent?: string|null, searchOpts?: object, rules?: object, now?: () => number, onStarted?: (runId: string) => void }} [opts]
  * @returns {Promise<{ runId: string, searched: number, candidates: number, accepted: number, rejected: number, queuedKeywords: number, queuedCandidates: number, error: string|null }>}
  */
 export async function discoverFromKeywords(db, keywords, opts = {}) {
@@ -260,6 +268,13 @@ export async function discoverFromKeywords(db, keywords, opts = {}) {
     user_agent: opts.userAgent ?? null,
   });
   await discovery.insertKeywords(db, runId, keywords);
+
+  // Everything the status page needs now exists, and everything after this is
+  // work the page can watch happen. A caller that would rather show the page
+  // than hold the connection open for a minute and a half says so here and
+  // stops awaiting; the run carries on regardless, and if this process dies
+  // mid-run the poller drains the same two queues.
+  opts.onStarted?.(runId);
 
   // ---- search, until the budget runs out --------------------------------
   const known = await discovery.knownHosts(db);
@@ -331,11 +346,26 @@ export async function discoverFromKeywords(db, keywords, opts = {}) {
 }
 
 /**
+ * Wall-clock a poller tick may spend searching, in milliseconds.
+ *
+ * A keyword is a hundred results now, which is a dozen requests and up to a
+ * couple of minutes of somebody else's latency. Five of those in a row is a
+ * tick that runs for ten minutes, and the crawl — which shares the tick and
+ * matters more, because a blog already in the directory going stale is worse
+ * than a new one being found late — would only get a turn that often.
+ *
+ * Checked before a keyword starts, never during: a keyword half-searched is a
+ * keyword whose credits bought nothing. Whatever is not started stays queued
+ * for the next tick.
+ */
+export const DRAIN_BUDGET_MS = 120_000;
+
+/**
  * Search queued keywords — the poller's half of the search phase.
  *
  * @param {import('@libsql/client').Client} db
  * @param {number} [limit]
- * @param {{ searchOpts?: object }} [opts]
+ * @param {{ searchOpts?: object, budgetMs?: number, now?: () => number }} [opts]
  * @returns {Promise<{ searched: number, failed: number, queued: number, fatal: string|null }>}
  */
 export async function drainDiscoveryKeywords(db, limit = 5, opts = {}) {
@@ -344,6 +374,8 @@ export async function drainDiscoveryKeywords(db, limit = 5, opts = {}) {
 
   const known = await discovery.knownHosts(db);
   const runIds = new Set();
+  const clock = opts.now ?? Date.now;
+  const deadline = clock() + (opts.budgetMs ?? DRAIN_BUDGET_MS);
 
   let searched = 0;
   let failed = 0;
@@ -351,6 +383,8 @@ export async function drainDiscoveryKeywords(db, limit = 5, opts = {}) {
   let fatal = null;
 
   for (const row of rows) {
+    if (clock() > deadline) break;
+
     runIds.add(String(row.run_id));
 
     const res = await searchOneKeyword(db, row, { known, searchOpts: opts.searchOpts });

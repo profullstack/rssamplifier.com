@@ -1461,3 +1461,119 @@ select {
   color: var(--muted);
   margin: 0.25rem 0 0;
 }
+
+/* ---- live progress -------------------------------------------------------
+ *
+ * The status pages report on work that takes minutes to hours. Numbers alone
+ * made that look like a page that had stopped, so the bar is deliberately the
+ * largest thing on the screen and the log underneath is the evidence for it.
+ */
+
+.live {
+  margin: 0 0 1.5rem;
+}
+
+.live-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.live-percent {
+  font-family: var(--serif);
+  font-size: 2.6rem;
+  line-height: 1;
+  font-weight: 600;
+}
+
+.live-counts {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.live-bar {
+  height: 1.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+
+.live-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  /* Width is set inline from the stream; the transition is what turns a jump
+   * every second into something that reads as movement. */
+  transition: width 0.6s ease-out;
+  min-width: 0;
+}
+
+/* Working: barber-pole over the fill, so a run that is between events still
+ * looks alive rather than stalled. */
+.live-fill.is-live {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.22) 0 0.6rem,
+    rgba(255, 255, 255, 0) 0.6rem 1.2rem
+  );
+  animation: live-stripe 1s linear infinite;
+}
+
+@keyframes live-stripe {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 1.7rem 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-fill {
+    transition: none;
+  }
+
+  .live-fill.is-live {
+    animation: none;
+  }
+}
+
+.live-log {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0.6rem 0.75rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+.live-log li {
+  /* One event, one line: it is a log, and wrapping turns a scannable column
+   * into a paragraph. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-log time {
+  color: var(--muted);
+  margin-right: 0.5rem;
+}
+
+.live-log .is-good span {
+  color: var(--accent);
+}
+
+.live-log .is-bad span {
+  color: var(--muted);
+}

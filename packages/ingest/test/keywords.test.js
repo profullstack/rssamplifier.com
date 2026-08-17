@@ -64,6 +64,55 @@ test('a run queues its keywords and the sites they find', async () => {
   assert.deepEqual(JSON.parse(String(run.keywords)), ['siberian huskies', 'malamute care']);
 });
 
+test('onStarted fires with the run readable and before any searching', async () => {
+  const fetchImpl = stubSearch({ kites: ['https://kites.example/'] });
+
+  /** @type {string|null} */
+  let seenRunId = null;
+  let searchesWhenStarted = -1;
+  /** @type {object|null} */
+  let rowWhenStarted = null;
+  let keywordsWhenStarted = -1;
+
+  await discoverFromKeywords(db, ['kites'], {
+    inlineLimit: 0,
+    searchOpts: { apiKey: 'k', fetchImpl },
+    onStarted: (runId) => {
+      seenRunId = runId;
+      searchesWhenStarted = fetchImpl.calls.length;
+    },
+  });
+
+  assert.ok(seenRunId, 'the callback is handed the id the status page lives at');
+  assert.equal(
+    searchesWhenStarted,
+    0,
+    'and fires before the first search — that is what the web route stops waiting for',
+  );
+
+  // The point of the signal is that the status page works from that moment on,
+  // so the row and its keywords must already be readable, not merely promised.
+  rowWhenStarted = await discovery.runById(db, seenRunId);
+  assert.ok(rowWhenStarted, 'the run row exists');
+  assert.deepEqual(JSON.parse(String(rowWhenStarted.keywords)), ['kites']);
+
+  const progress = await discovery.keywordProgress(db, seenRunId);
+  keywordsWhenStarted = progress.total;
+  assert.equal(keywordsWhenStarted, 1, 'and its keywords are queued');
+});
+
+test('a run without an onStarted callback behaves exactly as before', async () => {
+  const fetchImpl = stubSearch({ hats: ['https://hats.example/'] });
+
+  const res = await discoverFromKeywords(db, ['hats'], {
+    inlineLimit: 0,
+    searchOpts: { apiKey: 'k', fetchImpl },
+  });
+
+  assert.equal(res.searched, 1);
+  assert.equal(res.queuedCandidates, 1);
+});
+
 test('the search budget stops the inline phase and leaves the rest queued', async () => {
   const fetchImpl = stubSearch({ one: ['https://one.example/'], two: ['https://two.example/'] });
 
@@ -125,6 +174,29 @@ test('the poller searches what the request could not', async () => {
 
   const run = await discovery.runById(db, started.runId);
   assert.equal(String(run.status), 'queued', 'its site is still waiting to be checked');
+});
+
+test('a poller tick stops starting keywords once its budget is spent', async () => {
+  // A keyword is a dozen requests now, so an unbounded batch is a tick that
+  // runs for ten minutes and starves the crawl that shares it.
+  const fetchImpl = stubSearch({
+    'budget one': ['https://budget-one.example/a'],
+    'budget two': ['https://budget-two.example/a'],
+  });
+
+  await discoverFromKeywords(db, ['budget one', 'budget two'], {
+    inlineLimit: 0,
+    searchBudgetMs: -1, // both queue
+    searchOpts: { apiKey: 'k', fetchImpl },
+  });
+
+  const drained = await drainDiscoveryKeywords(db, 20, {
+    budgetMs: -1, // already spent before the first keyword
+    searchOpts: { apiKey: 'k', fetchImpl },
+  });
+
+  assert.equal(drained.searched, 0, 'nothing started');
+  assert.equal(drained.failed, 0, 'and nothing marked failed for it');
 });
 
 test('hosts already in the directory are never queued again', async () => {
@@ -205,4 +277,93 @@ test('a run only checks its own candidates, and reports its own counts', async (
   assert.equal(res.candidates, progress.total);
   assert.equal(res.accepted, progress.accepted);
   assert.equal(res.rejected, progress.rejected + progress.errored);
+});
+
+test('a discovered feed keeps the category the parser gave it', async () => {
+  // The bug: checkCandidate built its insertFeed call without `kind`, and
+  // insertFeed defaults an absent kind to 'blog'. Every discovered feed was
+  // therefore a blog — a PeerTube instance whose every item carries a
+  // video/mp4 enclosure included. Curated sources masked it by overwriting the
+  // category straight afterwards.
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { connect, migrate, q, discovery } = await import('@rssamplifier/db');
+
+  const dir = await mkdtemp(join(tmpdir(), 'rssamp-kind-'));
+  const db = connect({ url: `file:${join(dir, 'k.db')}` });
+  await migrate(db);
+
+  const runId = await discovery.insertRun(db, { provider: 'peertube', keywords: [] });
+  await discovery.insertCandidates(db, runId, [
+    { url: 'https://tube.example/feeds/videos.xml', host: 'tube.example/feeds/videos.xml' },
+  ]);
+  const [candidate] = await discovery.queuedCandidates(db, 1);
+
+  // A video feed in the shape PeerTube serves: real items, recent dates, and
+  // a video/mp4 enclosure on every one. Realistic enough to pass worthiness,
+  // because an uncurated run checks it — which is the path the bug was on.
+  const feedXml = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <title>Tube Example</title><link>https://tube.example/</link>
+  <description>Federated video from a small instance</description>
+    <item>
+      <title>Episode 1</title>
+      <link>https://tube.example/w/1</link>
+      <guid>https://tube.example/w/1</guid>
+      <description>A recorded talk about federated video, part 1.</description>
+      <pubDate>Thu, 13 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/1.mp4"/>
+    </item>
+    <item>
+      <title>Episode 2</title>
+      <link>https://tube.example/w/2</link>
+      <guid>https://tube.example/w/2</guid>
+      <description>A recorded talk about federated video, part 2.</description>
+      <pubDate>Mon, 10 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/2.mp4"/>
+    </item>
+    <item>
+      <title>Episode 3</title>
+      <link>https://tube.example/w/3</link>
+      <guid>https://tube.example/w/3</guid>
+      <description>A recorded talk about federated video, part 3.</description>
+      <pubDate>Fri, 07 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/3.mp4"/>
+    </item>
+    <item>
+      <title>Episode 4</title>
+      <link>https://tube.example/w/4</link>
+      <guid>https://tube.example/w/4</guid>
+      <description>A recorded talk about federated video, part 4.</description>
+      <pubDate>Tue, 04 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/4.mp4"/>
+    </item>
+    <item>
+      <title>Episode 5</title>
+      <link>https://tube.example/w/5</link>
+      <guid>https://tube.example/w/5</guid>
+      <description>A recorded talk about federated video, part 5.</description>
+      <pubDate>Sat, 01 Aug 2026 19:45:17 GMT</pubDate>
+      <enclosure length="3814946" type="video/mp4" url="https://tube.example/download/5.mp4"/>
+    </item>
+</channel></rss>`;
+
+  const { checkCandidate } = await import('../src/keywords.js');
+  const { parseFeed } = await import('@rssamplifier/feed');
+
+  const result = await checkCandidate(db, candidate, {
+    // Resolved without a network round trip; the parsing under test is real.
+    resolveImpl: async () => ({
+      ok: true,
+      feedUrl: 'https://tube.example/feeds/videos.xml',
+      feed: parseFeed(feedXml),
+    }),
+  });
+
+  assert.equal(result.status, 'accepted');
+  const stored = await q.feedBySlug(db, result.slug);
+  assert.equal(String(stored.category), 'video', 'stored as what it is, not as a blog');
+
+  await rm(dir, { recursive: true, force: true });
 });

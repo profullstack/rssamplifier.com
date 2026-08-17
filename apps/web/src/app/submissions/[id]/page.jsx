@@ -1,9 +1,12 @@
 import { notFound } from 'next/navigation';
 import { q } from '@rssamplifier/db';
 
+import AutoRefresh from '../../AutoRefresh.jsx';
+import LiveProgress from '../../LiveProgress.jsx';
 import Toolbar from '../../Toolbar.jsx';
 import AdBanner from '../../AdBanner.jsx';
 import { db } from '../../../lib/db.js';
+import { streamSrc } from '../../../lib/sse.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +31,23 @@ export default async function SubmissionPage({ params }) {
   const submission = await q.submissionById(client, id);
   if (!submission) notFound();
 
-  const progress = await q.submissionProgress(client, id);
+  const [progress, events] = await Promise.all([
+    q.submissionProgress(client, id),
+    q.submissionEvents(client, id, { limit: 60, tail: true }),
+  ]);
+
+  // Serialisable plain objects — a libSQL row cannot cross into a client
+  // component as it stands.
+  const lines = events.map((row) => ({
+    kind: 'feed',
+    subject: String(row.title ?? row.slug ?? ''),
+    status: String(row.status ?? ''),
+    detail: row.last_error == null ? null : String(row.last_error),
+    slug: row.slug == null ? null : String(row.slug),
+    amount: row.item_count == null ? null : Number(row.item_count),
+    at: String(row.at),
+  }));
+
   const added = Number(submission.accepted_count ?? 0);
   const done = progress.waiting === 0;
   const settled = progress.crawled + progress.failed;
@@ -43,6 +62,14 @@ export default async function SubmissionPage({ params }) {
           ? `Everything you submitted has been crawled. ${added + progress.crawled} blogs are in the directory.`
           : `${progress.waiting.toLocaleString()} feeds still queued. This page updates as the crawler works through them — it is safe to close and come back.`}
       </p>
+
+      <LiveProgress
+        src={streamSrc(`/api/submissions/${id}/stream`, lines)}
+        lines={lines}
+        unit="feeds"
+        verb="Crawl"
+        initial={{ total: progress.queued, settled, percent, done }}
+      />
 
       <dl className="stats">
         <div>
@@ -63,14 +90,12 @@ export default async function SubmissionPage({ params }) {
         </div>
       </dl>
 
-      {progress.queued > 0 && (
+      {/* The percentage moved into the bar; this is only the email promise. */}
+      {progress.queued > 0 && submission.notify_email && (
         <p className="notice">
-          {percent}% of the queue has been crawled.
-          {submission.notify_email
-            ? submission.notified_at
-              ? ' We have emailed you the result.'
-              : ' We will email you when it finishes.'
-            : ''}
+          {submission.notified_at
+            ? 'We have emailed you the result.'
+            : 'We will email you when it finishes.'}
         </p>
       )}
 
@@ -84,6 +109,13 @@ export default async function SubmissionPage({ params }) {
        * numbers are the reason the page exists.
        */}
       <AdBanner />
+
+      {/*
+       * This page had nothing of the sort: an import was watched by reloading
+       * it by hand. The stream drives the bar and the log; this fills in the
+       * counts around them while the crawler works.
+       */}
+      {!done && <AutoRefresh seconds={30} />}
 
       <Toolbar />
     </>
