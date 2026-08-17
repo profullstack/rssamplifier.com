@@ -1,3 +1,5 @@
+import { clusterKey, dedupeItems } from '@rssamplifier/feed';
+
 import { newId, nowIso } from './client.js';
 
 /**
@@ -13,7 +15,7 @@ import { newId, nowIso } from './client.js';
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
-  fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at`;
+  fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at, source_kind`;
 
 /** The categories the directory is browsable by. */
 export const KINDS = ['blog', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
@@ -251,8 +253,8 @@ export async function insertFeed(db, feed) {
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
        categories, category, status, last_fetched_at, last_success_at, error_count,
        fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at,
-       discovery_run_id)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?, ?)`,
+       discovery_run_id, source_kind)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 60, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
       feed.slug,
@@ -273,6 +275,7 @@ export async function insertFeed(db, feed) {
       now,
       now,
       feed.discovery_run_id ?? null,
+      feed.source_kind === 'scraped' ? 'scraped' : 'feed',
     ],
   });
 
@@ -298,8 +301,8 @@ export async function upsertItems(db, feedId, items) {
   const statements = rows.map((i) => ({
     sql: `insert into feed_items
       (id, feed_id, guid, url, title, summary, content_html, author, image_url, published_at,
-       categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at, cluster_key)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict (feed_id, guid) do update set
         -- An episode already stored keeps its row, but a re-crawl fills in the
         -- audio it was stored without. Items imported before the media columns
@@ -326,11 +329,58 @@ export async function upsertItems(db, feedId, items) {
       i.audio?.bytes ?? null,
       i.audio?.seconds ?? null,
       now,
+      // Computed on the way in, so the river never pays for it. An empty string
+      // means "looked at, deliberately not groupable"; NULL is reserved for
+      // rows the backfill worker has not reached yet, and writing NULL here
+      // would put every new item back into its queue forever.
+      clusterKey(i.title || '') ?? '',
     ],
   }));
 
   await db.batch(statements, 'write');
   return statements.length;
+}
+
+/**
+ * Give one batch of older items a grouping key.
+ *
+ * Every item stored from now on is keyed as it arrives, so this exists only for
+ * the rows that predate the column — of which there are millions. It runs as a
+ * step of the poller's ordinary tick rather than as a migration or a one-off
+ * script: a single statement over the whole table would hold a write open on a
+ * network database for minutes, and a script is a thing somebody has to
+ * remember to run and to finish.
+ *
+ * The work is self-terminating. Each pass claims rows where cluster_key is
+ * null, writes a key or the "never group this" sentinel to every one of them,
+ * and so strictly shrinks the set it selects from next time. When it returns
+ * zero the backfill is done and the partial index behind it has shrunk to
+ * nothing.
+ *
+ * @param {Client} db
+ * @param {number} [limit] rows per pass
+ * @returns {Promise<{ scanned: number, keyed: number }>}
+ */
+export async function backfillClusterKeys(db, limit = 500) {
+  const { rows } = await db.execute({
+    sql: `select id, title from feed_items where cluster_key is null limit ?`,
+    args: [limit],
+  });
+
+  if (rows.length === 0) return { scanned: 0, keyed: 0 };
+
+  let keyed = 0;
+  const statements = rows.map((row) => {
+    const key = clusterKey(String(row.title ?? '')) ?? '';
+    if (key) keyed += 1;
+    return {
+      sql: `update feed_items set cluster_key = ? where id = ?`,
+      args: [key, row.id],
+    };
+  });
+
+  await db.batch(statements, 'write');
+  return { scanned: rows.length, keyed };
 }
 
 /**
@@ -623,17 +673,40 @@ const TOPIC_RIVER_DAYS = 730;
  *
  * @param {Client} db
  * @param {string} slug
- * @param {{ limit?: number, feedCap?: number, days?: number }} [opts]
+ * @param {{
+ *   limit?: number,
+ *   feedCap?: number,
+ *   days?: number,
+ *   kinds?: string[]|null,
+ *   group?: boolean,
+ * }} [opts] `kinds` narrows the river to feeds of those categories; `group`
+ *   collapses the same story told by several of them, which costs an overread
+ *   and is why the SQL limit is `want` rather than `limit`.
  * @returns {Promise<object[]>}
  */
 export async function itemsForTopic(db, slug, opts = {}) {
-  const { limit = 50, feedCap = TOPIC_RIVER_FEEDS, days = TOPIC_RIVER_DAYS, kinds = null } = opts;
+  const {
+    limit = 50,
+    feedCap = TOPIC_RIVER_FEEDS,
+    days = TOPIC_RIVER_DAYS,
+    kinds = null,
+    group = true,
+  } = opts;
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   // Applied inside `picked`, so the cap counts feeds of the requested kinds
   // rather than spending itself on the ones about to be filtered out. A river
   // of a topic's podcasts would otherwise be drawn from whichever podcasts
   // happened to survive a cut made mostly of blogs.
   const filter = kindFilter(normalizeKinds(kinds));
+
+  // Grouping removes rows, so the query has to read past `limit` to still fill
+  // a page after the duplicates collapse. Three times over is enough for the
+  // observed shape — a story rarely runs in more than a handful of the feeds on
+  // one topic — and it is bounded, which a "keep reading until full" loop is
+  // not. Collapsing in JS rather than SQL is deliberate: the river's join is
+  // already the expensive part, and a correlated subquery to pick one row per
+  // key would be run over every row it returns.
+  const want = group ? Math.min(limit * 3, 600) : limit;
 
   const { rows } = await db.execute({
     sql: `with picked as (
@@ -644,7 +717,7 @@ export async function itemsForTopic(db, slug, opts = {}) {
             limit ?
           )
           select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
-                 i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds,
+                 i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds, i.cluster_key,
                  f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
           from feed_items i
           join feeds f on f.id = i.feed_id
@@ -652,9 +725,17 @@ export async function itemsForTopic(db, slug, opts = {}) {
             and i.published_at >= ?
           order by i.published_at desc
           limit ?`,
-    args: [slug, ...filter.args, feedCap, since, limit],
+    // `filter.args` belongs to the `picked` subquery and `want` to the outer
+    // limit, so the kind filter and the grouping overread bind in the order
+    // their placeholders appear rather than one replacing the other.
+    args: [slug, ...filter.args, feedCap, since, want],
   });
-  return rows;
+
+  if (!group) return rows;
+
+  // Ordered newest-first above, and dedupeItems keeps the first occurrence, so
+  // the telling that survives is the one that ran first.
+  return dedupeItems(rows).slice(0, limit);
 }
 
 /**
@@ -1128,7 +1209,7 @@ export async function recentlyCrawled(db, limit = 20) {
  */
 export async function dueFeeds(db, limit = 25) {
   const { rows } = await db.execute({
-    sql: `select id, feed_url, error_count, fetch_interval_minutes from feeds
+    sql: `select id, feed_url, error_count, fetch_interval_minutes, source_kind from feeds
           where status <> 'dead' and next_fetch_at <= ?
           order by next_fetch_at asc limit ?`,
     args: [nowIso(), limit],

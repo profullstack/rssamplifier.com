@@ -1,6 +1,7 @@
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { guard } from '../../../lib/apiguard.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,9 @@ export const dynamic = 'force-dynamic';
  * @param {Request} req
  */
 export async function GET(req) {
+  const allowed = await guard(req);
+  if (!allowed.ok) return allowed.response;
+
   const url = new URL(req.url);
   const limit = clamp(url.searchParams.get('limit'), 100, 500);
   const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
@@ -26,26 +30,29 @@ export async function GET(req) {
     q.countFeeds(client, false, kind),
   ]);
 
-  return json({
-    total,
-    limit,
-    offset,
-    kind,
-    kinds: q.KINDS,
-    feeds: rows.map((f) => ({
-      slug: f.slug,
-      title: f.title,
-      description: f.description,
-      siteUrl: f.site_url,
-      feedUrl: f.feed_url,
-      language: f.language,
-      kind: f.category,
-      itemCount: f.item_count,
-      status: f.status,
-      lastSuccessAt: f.last_success_at,
-      page: `${siteUrl()}/${f.slug}`,
-    })),
-  });
+  return json(
+    {
+      total,
+      limit,
+      offset,
+      kind,
+      kinds: q.KINDS,
+      feeds: rows.map((f) => ({
+        slug: f.slug,
+        title: f.title,
+        description: f.description,
+        siteUrl: f.site_url,
+        feedUrl: f.feed_url,
+        language: f.language,
+        kind: f.category,
+        itemCount: f.item_count,
+        status: f.status,
+        lastSuccessAt: f.last_success_at,
+        page: `${siteUrl()}/${f.slug}`,
+      })),
+    },
+    allowed.headers,
+  );
 }
 
 /**
@@ -61,14 +68,16 @@ function clamp(raw, fallback, max) {
 
 /**
  * @param {unknown} body
+ * @param {Record<string, string>} [extra] rate-limit headers from the guard
  * @returns {Response}
  */
-function json(body) {
+function json(body, extra = {}) {
   return new Response(JSON.stringify(body, null, 2), {
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'access-control-allow-origin': '*',
       'cache-control': 'public, max-age=300',
+      ...extra,
     },
   });
 }
