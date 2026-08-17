@@ -2073,27 +2073,44 @@ export function ftsQuery(query, mode = 'all') {
 /**
  * Full-text search over posts.
  *
+ * `kinds` narrows the hits to one sub-filter's worth of categories — the
+ * podcasts on a subject rather than everything on it. It has to be a filter on
+ * the results rather than a different index: what a post is filed as lives on
+ * its feed, and the directory is nine parts blog by volume, so without it the
+ * forty best matches for anything are forty blog posts and the podcasts that
+ * matched are never seen. See searchKindCounts.
+ *
+ * Ordered by `bm25(...)` rather than by `rank`, which is the same ordering —
+ * `rank` *is* bm25 with unit weights — reached by a very different query plan.
+ * With a category filter in the WHERE clause, `order by rank` makes SQLite walk
+ * the match set the expensive way round: measured against production, a sparse
+ * category on a common word took 2-4s that way and 0.1-1.2s this way. Unfiltered
+ * the two are level, so both use the same shape rather than branching on it.
+ *
  * @param {Client} db
  * @param {string} query
  * @param {number} [limit]
  * @param {'all'|'any'} [mode]
+ * @param {string[]|null} [kinds] categories to keep, or null for every kind
  * @returns {Promise<object[]>}
  */
-export async function searchItems(db, query, limit = 40, mode = 'all') {
+export async function searchItems(db, query, limit = 40, mode = 'all', kinds = null) {
   const match = ftsQuery(query, mode);
   if (!match) return [];
 
+  const filter = kindFilter(normalizeKinds(kinds));
+
   const { rows } = await db.execute({
     sql: `select i.guid, i.title, i.url, i.summary, i.published_at, i.image_url,
-                 f.slug as feed_slug, f.title as feed_title,
+                 f.slug as feed_slug, f.title as feed_title, f.category,
                  f.image_url as feed_image, f.card_url as feed_card
           from feed_items_fts
           join feed_items i on i.rowid = feed_items_fts.rowid
           join feeds f on f.id = i.feed_id
-          where feed_items_fts match ?
-          order by rank
+          where feed_items_fts match ?${filter.sql}
+          order by bm25(feed_items_fts)
           limit ?`,
-    args: [match, limit],
+    args: [match, ...filter.args, limit],
   });
   return rows;
 }
@@ -2105,22 +2122,80 @@ export async function searchItems(db, query, limit = 40, mode = 'all') {
  * @param {string} query
  * @param {number} [limit]
  * @param {'all'|'any'} [mode]
+ * @param {string[]|null} [kinds] categories to keep, or null for every kind
  * @returns {Promise<object[]>}
  */
-export async function searchFeeds(db, query, limit = 20, mode = 'all') {
+export async function searchFeeds(db, query, limit = 20, mode = 'all', kinds = null) {
   const match = ftsQuery(query, mode);
   if (!match) return [];
 
+  const filter = kindFilter(normalizeKinds(kinds));
+
   const { rows } = await db.execute({
-    sql: `select f.slug, f.title, f.description, f.image_url, f.card_url
+    sql: `select f.slug, f.title, f.description, f.image_url, f.card_url, f.category
           from feeds_fts
           join feeds f on f.rowid = feeds_fts.rowid
-          where feeds_fts match ?
-          order by rank
+          where feeds_fts match ?${filter.sql}
+          order by bm25(feeds_fts)
           limit ?`,
-    args: [match, limit],
+    args: [match, ...filter.args, limit],
   });
   return rows;
+}
+
+/**
+ * How many posts and blogs a query matches in each category.
+ *
+ * This is what lets the results page offer its sub-filters honestly: only the
+ * categories that have something are linked, and each says how much it has, so
+ * "podcast 1,521" is visible even when every one of the forty rows on screen is
+ * a blog post. Both halves are counted because both are filtered — a podcast
+ * sub-filter shows matching shows as well as matching episodes.
+ *
+ * Deliberately unordered. A grouped count over the whole match set is cheap
+ * (~110ms against production, on a word matching 26k posts) precisely because
+ * nothing is ranked; adding an order to it is what made the same scan take
+ * seconds. Counts are therefore exact rather than sampled from the top N, which
+ * a rank-ordered window would have made them.
+ *
+ * @param {Client} db
+ * @param {string} query
+ * @param {'all'|'any'} [mode]
+ * @returns {Promise<{ posts: Record<string, number>, feeds: Record<string, number> }>}
+ */
+export async function searchKindCounts(db, query, mode = 'all') {
+  const match = ftsQuery(query, mode);
+  if (!match) return { posts: {}, feeds: {} };
+
+  const [posts, feeds] = await Promise.all([
+    db.execute({
+      sql: `select f.category, count(*) as n
+            from feed_items_fts
+            join feed_items i on i.rowid = feed_items_fts.rowid
+            join feeds f on f.id = i.feed_id
+            where feed_items_fts match ?
+            group by f.category`,
+      args: [match],
+    }),
+    db.execute({
+      sql: `select f.category, count(*) as n
+            from feeds_fts
+            join feeds f on f.rowid = feeds_fts.rowid
+            where feeds_fts match ?
+            group by f.category`,
+      args: [match],
+    }),
+  ]);
+
+  /** @param {{ rows: object[] }} result */
+  const tally = (result) => {
+    /** @type {Record<string, number>} */
+    const counts = {};
+    for (const row of result.rows) counts[String(row.category)] = Number(row.n ?? 0);
+    return counts;
+  };
+
+  return { posts: tally(posts), feeds: tally(feeds) };
 }
 
 /**

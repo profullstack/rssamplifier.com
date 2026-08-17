@@ -2,6 +2,7 @@ import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { guard } from '../../../lib/apiguard.js';
+import { filtersWithHits, searchFilter } from '../../../lib/searchFilters.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,12 @@ export const dynamic = 'force-dynamic';
  * the union — a ticker and its company, say, where the blogosphere writes
  * "NVIDIA" far more often than "NVDA". Default stays `all`.
  *
+ * `kind` narrows the results to one category — `podcasts`, `news`, `music`,
+ * `videos`, or the singular the database uses. Without it the reply still
+ * carries `categories`, the whole match set counted by category, so a caller
+ * that got a page of blog posts can see what else matched and ask for it
+ * rather than concluding the directory holds nothing else.
+ *
  * @param {Request} req
  */
 export async function GET(req) {
@@ -23,22 +30,37 @@ export async function GET(req) {
   const query = (url.searchParams.get('q') ?? '').trim();
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 30) || 30, 1), 100);
   const mode = url.searchParams.get('mode') === 'any' ? 'any' : 'all';
+  const filter = searchFilter(url.searchParams.get('kind'));
 
-  if (!query) return json({ query: '', mode, blogs: [], posts: [] }, allowed.headers);
+  if (!query) {
+    return json({ query: '', mode, kind: null, categories: [], blogs: [], posts: [] }, allowed.headers);
+  }
 
   const client = db();
-  const [blogs, posts] = await Promise.all([
-    q.searchFeeds(client, query, limit, mode),
-    q.searchItems(client, query, limit, mode),
+  const [blogs, posts, counts] = await Promise.all([
+    q.searchFeeds(client, query, limit, mode, filter?.kinds ?? null),
+    q.searchItems(client, query, limit, mode, filter?.kinds ?? null),
+    q.searchKindCounts(client, query, mode),
   ]);
 
   return json({
     query,
     mode,
+    kind: filter?.segment ?? null,
+    // Every narrowing available on this query, with the URL that applies it.
+    categories: filtersWithHits(counts).map(({ group, count }) => ({
+      kind: group.segment,
+      heading: group.heading,
+      matches: count,
+      url: `${siteUrl()}/api/search?q=${encodeURIComponent(query)}&kind=${group.segment}${
+        mode === 'any' ? '&mode=any' : ''
+      }`,
+    })),
     blogs: blogs.map((b) => ({
       slug: b.slug,
       title: b.title,
       description: b.description,
+      category: b.category,
       page: `${siteUrl()}/${b.slug}`,
     })),
     posts: posts.map((p) => ({
@@ -52,6 +74,7 @@ export async function GET(req) {
         : null,
       summary: p.summary,
       publishedAt: p.published_at,
+      category: p.category,
       blog: p.feed_title,
       blogPage: `${siteUrl()}/${p.feed_slug}`,
     })),

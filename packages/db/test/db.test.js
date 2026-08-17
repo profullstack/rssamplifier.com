@@ -370,6 +370,70 @@ test('any-mode search unions the terms instead of intersecting them', async () =
   }
 });
 
+test('search narrows to a category, and counts the ones it left out', async () => {
+  // A second feed of a different category carrying the same word. Without the
+  // filter these two are one undifferentiated list, which on the real
+  // directory — nine parts blog — means the podcast is never on screen.
+  const { id } = await q.insertFeed(db, {
+    slug: 'croak-radio',
+    feed_url: 'https://croak.example/feed.xml',
+    title: 'Croak Radio',
+    description: 'a podcast about frogs',
+  });
+  await db.execute({
+    sql: `update feeds set category = 'podcast' where id = ?`,
+    args: [id],
+  });
+  await q.upsertItems(db, String(id), [
+    { guid: 'e1', title: 'Episode one', summary: 'frogs again', publishedAt: '2026-08-03T00:00:00Z' },
+  ]);
+
+  const all = await q.searchItems(db, 'frogs');
+  assert.equal(all.length, 2, 'unfiltered search still spans both categories');
+
+  const shows = await q.searchItems(db, 'frogs', 40, 'all', ['podcast']);
+  assert.deepEqual(
+    shows.map((r) => String(r.title)),
+    ['Episode one'],
+  );
+  assert.equal(String(shows[0].category), 'podcast', 'the row says what it is');
+
+  const written = await q.searchItems(db, 'frogs', 40, 'all', ['blog']);
+  assert.deepEqual(
+    written.map((r) => String(r.title)),
+    ['Alpha post'],
+  );
+
+  // Audio is podcasts and music together, so a set of kinds has to work.
+  assert.equal((await q.searchItems(db, 'frogs', 40, 'all', ['podcast', 'music'])).length, 1);
+
+  // A category nothing matched is empty rather than unfiltered — the trap in
+  // reusing normalizeKinds, which turns an unusable list into "every kind".
+  assert.equal((await q.searchItems(db, 'frogs', 40, 'all', ['video'])).length, 0);
+  assert.equal(
+    (await q.searchItems(db, 'frogs', 40, 'all', ['nonsense'])).length,
+    2,
+    'but an unknown kind is no filter at all',
+  );
+
+  const feeds = await q.searchFeeds(db, 'frogs', 20, 'all', ['podcast']);
+  assert.deepEqual(
+    feeds.map((r) => String(r.slug)),
+    ['croak-radio'],
+    'the feed side filters too, so a podcast filter shows shows',
+  );
+
+  // The counts are what the sub-filters are drawn from: over the whole match
+  // set, not over the page of results.
+  const counts = await q.searchKindCounts(db, 'frogs');
+  assert.equal(counts.posts.blog, 1);
+  assert.equal(counts.posts.podcast, 1);
+  assert.equal(counts.feeds.podcast, 1, 'the show matched on its own description');
+  assert.equal(counts.posts.video, undefined, 'categories with nothing are absent, not zero');
+
+  assert.deepEqual(await q.searchKindCounts(db, '   '), { posts: {}, feeds: {} });
+});
+
 test('any-mode blog search behaves the same way', async () => {
   const blogs = await q.searchFeeds(db, 'testing zzzznotablog', 20, 'any');
   assert.equal(blogs.length, 1);

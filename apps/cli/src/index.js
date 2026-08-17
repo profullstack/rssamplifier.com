@@ -42,9 +42,13 @@ export const COMMANDS = [
     usage: 'search <query>',
     summary: 'Search every indexed post and blog',
     detail:
-      'Full-text search across the directory. Returns matching blogs and matching posts, with a reader URL for each post so you can read it without leaving the site.',
-    options: ['--limit <n>', '--json'],
-    examples: ['rssamp search "agentic coding"', 'rssamp search homelab --limit 5 --json'],
+      'Full-text search across the directory. Returns matching blogs and matching posts, with a reader URL for each post so you can read it without leaving the site. The directory is mostly blogs, so the best matches for anything are usually blog posts: --kind narrows to one category, and the summary line says what the other categories hold.',
+    options: ['--limit <n>', '--kind <kind>', '--json'],
+    examples: [
+      'rssamp search "agentic coding"',
+      'rssamp search "iran us conflict" --kind podcast',
+      'rssamp search homelab --limit 5 --json',
+    ],
   },
   {
     name: 'topics',
@@ -520,6 +524,7 @@ export async function run(argv, io = {}) {
         const url = new URL(`${base}/api/search`);
         url.searchParams.set('q', query);
         if (flags.limit) url.searchParams.set('limit', String(flags.limit));
+        if (typeof flags.kind === 'string') url.searchParams.set('kind', flags.kind);
 
         const body = await request(url.toString());
 
@@ -538,6 +543,16 @@ export async function run(argv, io = {}) {
         }
         for (const p of body.posts ?? []) {
           log(`post  ${truncate(p.title, 72)}\n      ${p.url ?? p.blogPage}`);
+        }
+
+        // What the ranking pushed off the end. Without this line a search that
+        // matched two hundred episodes and forty posts prints forty posts and
+        // looks like a directory of nothing but blogs.
+        const others = (body.categories ?? []).filter((c) => c.kind !== body.kind);
+        if (others.length > 0) {
+          log('');
+          log(`also  ${others.map((c) => `${c.matches} in ${c.kind}`).join(', ')}`);
+          log(`      narrow with --kind <${others.map((c) => c.kind).join('|')}>`);
         }
         return 0;
       }

@@ -55,7 +55,11 @@ is not a search engine for the whole web.
   third of the directory is that shape.
 - \`GET ${base}/opml\` — the whole directory as a subscription list, one
   category with \`?kind=\`, or one subject with \`?topic=\`.
-- \`GET ${base}/search?q=\` — search the directory.
+- \`GET ${base}/api/search?q=\` — search the directory. The reply counts the
+  whole match set by category under \`categories\`, and \`?kind=\` asks for one of
+  them — worth doing, because the directory is mostly blogs and the best-ranked
+  results for anything are usually blog posts even when hundreds of podcast
+  episodes matched too. \`${base}/search?q=\` is the same search as a page.
 
 ## Model Context Protocol
 
