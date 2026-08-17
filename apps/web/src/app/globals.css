@@ -632,22 +632,29 @@ button:disabled {
 
 /* Video docks the same way but needs a picture, so the bar becomes a column
    and the frame keeps 16:9 rather than being squashed into a transport's
-   height. Capped so a video never takes more than a third of the screen —
-   the post is still the thing being read. */
+   height. Still capped — the post is what is being read — but a third of the
+   screen was too mean a cap for anything with faces or text in it, and a
+   docked video is now something a reader watches rather than something they
+   keep an eye on. The reader who wants the smaller one has the thumbnail
+   button, which is the honest way to offer two sizes. */
 .episode-player.is-video {
   flex-direction: column;
   align-items: stretch;
   gap: 0.5rem;
-  max-height: 42vh;
+  max-height: 58vh;
 }
 
 .episode-video {
   width: 100%;
   aspect-ratio: 16 / 9;
-  max-height: 34vh;
+  max-height: 46vh;
   border: 0;
   border-radius: 8px;
   background: #000;
+  /* The poster is artwork of whatever shape the publisher had; the frame is
+     16:9. Contain rather than cover, so a square cover is letterboxed instead
+     of having its middle cropped out. */
+  object-fit: contain;
 }
 
 /* The video as the post rather than as an accompaniment: in the flow, at the
@@ -722,10 +729,56 @@ button:disabled {
     left: auto;
     right: 1.5rem;
     bottom: 1.5rem;
-    width: min(28rem, 40vw);
+    width: min(34rem, 46vw);
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 0.7rem;
+  }
+}
+
+/* The thumbnail. Not a third state so much as the old one kept: a video small
+   enough to sit in the corner of the eye while the reader gets on with
+   something else, without giving up the transport or the queue the way closing
+   the dock would. The controls stay at full size — a button that shrinks with
+   the picture is a button nobody can hit. */
+.episode-player.is-video.is-thumb {
+  max-height: none;
+}
+
+.episode-player.is-thumb .episode-video {
+  max-height: 6.5rem;
+  width: auto;
+  align-self: flex-start;
+}
+
+.episode-player.is-thumb .episode-meta strong {
+  max-width: 12rem;
+}
+
+/* Glyphs only once the picture is a thumbnail. Six labelled controls across a
+   20rem box wrap "Pop out" onto two lines and stand the whole row up twice as
+   tall as the video it belongs to; the titles still carry the words for a
+   tooltip and for anything reading the page aloud. */
+.episode-player.is-thumb .dock-controls .label {
+  display: none;
+}
+
+@media (min-width: 48rem) {
+  .episode-player.is-video.is-thumb:not(.is-inline) {
+    width: min(20rem, 32vw);
+  }
+}
+
+/* A docked video is taller than a docked scrubber, so the room reserved for it
+   at the foot of the page is too — but only where it is across the foot of the
+   page. Above 48rem it is a corner box and the page owes it nothing. */
+@media (max-width: 47.99rem) {
+  body:has(.episode-player.is-video:not(.is-inline):not(.is-thumb)) {
+    padding-bottom: calc(58vh + 2rem);
+  }
+
+  body:has(.episode-player.is-video:not(.is-inline):not(.is-thumb)) .toolbar {
+    bottom: calc(58vh + env(safe-area-inset-bottom));
   }
 }
 
@@ -788,6 +841,16 @@ body:has(.episode-player:not(.is-inline)) {
 .dock-controls button:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* The video controls carry words as well as a glyph, because ⧉ and ▢ mean
+   nothing on their own. On a narrow screen the row is four buttons and a queue
+   link across the width of a phone, so the words go and the titles carry
+   them — the same trade the toolbar makes one screen up. */
+@media (max-width: 34rem) {
+  .dock-controls .label {
+    display: none;
+  }
 }
 
 /* One player, not two. While the roaming one is running, the page's own docked
@@ -2521,52 +2584,21 @@ select {
   margin: 0 0 2.4rem;
 }
 
-/* The transport follows the reader down the queue. Fifty episodes is a long
-   list, and a player that scrolls off the top leaves them with no way to pause
-   the thing they are hearing without going back up to find it. */
-.playlist-now,
-.playlist-audio {
-  position: sticky;
-  z-index: 20;
-  background: var(--bg);
-}
-
-.playlist-now {
-  top: 0;
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.55rem;
-  padding: 0.7rem 0 0.4rem;
-}
-
-.playlist-now strong {
-  font-family: var(--serif);
-  font-size: 1rem;
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.playlist-now .show {
+/* The playlist no longer carries its own transport — the dock at the foot of
+   the window does, and it is the only one that survives the reader clicking
+   something. This says so, and only where it is true: the attribute is set by
+   the dock itself, so a reader with JavaScript off is not promised a player
+   they do not have. */
+.playlist-hint {
+  margin: 0 0 1rem;
   font-family: var(--mono);
-  font-size: 0.76rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
   color: var(--muted);
 }
 
-.playlist-now .show a {
-  color: inherit;
-}
-
-.playlist-audio {
-  top: 3.2rem;
-  display: block;
-  width: 100%;
-  padding-bottom: 0.8rem;
-  border-bottom: 1px solid var(--line);
+html:not([data-dock]) .playlist-hint {
+  display: none;
 }
 
 .playlist-tracks {
@@ -2583,7 +2615,10 @@ select {
   border-bottom: 1px solid var(--line);
 }
 
-.playlist-tracks li.is-current {
+/* The row the dock is on. Flagged from the dock rather than from the page,
+   because the page no longer knows: the reader can start an episode here, walk
+   off into the directory, and come back to find the same list still marked. */
+.playlist-tracks li:has(> [data-dock-current]) {
   background: var(--accent-soft);
 }
 
@@ -2608,15 +2643,35 @@ select {
   background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
-.playlist-num {
+/* Both live in the first column, and exactly one of them shows: the track's
+   number, or the marker that says this is the one playing. Stacked in one cell
+   rather than swapped in script, so the grid never reflows when the dock moves
+   from one row to the next. */
+.playlist-num,
+.playlist-live {
+  grid-row: 1;
+  grid-column: 1;
   font-family: var(--mono);
   font-size: 0.78rem;
   color: var(--muted);
   text-align: right;
 }
 
-.playlist-tracks li.is-current .playlist-num {
+.playlist-live {
+  display: none;
   color: var(--accent);
+}
+
+.playlist-pick[data-dock-current] .playlist-num {
+  display: none;
+}
+
+.playlist-pick[data-dock-current] .playlist-live {
+  display: block;
+}
+
+.playlist-pick[data-dock-current] .playlist-title {
+  font-weight: 600;
 }
 
 .playlist-title {
@@ -2656,9 +2711,5 @@ select {
   .playlist-pick {
     grid-template-columns: 1.6rem minmax(0, 1fr) auto;
     gap: 0.15rem 0.5rem;
-  }
-
-  .playlist-audio {
-    top: 4.4rem;
   }
 }
