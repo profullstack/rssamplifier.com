@@ -44,6 +44,7 @@ export const STATIC_PAGES = [
   // anywhere a crawler weights heavily.
   { path: '/mcp', changefreq: 'monthly', priority: '0.6' },
   { path: '/about', changefreq: 'monthly', priority: '0.5' },
+  { path: '/privacy', changefreq: 'yearly', priority: '0.3' },
 ];
 
 /**
