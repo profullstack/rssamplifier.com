@@ -34,7 +34,7 @@ export default async function DiscoveryPage({ params }) {
   const run = await discovery.runById(client, id);
   if (!run) notFound();
 
-  const [keywords, candidates, accepted, rejected, events] = await Promise.all([
+  const [keywords, candidates, accepted, rejected, events, queued] = await Promise.all([
     discovery.keywordProgress(client, id),
     discovery.runProgress(client, id),
     discovery.acceptedForRun(client, id, 100),
@@ -42,6 +42,10 @@ export default async function DiscoveryPage({ params }) {
     // The log's recent history, so it is populated on arrival rather than only
     // from whatever happens next.
     discovery.eventsForRun(client, id, { limit: 60, tail: true }),
+    // The keyword being searched right now, for the first paint. Arriving from
+    // the redirect this is the only thing there is to say: no keyword has
+    // finished, so there are no log lines and the bar is at zero.
+    discovery.queuedKeywords(client, 1, id),
   ]);
 
   let terms = [];
@@ -103,6 +107,14 @@ export default async function DiscoveryPage({ params }) {
           total: totalSteps,
           settled: settledSteps,
           percent: totalSteps === 0 ? 0 : Math.floor((settledSteps / totalSteps) * 100),
+          searching:
+            candidates.total === 0 && keywords.waiting > 0
+              ? {
+                  name: queued[0]?.keyword == null ? null : String(queued[0].keyword),
+                  left: keywords.waiting,
+                  running: String(run.status) === 'running',
+                }
+              : null,
           done: !working,
         }}
       />

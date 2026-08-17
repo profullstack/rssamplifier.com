@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { explain } from '../lib/reasons.js';
+import { busyLine } from '../lib/progress.js';
 
 /** Log lines kept in the DOM. Older ones scroll out of history, not just view. */
 const MAX_LINES = 300;
@@ -93,6 +94,7 @@ export default function LiveProgress({ src, initial, lines: seed = [], unit, ver
   }, [lines]);
 
   const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+  const busy = busyLine(progress.searching);
 
   return (
     <section className="live" aria-label="Progress">
@@ -118,6 +120,8 @@ export default function LiveProgress({ src, initial, lines: seed = [], unit, ver
           style={{ width: `${percent}%` }}
         />
       </div>
+
+      {!progress.done && busy && <p className="live-busy">{busy}</p>}
 
       {lines.length > 0 && (
         <ol

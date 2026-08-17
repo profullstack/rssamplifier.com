@@ -40,7 +40,7 @@ export async function GET(req, { params }) {
   let last = '';
 
   return stream(async (first) => {
-    const [keywords, candidates, events] = await Promise.all([
+    const [keywords, candidates, events, queued, current] = await Promise.all([
       discovery.keywordProgress(client, id),
       discovery.runProgress(client, id),
       discovery.eventsForRun(client, id, {
@@ -48,6 +48,14 @@ export async function GET(req, { params }) {
         // The first read is the catch-up; after that only new lines exist.
         limit: first ? BACKLOG : 200,
       }),
+      // Which keyword is in the provider's hands right now. The searches run in
+      // this same order, one at a time, so the oldest queued row is the one
+      // being waited on.
+      discovery.queuedKeywords(client, 1, id),
+      // Re-read rather than reuse the row above: the run is handed off to the
+      // poller partway through, and a status read once at connect would still
+      // be claiming an inline search minutes after it stopped.
+      discovery.runById(client, id),
     ]);
 
     const frames = [];
@@ -76,6 +84,17 @@ export async function GET(req, { params }) {
         errored: candidates.errored,
         waiting: candidates.waiting,
       },
+      // Only until the first sites exist: after that the log carries the page,
+      // and the inline search loop may have spent its budget and stopped, so
+      // naming a keyword would be claiming work nobody is doing.
+      searching:
+        candidates.total === 0 && keywords.waiting > 0
+          ? {
+              name: queued[0]?.keyword == null ? null : String(queued[0].keyword),
+              left: keywords.waiting,
+              running: String(run.status) === 'running',
+            }
+          : null,
       done,
     };
 
