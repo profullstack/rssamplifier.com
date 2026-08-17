@@ -1626,6 +1626,108 @@ select {
   text-overflow: ellipsis;
 }
 
+/*
+ * The live log.
+ *
+ * Built on .live-log, which the two queue pages already use, with the
+ * differences a crawler log needs: it is twice as tall because it never ends,
+ * and a failure is coloured rather than muted — on a submission's log a failed
+ * feed is one line of a finished story, and here it is the reason somebody
+ * opened the page.
+ */
+
+.crawl-log-panel {
+  margin: 1.2rem 0 2rem;
+}
+
+.crawl-log-head {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.crawl-log-state {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.crawl-log-state.is-live {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.crawl-log-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.crawl-log-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+.crawl-log-button {
+  /* Pushed to the end of the row: it is the only control that changes what the
+   * stream does, and it should not sit among the labels. */
+  margin-left: auto;
+  font: inherit;
+  color: inherit;
+  padding: 0.2rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.crawl-log-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.crawl-log-empty {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 0.9rem 0 0;
+}
+
+/*
+ * Written as .live-log.crawl-log, not .crawl-log, and it has to stay that way:
+ * the .live-log rules these override are further down this file, so at equal
+ * specificity they win on source order. The first version of this block was
+ * ignored outright, which showed up as failures rendering plain and successful
+ * crawls rendering coloured — precisely backwards.
+ */
+
+.live-log.crawl-log {
+  max-height: 30rem;
+}
+
+.live-log.crawl-log .is-bad span {
+  color: var(--accent);
+}
+
+.live-log.crawl-log .is-good span {
+  /* The overwhelming majority of lines. Left as body text: colouring the normal
+   * case is the same as colouring nothing, and it would drown the failures. */
+  color: inherit;
+}
+
+.live-log.crawl-log .crawl-log-ms {
+  color: var(--muted);
+  font-style: normal;
+}
+
 /* ---------------------------------------------------------------- charts */
 
 /*

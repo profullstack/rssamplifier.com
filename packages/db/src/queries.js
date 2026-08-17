@@ -1038,6 +1038,106 @@ export async function indexingHistory(db, hours = 48) {
 }
 
 /**
+ * Write lines to the crawler's log.
+ *
+ * One batch per call, because the poller buffers a couple of seconds of lines
+ * and hands them over together: a crawl batch produces twenty-five of these and
+ * twenty-five separate round trips to Turso would cost more than the crawl.
+ *
+ * Every field but `at` and `event` is optional — a line only fills in the
+ * columns it has something to say about.
+ *
+ * @param {Client} db
+ * @param {Array<{ event: string, at?: string, status?: string|null, subject?: string|null, slug?: string|null, amount?: number|null, detail?: string|null, ms?: number|null }>} entries
+ * @returns {Promise<number>} lines written
+ */
+export async function appendCrawlLog(db, entries) {
+  const rows = (Array.isArray(entries) ? entries : [entries]).filter((e) => e?.event);
+  if (rows.length === 0) return 0;
+
+  const statements = rows.map((entry) => ({
+    sql: `insert into crawl_log (at, event, status, subject, slug, amount, detail, ms)
+          values (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      entry.at ?? nowIso(),
+      String(entry.event),
+      entry.status == null ? null : String(entry.status),
+      entry.subject == null ? null : String(entry.subject),
+      entry.slug == null ? null : String(entry.slug),
+      entry.amount == null ? null : Number(entry.amount),
+      entry.detail == null ? null : String(entry.detail),
+      entry.ms == null ? null : Number(entry.ms),
+    ],
+  }));
+
+  await db.batch(statements, 'write');
+  return rows.length;
+}
+
+/**
+ * Read the crawler's log forward from a cursor.
+ *
+ * The cursor is the row id, not the timestamp. Two lines written in the same
+ * millisecond are ordinary here — a batch flush writes twenty-five at once — and
+ * a timestamp cursor would silently drop every line that shared the last one's
+ * millisecond. Ids are handed to the client as the SSE event id, so a reconnect
+ * resumes exactly where the connection dropped.
+ *
+ * Ascending, so a caller can append what it gets and take the last id as its
+ * next cursor.
+ *
+ * @param {Client} db
+ * @param {{ since?: number|null, limit?: number }} [opts]
+ * @returns {Promise<Array<object>>} oldest first
+ */
+export async function crawlLog(db, { since = null, limit = 200 } = {}) {
+  const { rows } = await db.execute({
+    sql: `select id, at, event, status, subject, slug, amount, detail, ms
+          from crawl_log where id > ? order by id asc limit ?`,
+    args: [Number(since ?? 0), Math.max(1, Math.min(Number(limit) || 200, 1000))],
+  });
+  return rows;
+}
+
+/**
+ * The newest lines in the log, for a page that has not streamed anything yet.
+ *
+ * Read newest-first so the limit takes the tail rather than the head, then
+ * reversed: the caller renders a log, and a log reads downwards.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<Array<object>>} oldest first
+ */
+export async function crawlLogTail(db, limit = 60) {
+  const { rows } = await db.execute({
+    sql: `select id, at, event, status, subject, slug, amount, detail, ms
+          from crawl_log order by id desc limit ?`,
+    args: [Math.max(1, Math.min(Number(limit) || 60, 1000))],
+  });
+  return [...rows].reverse();
+}
+
+/**
+ * Drop log lines older than the window the page shows.
+ *
+ * Hours rather than days: this table takes a row per feed crawled, so a week of
+ * retention would be a quarter of a million rows to hold a log nobody scrolls
+ * back through. Railway keeps the durable copy of the same lines.
+ *
+ * @param {Client} db
+ * @param {number} [hours]
+ * @returns {Promise<number>} rows removed
+ */
+export async function pruneCrawlLog(db, hours = 12) {
+  const { rowsAffected } = await db.execute({
+    sql: 'delete from crawl_log where at < ?',
+    args: [nowIso(-hours * 3_600_000)],
+  });
+  return Number(rowsAffected ?? 0);
+}
+
+/**
  * What the directory holds, broken down by category, with each category's own
  * growth curve.
  *
@@ -1214,7 +1314,12 @@ export async function recentlyCrawled(db, limit = 20) {
  */
 export async function dueFeeds(db, limit = 25) {
   const { rows } = await db.execute({
-    sql: `select id, feed_url, error_count, fetch_interval_minutes, source_kind from feeds
+    // slug and title are along for the log: a crawler log line that names the
+    // blog and links to its page is worth two columns the crawl itself is
+    // holding the row for anyway. source_kind is what main added, and the
+    // crawl still needs it to know what it is fetching.
+    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind
+          from feeds
           where status <> 'dead' and next_fetch_at <= ?
           order by next_fetch_at asc limit ?`,
     args: [nowIso(), limit],

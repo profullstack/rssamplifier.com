@@ -2,10 +2,12 @@ import { q, discovery } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import { categoryStats, indexingHistory, GROWTH_DAYS } from '../../lib/crawlstats.js';
+import { toLine } from '../../lib/crawlLog.js';
 import AutoRefresh from '../AutoRefresh.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { GrowthChart, IndexingChart, Sparkline, ThroughputChart } from './Charts.jsx';
+import CrawlLog from './CrawlLog.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +33,7 @@ export const metadata = {
 export default async function CrawlStatsPage() {
   const client = db();
 
-  const [stats, failing, recent, discoveryQueue, keywordQueue, history, categories] =
+  const [stats, failing, recent, discoveryQueue, keywordQueue, history, categories, logTail] =
     await Promise.all([
       q.crawlStats(client),
       q.failingFeeds(client, 15),
@@ -40,6 +42,10 @@ export default async function CrawlStatsPage() {
       discovery.countQueuedKeywords(client),
       indexingHistory(),
       categoryStats(),
+      // Rendered into the log so the panel arrives with history rather than
+      // waiting for the crawler's next line, and so the log is not blank for a
+      // reader with JavaScript off.
+      q.crawlLogTail(client, 40),
     ]);
 
   // The whole directory's curve is the categories' curves added up, which is
@@ -95,6 +101,16 @@ export default async function CrawlStatsPage() {
         Last successful fetch {ago(stats.lastSuccessAt)} · next feed due {due(stats.nextFetchAt)} ·
         generated {new Date(stats.generatedAt).toISOString()}
       </p>
+
+      <h2>Live log</h2>
+      <p>
+        Every feed the crawler settles, as it settles, plus what each batch did when it finishes.
+        The same lines are a log file at{' '}
+        <a href="/api/crawlstats/log?format=text">/api/crawlstats/log?format=text</a> — that URL
+        keeps being written, so <code>curl -N</code> on it tails the crawler from anywhere.
+      </p>
+
+      <CrawlLog src="/api/crawlstats/log" lines={logTail.map(toLine)} />
 
       <h2>Indexing performance</h2>
       <p>
