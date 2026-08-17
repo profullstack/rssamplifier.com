@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 
+import Share from './Share.jsx';
+
 /**
- * Like, upvote and downvote for one post.
+ * Like, upvote, downvote and share for one post.
  *
  * Still plain forms posting to /api/reactions, because that is what every
  * control on the site is and it has to keep working with JavaScript off. What
@@ -22,6 +24,10 @@ import { useEffect, useState } from 'react';
  * while the votes are public and move a score everybody sees. Saving something
  * to read again should not require endorsing it.
  *
+ * Share sits in the same row and is the one control here that asks nothing of
+ * the reader: no account, no vote, and it is the only thing on the page that
+ * hands the post to somebody who is not already here.
+ *
  * @param {{
  *   slug: string,
  *   guid: string,
@@ -29,9 +35,22 @@ import { useEffect, useState } from 'react';
  *   liked: boolean,
  *   vote: number,
  *   signedIn: boolean,
+ *   shareUrl: string,
+ *   shareTitle: string,
+ *   shareText: string,
  * }} props
  */
-export default function PostActions({ slug, guid, score, liked, vote, signedIn }) {
+export default function PostActions({
+  slug,
+  guid,
+  score,
+  liked,
+  vote,
+  signedIn,
+  shareUrl,
+  shareTitle,
+  shareText,
+}) {
   const [state, setState] = useState({ score, liked, vote });
   const [busy, setBusy] = useState(false);
 
@@ -147,6 +166,8 @@ export default function PostActions({ slug, guid, score, liked, vote, signedIn }
         <span aria-hidden="true">{state.liked ? '♥' : '♡'}</span>
         <span className="label">{state.liked ? 'Favorited' : 'Like'}</span>
       </Action>
+
+      <Share url={shareUrl} title={shareTitle} text={shareText} textLabel="Copy post" />
 
       {!signedIn && (
         <span className="hint">
