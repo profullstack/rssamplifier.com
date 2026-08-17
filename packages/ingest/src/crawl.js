@@ -174,15 +174,20 @@ export function groupByHost(feeds) {
  * @param {import('@libsql/client').Client} db
  * @param {number} [batchSize]
  * @param {number} [concurrency] hosts crawled at once
- * @returns {Promise<{ crawled: number, failed: number }>}
+ * @returns {Promise<{ crawled: number, failed: number, items: number }>} items being posts stored, not posts seen
  */
 export async function crawlDue(db, batchSize = 25, concurrency = 8) {
   const due = await q.dueFeeds(db, batchSize);
-  if (due.length === 0) return { crawled: 0, failed: 0 };
+  if (due.length === 0) return { crawled: 0, failed: 0, items: 0 };
 
   const queues = groupByHost(due);
   let crawled = 0;
   let failed = 0;
+  // Posts actually stored this batch. The caller rolls this into the hourly
+  // record on /crawlstats, and counting them here is free — every crawl already
+  // reports what it added, and the alternative is counting feed_items rows by
+  // hour, which is a scan of the largest table in the database.
+  let items = 0;
   let next = 0;
 
   const worker = async () => {
@@ -197,8 +202,10 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8) {
         // completed crawls down with it.
         try {
           const res = await crawlFeed(db, feed);
-          if (res.ok) crawled += 1;
-          else failed += 1;
+          if (res.ok) {
+            crawled += 1;
+            items += Number(res.newItems ?? 0);
+          } else failed += 1;
         } catch {
           failed += 1;
         }
@@ -209,5 +216,5 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8) {
   const workers = Math.max(1, Math.min(concurrency, queues.length));
   await Promise.all(Array.from({ length: workers }, worker));
 
-  return { crawled, failed };
+  return { crawled, failed, items };
 }

@@ -1,8 +1,11 @@
 import { q, discovery } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
+import { categoryStats, indexingHistory, GROWTH_DAYS } from '../../lib/crawlstats.js';
 import AutoRefresh from '../AutoRefresh.jsx';
+import { CATEGORIES } from '../CategoryIndex.jsx';
 import Toolbar from '../Toolbar.jsx';
+import { GrowthChart, IndexingChart, Sparkline, ThroughputChart } from './Charts.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,13 +31,23 @@ export const metadata = {
 export default async function CrawlStatsPage() {
   const client = db();
 
-  const [stats, failing, recent, discoveryQueue, keywordQueue] = await Promise.all([
-    q.crawlStats(client),
-    q.failingFeeds(client, 15),
-    q.recentlyCrawled(client, 15),
-    discovery.countQueuedCandidates(client),
-    discovery.countQueuedKeywords(client),
-  ]);
+  const [stats, failing, recent, discoveryQueue, keywordQueue, history, categories] =
+    await Promise.all([
+      q.crawlStats(client),
+      q.failingFeeds(client, 15),
+      q.recentlyCrawled(client, 15),
+      discovery.countQueuedCandidates(client),
+      discovery.countQueuedKeywords(client),
+      indexingHistory(),
+      categoryStats(),
+    ]);
+
+  // The whole directory's curve is the categories' curves added up, which is
+  // one array of thirty numbers rather than a seventh query for a total the
+  // page is already holding.
+  const growth = categories.days.map((_, day) =>
+    categories.categories.reduce((n, row) => n + (row.growth[day] ?? 0), 0),
+  );
 
   // A crawler that has fetched nothing in an hour is either idle because
   // nothing was due, or stopped. The backlog tells those apart.
@@ -82,6 +95,95 @@ export default async function CrawlStatsPage() {
         Last successful fetch {ago(stats.lastSuccessAt)} · next feed due {due(stats.nextFetchAt)} ·
         generated {new Date(stats.generatedAt).toISOString()}
       </p>
+
+      <h2>Indexing performance</h2>
+      <p>
+        What the crawler actually got through, hour by hour, in UTC. The left chart is posts
+        stored; the right one is feeds tried, split into the ones that answered and the ones that
+        did not. Hover a bar for its numbers, or open the table under either chart.
+      </p>
+
+      <div className="chart-row">
+        <IndexingChart series={history} />
+        <ThroughputChart series={history} />
+      </div>
+
+      <h2>By category</h2>
+      <p>
+        Every feed in the directory is filed under one category, re-read from the feed on each
+        crawl — except the three a parser cannot see, which are curated by hand and marked below.
+        The curve is the directory as a whole; each row carries its own, at its own scale, because
+        a category with tens of thousands of feeds and one with dozens cannot share an axis.
+      </p>
+
+      <GrowthChart days={categories.days} values={growth} />
+
+      <table className="crawl-table category-table">
+        <thead>
+          <tr>
+            <th scope="col">Category</th>
+            <th scope="col">Feeds</th>
+            <th scope="col">Share</th>
+            <th scope="col">New (24h)</th>
+            <th scope="col">New ({GROWTH_DAYS}d)</th>
+            <th scope="col">Posts</th>
+            <th scope="col">Erroring</th>
+            <th scope="col">Growth ({GROWTH_DAYS}d)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {categories.categories.map((row) => {
+            const meta = CATEGORIES[row.category];
+
+            return (
+              <tr key={row.category}>
+                <td className="category-name">
+                  {meta ? <a href={meta.path}>{meta.heading}</a> : row.category}
+                  {meta?.curated && (
+                    <span className="category-flag" title="Curated by hand, not detected">
+                      curated
+                    </span>
+                  )}
+                </td>
+                <td className="num">{fmt(row.feeds)}</td>
+                <td className="num">
+                  <Share share={row.share} />
+                </td>
+                <td className="num">{row.addedLastDay ? `+${fmt(row.addedLastDay)}` : '—'}</td>
+                <td className="num">{row.addedLastMonth ? `+${fmt(row.addedLastMonth)}` : '—'}</td>
+                <td className="num">{fmt(row.items)}</td>
+                <td className="num">{row.errored ? fmt(row.errored) : '—'}</td>
+                <td className="spark-cell">
+                  <Sparkline
+                    values={row.growth}
+                    label={`${meta?.heading ?? row.category}: ${fmt(row.growth[0] ?? 0)} feeds ${GROWTH_DAYS} days ago, ${fmt(row.feeds)} now`}
+                  />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td className="category-name">All feeds</td>
+            <td className="num">{fmt(categories.total)}</td>
+            <td className="num">100%</td>
+            <td className="num">
+              {sum(categories.categories, 'addedLastDay')
+                ? `+${fmt(sum(categories.categories, 'addedLastDay'))}`
+                : '—'}
+            </td>
+            <td className="num">
+              {sum(categories.categories, 'addedLastMonth')
+                ? `+${fmt(sum(categories.categories, 'addedLastMonth'))}`
+                : '—'}
+            </td>
+            <td className="num">{fmt(sum(categories.categories, 'items'))}</td>
+            <td className="num">{fmt(sum(categories.categories, 'errored'))}</td>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
 
       <h2>Recently crawled</h2>
       {recent.length === 0 ? (
@@ -142,6 +244,38 @@ export default async function CrawlStatsPage() {
       <Toolbar />
     </>
   );
+}
+
+/**
+ * A category's share of the directory, as a number with a bar behind it.
+ *
+ * The bar is the reason the column exists: 47,000 of 48,000 is a sentence, and
+ * a row of them is a shape you can read in one pass.
+ *
+ * @param {{ share: number }} props
+ */
+function Share({ share }) {
+  const percent = share * 100;
+
+  return (
+    <span className="share">
+      <span className="share-bar" aria-hidden="true">
+        <span className="share-fill" style={{ width: `${Math.max(share * 100, share > 0 ? 1 : 0)}%` }} />
+      </span>
+      <span className="share-value">
+        {percent === 0 ? '0%' : percent < 0.1 ? '<0.1%' : `${percent.toFixed(percent < 10 ? 1 : 0)}%`}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * @param {object[]} rows
+ * @param {string} key
+ * @returns {number}
+ */
+function sum(rows, key) {
+  return rows.reduce((n, row) => n + Number(row[key] ?? 0), 0);
 }
 
 /**

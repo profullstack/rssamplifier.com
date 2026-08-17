@@ -83,11 +83,30 @@ async function tick() {
 
   try {
     const started = Date.now();
-    const { crawled, failed } = await crawlDue(db, batchSize, concurrency);
+    const { crawled, failed, items } = await crawlDue(db, batchSize, concurrency);
     if (crawled || failed) {
       // The backlog is the number worth watching: crawled/failed only say the
       // tick did something, `due` says whether the crawler is keeping up.
-      log('crawl', { crawled, failed, ms: Date.now() - started, due: await q.countDueFeeds(db) });
+      log('crawl', {
+        crawled,
+        failed,
+        items,
+        ms: Date.now() - started,
+        due: await q.countDueFeeds(db),
+      });
+    }
+
+    // What this tick did, added to the hour it happened in. Only when it did
+    // something: an idle tick writing a row of zeros would turn the throughput
+    // chart's "nothing was due" into a recorded hour of no work, and the two
+    // are worth telling apart. A failure here is housekeeping lost, not a
+    // crawl lost, so it must not break the tick.
+    if (crawled || failed) {
+      try {
+        await q.recordCrawlHour(db, { fetched: crawled + failed, succeeded: crawled, failed, items });
+      } catch (err) {
+        log('rollup-error', { message: String(err?.message ?? err) });
+      }
     }
 
     // A keyword search queues more work than its request could finish, in both
@@ -153,6 +172,11 @@ async function tick() {
       lastPurge = Date.now();
       const purged = await accounts.purgeExpired(db);
       if (purged) log('purged', { rows: purged });
+
+      // The throughput rollup grows by 24 rows a day forever otherwise, and no
+      // chart on the site looks back further than a month.
+      const hours = await q.pruneCrawlHours(db);
+      if (hours) log('purged-rollup', { rows: hours });
     }
   } catch (err) {
     log('crawl-error', { message: String(err?.message ?? err) });

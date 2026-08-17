@@ -124,3 +124,81 @@ test('recentlyCrawled is ordered by when the crawler last touched a feed', async
   assert.equal(slugs[0], 'healthy', 'the most recent fetch leads');
   assert.ok(!slugs.includes('fresh'), 'a feed never crawled has nothing to report');
 });
+
+test('categoryStats counts every category, including the empty ones', async () => {
+  const { total, days, categories } = await q.categoryStats(db);
+
+  assert.equal(days.length, 30, 'a month of daily labels');
+  assert.deepEqual(
+    categories.map((c) => c.category),
+    q.KINDS,
+    'every category has a row whether or not the directory holds one',
+  );
+
+  const blog = categories.find((c) => c.category === 'blog');
+  const reel = categories.find((c) => c.category === 'reel');
+
+  // Four feeds were seeded; 'gone' is dead and counts nowhere.
+  assert.equal(total, 4);
+  assert.equal(blog.feeds, 4, 'new feeds default to blog');
+  assert.equal(blog.share, 1);
+  assert.equal(blog.errored, 1);
+  assert.equal(blog.addedLastDay, 4, 'all four were inserted just now');
+  assert.equal(reel.feeds, 0, 'an empty category still reports itself');
+  assert.equal(reel.share, 0);
+});
+
+test('categoryStats growth is cumulative, dense, and lands on today’s total', async () => {
+  const { categories } = await q.categoryStats(db, 7);
+  const blog = categories.find((c) => c.category === 'blog');
+
+  assert.equal(blog.growth.length, 7, 'one point per day, gaps included');
+  assert.equal(blog.growth.at(-1), blog.feeds, 'the curve ends where the count is');
+  assert.equal(blog.growth[0], 0, 'nothing existed before the feeds were inserted');
+  assert.deepEqual(
+    [...blog.growth].sort((a, b) => a - b),
+    blog.growth,
+    'a cumulative count never goes down',
+  );
+});
+
+test('the hourly rollup accumulates ticks and reports a dense series', async () => {
+  const hourAgo = ago(3_600_000);
+
+  await q.recordCrawlHour(db, { fetched: 10, succeeded: 9, failed: 1, items: 40 }, hourAgo);
+  await q.recordCrawlHour(db, { fetched: 5, succeeded: 5, failed: 0, items: 12 }, hourAgo);
+
+  const series = await q.indexingHistory(db, 3);
+  assert.equal(series.length, 3, 'every hour in the window, whether or not it has a row');
+
+  const bucket = series.find((h) => h.hour === hourAgo.slice(0, 13));
+  assert.ok(bucket, 'the hour that was recorded is in the window');
+  assert.equal(bucket.fetched, 15, 'two ticks in one hour add up');
+  assert.equal(bucket.succeeded, 14);
+  assert.equal(bucket.failed, 1);
+  assert.equal(bucket.items, 52);
+  assert.equal(bucket.recorded, true);
+
+  const untouched = series.filter((h) => h.hour !== hourAgo.slice(0, 13));
+  for (const hour of untouched) {
+    assert.equal(hour.fetched, 0);
+    assert.equal(
+      hour.recorded,
+      false,
+      'an hour nobody wrote down is not an hour the crawler did nothing',
+    );
+  }
+});
+
+test('pruneCrawlHours drops what the charts cannot show', async () => {
+  await q.recordCrawlHour(db, { fetched: 1, succeeded: 1, items: 1 }, ago(120 * 86_400_000));
+
+  const removed = await q.pruneCrawlHours(db, 90);
+  assert.equal(removed, 1, 'the four-month-old bucket goes');
+
+  const kept = await q.indexingHistory(db, 3);
+  assert.ok(
+    kept.some((h) => h.fetched > 0),
+    'recent buckets survive',
+  );
+});
