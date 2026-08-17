@@ -127,6 +127,29 @@ test('the poller searches what the request could not', async () => {
   assert.equal(String(run.status), 'queued', 'its site is still waiting to be checked');
 });
 
+test('a poller tick stops starting keywords once its budget is spent', async () => {
+  // A keyword is a dozen requests now, so an unbounded batch is a tick that
+  // runs for ten minutes and starves the crawl that shares it.
+  const fetchImpl = stubSearch({
+    'budget one': ['https://budget-one.example/a'],
+    'budget two': ['https://budget-two.example/a'],
+  });
+
+  await discoverFromKeywords(db, ['budget one', 'budget two'], {
+    inlineLimit: 0,
+    searchBudgetMs: -1, // both queue
+    searchOpts: { apiKey: 'k', fetchImpl },
+  });
+
+  const drained = await drainDiscoveryKeywords(db, 20, {
+    budgetMs: -1, // already spent before the first keyword
+    searchOpts: { apiKey: 'k', fetchImpl },
+  });
+
+  assert.equal(drained.searched, 0, 'nothing started');
+  assert.equal(drained.failed, 0, 'and nothing marked failed for it');
+});
+
 test('hosts already in the directory are never queued again', async () => {
   await q.insertFeed(db, {
     slug: 'known-blog',

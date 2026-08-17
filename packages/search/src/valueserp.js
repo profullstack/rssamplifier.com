@@ -9,25 +9,70 @@
 const ENDPOINT = 'https://api.valueserp.com/search';
 
 /**
- * Result pages fetched per keyword.
+ * Results asked for per page.
  *
- * Each page is a separate request and therefore a separate credit, so this is
- * the knob that decides what a hundred-keyword run costs: three pages is three
- * hundred credits.
+ * Ten, because ten is what the engine serves and — this is the part that cost
+ * us ninety results a keyword — because `num` is not ignored. It sets the
+ * stride `page` walks in: the offset sent upstream is `(page - 1) * num`. Ask
+ * for `num=100` and page two starts at result 101, which is past the end of a
+ * result set Google truncates long before then, so it comes back empty and
+ * pagination stops after one page.
  *
- * It exists because `num` does not work. The original script asked for
- * `num=100` and believed it was getting a hundred results per keyword; Google
- * stopped honouring that parameter, and a measured request for "siberian
- * huskies" comes back with eight organic results however large `num` is.
- * Pagination is now the only way to see past the first page, and page two is
- * entirely disjoint from page one.
+ * Measured against the live API on 2026-08-17, same keyword, same account:
+ *
+ *   "prepping"         num=100 →  9 unique, dry at page 2
+ *                      num=10  → 87 unique over 10 pages
+ *   "smokey mountains" num=100 → 17 unique, dry at page 3
+ *                      num=10  → 90 unique over 11 pages
+ *
+ * So the old constant did not merely fail to raise the page size; it capped
+ * every keyword at its first page.
  */
-const DEFAULT_PAGES = 3;
+const PAGE_SIZE = 10;
 
-/** Still sent, still ignored by the engine, still free to ask for. */
-const NUM_RESULTS = 100;
+/**
+ * Unique results collected per keyword before stopping.
+ *
+ * A hundred is the whole first hundred of Google's ranking, which is as deep as
+ * this is worth taking: past that the results stop being about the keyword.
+ */
+export const TARGET_RESULTS = 100;
 
-const TIMEOUT_MS = 20_000;
+/**
+ * Pages fetched per keyword, at most.
+ *
+ * Twelve rather than ten because page one reliably comes back short — seven to
+ * nine organic results, not ten — and pages repeat each other's links, so a
+ * hundred unique results needs eleven or twelve pages in practice.
+ *
+ * Each page is a credit. A keyword now costs up to twelve of them against the
+ * metered monthly plan, where it used to cost three.
+ */
+const MAX_PAGES = 12;
+
+/**
+ * Pages in flight at once.
+ *
+ * Sequential paging cannot reach a hundred results inside any budget a person
+ * or a poller tick will tolerate: measured page times range from 3s to 34s, so
+ * twelve pages in a row is a worst case of several minutes for one keyword. The
+ * account's limit is 250 requests a minute, so four at a time is nowhere near
+ * pressure — it is simply the width at which a keyword finishes in about the
+ * time its slowest page takes.
+ *
+ * It is also the bound on waste: a wave that runs past the end of the results
+ * spends at most this many credits learning that.
+ */
+const PAGE_CONCURRENCY = 4;
+
+/**
+ * How long one page may take.
+ *
+ * Measured pages have taken 34s. The old 20s cut in below that, which is what
+ * killed the "smokey mountains" keyword on run c1bb1503 — a keyword marked
+ * failed for no reason but the provider being slow that minute.
+ */
+const TIMEOUT_MS = 45_000;
 
 /**
  * Errors that mean "stop the whole run", not "this one keyword failed".
@@ -82,7 +127,7 @@ async function searchPage(term, page, opts) {
   url.searchParams.set('q', term);
   url.searchParams.set('gl', opts.gl ?? 'us');
   url.searchParams.set('hl', opts.hl ?? 'en');
-  url.searchParams.set('num', String(opts.num ?? NUM_RESULTS));
+  url.searchParams.set('num', String(opts.num ?? PAGE_SIZE));
   url.searchParams.set('page', String(page));
   // Unset by default. The original throwaway script pinned this to last_month,
   // which is right for news and wrong for blogs: a good blog that last posted
@@ -114,13 +159,37 @@ async function searchPage(term, page, opts) {
 }
 
 /**
- * Run one keyword search, across as many result pages as configured.
+ * Fetch page one, retrying once if the provider was merely slow.
+ *
+ * Only page one, and only for the two errors that mean "no answer" rather than
+ * "an answer you won't like": everything downstream treats a failed first page
+ * as the keyword producing nothing, so a single slow response is the difference
+ * between ninety results and a keyword marked failed.
+ *
+ * @param {string} term
+ * @param {object} opts
+ * @returns {Promise<{ ok: true, links: string[] } | { ok: false, error: string }>}
+ */
+async function searchFirstPage(term, opts) {
+  const first = await searchPage(term, 1, opts);
+  if (first.ok || (first.error !== 'timeout' && first.error !== 'fetch-failed')) return first;
+
+  return searchPage(term, 1, opts);
+}
+
+/**
+ * Run one keyword search, paging until it has a hundred results.
+ *
+ * Page one goes out alone — it decides whether the keyword produced anything at
+ * all, and there is no sense spending four credits to find out the account is
+ * dry. The rest go out in waves, and the walk stops at whichever comes first:
+ * the target, a page with nothing on it, or the page cap.
  *
  * A page that fails after the first one is not fatal to the keyword: half the
  * results are worth more than none, and the failure is reported alongside them.
  *
  * @param {string} keyword
- * @param {{ apiKey?: string, pages?: number, num?: number, gl?: string, hl?: string, timePeriod?: string, fetchImpl?: typeof fetch }} [opts]
+ * @param {{ apiKey?: string, pages?: number, target?: number, concurrency?: number, num?: number, gl?: string, hl?: string, timePeriod?: string, fetchImpl?: typeof fetch }} [opts]
  * @returns {Promise<{ ok: true, keyword: string, links: string[], pages: number } | { ok: false, keyword: string, error: string }>}
  */
 export async function searchKeyword(keyword, opts = {}) {
@@ -130,37 +199,64 @@ export async function searchKeyword(keyword, opts = {}) {
   const key = opts.apiKey ?? apiKey();
   if (!key) return { ok: false, keyword: term, error: 'no-api-key' };
 
-  const pages = Math.max(1, opts.pages ?? DEFAULT_PAGES);
+  const maxPages = Math.max(1, opts.pages ?? MAX_PAGES);
+  const target = Math.max(1, opts.target ?? TARGET_RESULTS);
+  const width = Math.max(1, opts.concurrency ?? PAGE_CONCURRENCY);
   const settings = { ...opts, key };
 
   const links = [];
   const seen = new Set();
   let fetched = 0;
 
-  for (let page = 1; page <= pages; page += 1) {
-    const res = await searchPage(term, page, settings);
-
-    if (!res.ok) {
-      // The first page failing means the keyword produced nothing, and the
-      // reason — quota, bad key — is the caller's to act on. A later page
-      // failing just truncates the results.
-      if (page === 1) return { ok: false, keyword: term, error: res.error };
-      break;
-    }
-
-    fetched += 1;
-    for (const link of res.links) {
+  /**
+   * Keep new links, in the order the engine ranked them.
+   *
+   * Pages overlap by a result or two, so the deduplication is not incidental:
+   * eleven pages of ten come back as about ninety distinct sites.
+   *
+   * @param {string[]} found
+   */
+  const keep = (found) => {
+    for (const link of found) {
       if (seen.has(link)) continue;
       seen.add(link);
       links.push(link);
     }
+  };
 
-    // A short page is the last page; asking for the next one spends a credit to
-    // be told the same thing.
-    if (res.links.length === 0) break;
+  const first = await searchFirstPage(term, settings);
+  // The first page failing means the keyword produced nothing, and the reason —
+  // quota, bad key — is the caller's to act on.
+  if (!first.ok) return { ok: false, keyword: term, error: first.error };
+
+  fetched += 1;
+  keep(first.links);
+
+  // An empty first page is a keyword with no results, not a failure.
+  let exhausted = first.links.length === 0;
+  let next = 2;
+
+  while (!exhausted && links.length < target && next <= maxPages) {
+    const wave = [];
+    for (let page = next; page < next + width && page <= maxPages; page += 1) wave.push(page);
+    next += wave.length;
+
+    // Awaited together, read in page order, so rank survives the concurrency.
+    const results = await Promise.all(wave.map((page) => searchPage(term, page, settings)));
+
+    for (const res of results) {
+      if (!res.ok) continue;
+
+      fetched += 1;
+      // A page with nothing on it is the end of the results. The rest of this
+      // wave is already paid for, so it is still read — only the next wave is
+      // called off.
+      if (res.links.length === 0) exhausted = true;
+      else keep(res.links);
+    }
   }
 
-  return { ok: true, keyword: term, links, pages: fetched };
+  return { ok: true, keyword: term, links: links.slice(0, target), pages: fetched };
 }
 
 // There is deliberately no searchKeywords() batch helper. Keywords are queued
