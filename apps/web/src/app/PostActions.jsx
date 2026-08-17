@@ -1,5 +1,7 @@
+import Share from './Share.jsx';
+
 /**
- * Like, upvote and downvote for one post.
+ * Like, upvote, downvote and share for one post.
  *
  * Plain forms posting to /api/reactions, like every other control on the site:
  * no client bundle, works with JavaScript off, and the 303 back to the reader
@@ -10,6 +12,10 @@
  * while the votes are public and move a score everybody sees. Saving something
  * to read again should not require endorsing it.
  *
+ * Share sits in the same row and is the one control here that asks nothing of
+ * the reader: no account, no vote, and it is the only thing on the page that
+ * hands the post to somebody who is not already here.
+ *
  * @param {{
  *   slug: string,
  *   guid: string,
@@ -17,9 +23,22 @@
  *   liked: boolean,
  *   vote: number,
  *   signedIn: boolean,
+ *   shareUrl: string,
+ *   shareTitle: string,
+ *   shareText: string,
  * }} props
  */
-export default function PostActions({ slug, guid, score, liked, vote, signedIn }) {
+export default function PostActions({
+  slug,
+  guid,
+  score,
+  liked,
+  vote,
+  signedIn,
+  shareUrl,
+  shareTitle,
+  shareText,
+}) {
   return (
     <div className="post-actions">
       <Action
@@ -63,6 +82,8 @@ export default function PostActions({ slug, guid, score, liked, vote, signedIn }
         <span aria-hidden="true">{liked ? '♥' : '♡'}</span>
         <span className="label">{liked ? 'Favorited' : 'Like'}</span>
       </Action>
+
+      <Share url={shareUrl} title={shareTitle} text={shareText} textLabel="Copy post" />
 
       {!signedIn && (
         <span className="hint">

@@ -1,7 +1,7 @@
 import { q } from '@rssamplifier/db';
-import { topicSlug } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../../lib/db.js';
+import { groupsWithFeeds, slugFromUrl, topicGroup } from '../../../../lib/topicGroups.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,16 +12,24 @@ export const dynamic = 'force-dynamic';
  * can pass a phrase it read anywhere — "Home Lab", "home-lab" — rather than
  * having to know the slug.
  *
+ * `?group=` narrows it to one of the topic's categories, named the same way the
+ * pages name them: blogs, podcasts, audio, music, videos, comics, lives, reels.
+ * Whether or not one was asked for, the answer lists every group the topic has
+ * and how many feeds each holds — so a caller can see what the cuts are without
+ * a second request, and a caller that guessed wrong can see what it should have
+ * said.
+ *
  * @param {Request} req
  * @param {{ params: Promise<{ keyword: string }> }} ctx
  */
 export async function GET(req, { params }) {
   const { keyword } = await params;
-  const slug = topicSlug(decodeURIComponent(String(keyword ?? '')));
+  const slug = slugFromUrl(keyword);
 
   const url = new URL(req.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 100) || 100, 1), 500);
   const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
+  const group = topicGroup(url.searchParams.get('group'));
 
   const client = db();
   const topic = await q.topicBySlug(client, slug);
@@ -36,17 +44,36 @@ export async function GET(req, { params }) {
     });
   }
 
-  const rows = await q.feedsForTopic(client, slug, { limit, offset });
+  const [rows, counts] = await Promise.all([
+    q.feedsForTopic(client, slug, { limit, offset, kinds: group?.kinds ?? null }),
+    q.topicKindCounts(client, slug),
+  ]);
+
+  const base = `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}`;
 
   return new Response(
     JSON.stringify(
       {
         slug: topic.slug,
         keyword: topic.keyword,
-        total: topic.feedCount,
+        // `total` is what this response is a page of, so it follows the filter.
+        // `topicTotal` is the topic entire, which a caller comparing groups
+        // needs and would otherwise have to fetch again unfiltered.
+        total: group
+          ? group.kinds.reduce((sum, kind) => sum + (counts[kind] ?? 0), 0)
+          : topic.feedCount,
+        topicTotal: topic.feedCount,
+        group: group?.segment ?? null,
+        groups: groupsWithFeeds(counts).map(({ group: entry, count }) => ({
+          group: entry.segment,
+          kinds: entry.kinds,
+          feedCount: count,
+          page: `${base}/${entry.segment}`,
+          feeds: `${base}/${entry.segment}.json`,
+        })),
         limit,
         offset,
-        page: `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}`,
+        page: group ? `${base}/${group.segment}` : base,
         feeds: rows.map((f) => ({
           slug: f.slug,
           title: f.title,

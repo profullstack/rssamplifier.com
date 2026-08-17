@@ -4,8 +4,10 @@ import { q, accounts } from '@rssamplifier/db';
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { adPlan } from '../../lib/ads.js';
+import { shareText } from '../../lib/share.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
+import Share from '../Share.jsx';
 import Toolbar from '../Toolbar.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +59,11 @@ export default async function FeedPage({ params }) {
   const ads = adPlan(posts.length, { first: 3, every: 12, max: 3 });
 
   const podcast = feed.category === 'podcast';
+
+  // This page, absolute, and deliberately ours rather than the blog's own site:
+  // sharing from here should land somebody on the archive, the follow button
+  // and the reader, which is the part they cannot get to from the blog.
+  const pageUrl = `${siteUrl()}/${slug}`;
 
   // A podcast described as a Blog is wrong in the one place a machine reads
   // this page, so the type and the property that carries the entries both
@@ -110,19 +117,31 @@ export default async function FeedPage({ params }) {
         </span>
       </div>
 
-      {/* A plain form, so following works with JavaScript off. A signed-out
-          reader is not shown a dead button: the endpoint sends them to sign in
-          and back here afterwards. */}
-      <form className="follow-form" action="/api/follows" method="post">
-        <input type="hidden" name="slug" value={String(feed.slug)} />
-        <input type="hidden" name="action" value={following ? 'unfollow' : 'follow'} />
-        {/* Following is the quiet state: it is a thing already done, and
-            styling it as loudly as the call to action would make every followed
-            blog shout. */}
-        <button type="submit" className={following ? 'secondary-button' : ''}>
-          {following ? 'Following ✓' : 'Follow'}
-        </button>
-      </form>
+      {/* Follow and share, side by side, because they are the two things to do
+          with a blog you have just found and only one of them needs an
+          account. */}
+      <div className="detail-actions">
+        {/* A plain form, so following works with JavaScript off. A signed-out
+            reader is not shown a dead button: the endpoint sends them to sign in
+            and back here afterwards. */}
+        <form className="follow-form" action="/api/follows" method="post">
+          <input type="hidden" name="slug" value={String(feed.slug)} />
+          <input type="hidden" name="action" value={following ? 'unfollow' : 'follow'} />
+          {/* Following is the quiet state: it is a thing already done, and
+              styling it as loudly as the call to action would make every followed
+              blog shout. */}
+          <button type="submit" className={following ? 'secondary-button' : ''}>
+            {following ? 'Following ✓' : 'Follow'}
+          </button>
+        </form>
+
+        <Share
+          url={pageUrl}
+          title={String(feed.title)}
+          text={shareText({ title: feed.title, summary: feed.description, url: pageUrl })}
+          textLabel={podcast ? 'Copy podcast' : 'Copy blog'}
+        />
+      </div>
 
       {/* What this feed writes about, and the way across to everyone else who
           writes about it. Sat under the follow button rather than up in the
