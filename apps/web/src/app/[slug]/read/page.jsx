@@ -501,8 +501,16 @@ export default async function ReaderPage({ params, searchParams }) {
 
               {/* The post's own text, where the publisher put it in the feed.
                   Better than a link nobody can follow when the site refuses to
-                  be framed — which is most of the reason this branch exists. */}
-              {article && !summary && (
+                  be framed — which is most of the reason this branch exists.
+
+                  Was gated on `!summary`, which is the gate the video branch
+                  above already calls a bug: having an excerpt is not a reason
+                  to withhold the thing it is an excerpt of. This is the last
+                  copy of it. A webcomic feed is what makes the difference
+                  visible — its description is a thumbnail wrapped in a link,
+                  and stripped of its markup that is the summary word for word,
+                  so the reader printed the caption and dropped the picture. */}
+              {article && !repeats(article, summary) && (
                 <article className="reader-article" dangerouslySetInnerHTML={{ __html: article }} />
               )}
 
@@ -574,6 +582,12 @@ export default async function ReaderPage({ params, searchParams }) {
  * ordinary excerpt-and-article case and exactly the one worth rendering: the
  * summary is the first paragraph, and the body is the other twenty.
  *
+ * A body carrying a picture is never a repeat, however identical the words.
+ * The summary is plain text — it is made by stripping the markup off this very
+ * body — so for a webcomic, whose feed ships a thumbnail wrapped in a link and
+ * captioned "New comic!", the two texts match exactly while only one of them
+ * is the comic.
+ *
  * @param {string} html the body, as it will be rendered
  * @param {unknown} summary
  * @returns {boolean}
@@ -584,6 +598,8 @@ function repeats(html, summary) {
       .replace(/<[^>]*>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+
+  if (/<(?:img|figure|picture|video|audio|iframe)\b/i.test(String(html ?? ''))) return false;
 
   const gist = text(summary);
   return gist.length > 0 && text(html) === gist;

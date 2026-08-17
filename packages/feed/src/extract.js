@@ -24,14 +24,49 @@ import { sanitizeHtml, textLength } from './sanitize.js';
  */
 
 /**
- * Shortest extraction worth showing.
+ * Shortest extraction worth showing, when prose is all there is.
  *
  * Readability will happily return a nav sidebar and a cookie notice off a page
  * that is mostly JavaScript, and a reader who is shown 200 characters of
  * furniture has been told this worked when it did not. Below this, the honest
  * card is the better answer.
+ *
+ * It is a floor on *prose*, which is the whole of the trouble: it was being
+ * asked about pages whose post is a picture. A Wilde Life strip extracts
+ * cleanly — the full-size panel, with the artist's alt text on it — and carries
+ * 502 characters of prose around it, so the reader threw the comic away and
+ * said the site would not let itself be embedded. Same for Elephant Town, and
+ * for photo posts, and for any page whose words are a caption. See `figures`.
  */
 const MIN_LENGTH = 600;
+
+/**
+ * Below this in either declared dimension, an image is furniture.
+ *
+ * Only load-bearing when a page says how big its images are, which most do not
+ * — but when a site does declare, a 200×100 publisher logo is saying plainly
+ * that it is not the post.
+ */
+const MIN_FIGURE_PX = 200;
+
+/**
+ * Where a site keeps its chrome rather than its posts.
+ *
+ * Measured against the pages this gate was rejecting, not guessed. Elephant
+ * Town's page furniture is six nav arrows under `/templates/2021/images/`; the
+ * one image that is the comic sits under `/comics/`. A Mastodon-ish profile
+ * card on heretic.li — a bio and a link list, which is furniture entire —
+ * offers only an avatar under `/static/`, and dropping that is what keeps the
+ * card from being rendered as though it were a post.
+ *
+ * `/images/` is deliberately absent: it is where half the small web puts its
+ * photographs.
+ */
+const CHROME_DIRS =
+  /\/(?:static|assets|templates?|themes?|skins?|icons?|logos?|emoji|sprites?)\//i;
+
+/** Filenames that announce themselves as furniture. */
+const CHROME_NAMES = /(?:^|[/_-])(?:logo|avatar|icon|badge|button|sprite|pixel|spacer)s?[._-]/i;
 
 /**
  * Largest page worth parsing.
@@ -86,7 +121,11 @@ export function readableArticle(html, url) {
 
   const clean = sanitizeHtml(String(article.content));
   const length = textLength(clean);
-  if (length < MIN_LENGTH) return null;
+
+  // Prose is enough on its own, and a picture is enough on its own. Requiring
+  // prose of a page that is a picture is what turned every webcomic in the
+  // directory into "this site does not allow itself to be embedded".
+  if (length < MIN_LENGTH && figures(clean, url).length === 0) return null;
 
   return {
     title: text(article.title),
@@ -96,6 +135,95 @@ export function readableArticle(html, url) {
     html: clean,
     length,
   };
+}
+
+/**
+ * The images in an extraction that could plausibly be the post.
+ *
+ * The question this answers is not "is there an image" — every page has images
+ * — but "did we come away with something worth showing a reader". One picture
+ * that the publisher serves themselves, at a size they have not disclaimed, is
+ * a post the same way six hundred characters of prose is a post.
+ *
+ * Three tests, each of which earns its place against a page this gate was
+ * getting wrong:
+ *
+ *   - Served from the publisher's own site. Wilde Life's extraction carries a
+ *     topwebcomics.com vote badge; a third party's image on someone else's page
+ *     is an ad or a button, never the thing that was published.
+ *   - Not declared small. The Hiveworks logo on the same page says width="200"
+ *     height="100", which is a site saying this is a logo.
+ *   - Not filed under the site's chrome. See CHROME_DIRS.
+ *
+ * Exported for the tests, which is the only way to pin behaviour that is
+ * otherwise visible as one boolean at the end of a long function.
+ *
+ * @param {string} html the sanitized extraction
+ * @param {string} url the page it came from
+ * @returns {string[]} the sources of the images that survived
+ */
+export function figures(html, url) {
+  const site = siteOf(url);
+  const found = [];
+
+  for (const tag of String(html ?? '').matchAll(/<img\b[^>]*>/gi)) {
+    const src = attr(tag[0], 'src');
+    if (!src) continue;
+
+    // The sanitizer has already dropped relative and non-http sources, so
+    // anything still here parses — but a parse that fails is not a figure.
+    if (siteOf(src) !== site) continue;
+
+    const width = Number(attr(tag[0], 'width'));
+    const height = Number(attr(tag[0], 'height'));
+    if (width > 0 && width < MIN_FIGURE_PX) continue;
+    if (height > 0 && height < MIN_FIGURE_PX) continue;
+
+    let path = '';
+    try {
+      path = new URL(src).pathname;
+    } catch {
+      continue;
+    }
+    if (CHROME_DIRS.test(path)) continue;
+    if (CHROME_NAMES.test(path)) continue;
+
+    found.push(src);
+  }
+
+  return found;
+}
+
+/**
+ * The site an URL belongs to, so a CDN subdomain still counts as the
+ * publisher's own: images.example.com and www.example.com are one site, and a
+ * page that serves its photographs off the first is not serving someone else's.
+ *
+ * Two labels rather than a public-suffix list. It is wrong for example.co.uk,
+ * where it answers "co.uk" for both sides of a comparison that should have
+ * failed — which costs a third-party image on a .co.uk page being counted, and
+ * never costs a real one being dropped.
+ *
+ * @param {string} url
+ * @returns {string|null}
+ */
+function siteOf(url) {
+  try {
+    const { hostname } = new URL(String(url));
+    return hostname.split('.').slice(-2).join('.').toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {string} tag
+ * @param {string} name
+ * @returns {string}
+ */
+function attr(tag, name) {
+  const match = new RegExp(`\\b${name}="([^"]*)"`, 'i').exec(tag);
+  return match ? match[1] : '';
 }
 
 /**
