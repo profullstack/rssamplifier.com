@@ -2238,6 +2238,84 @@ select {
   font-weight: 400;
 }
 
+/* ------------------------------------------------------------------ jobs
+ *
+ * The per-job breakdown of the poller. Built on .crawl-table, with two
+ * departures: a job's description sits under its name on its own line, and the
+ * state is a word rather than a colour alone — the states are not a severity
+ * scale (a permanently deep update queue is "working", an empty first-crawl
+ * queue is "clear") so nothing here can be read off a traffic light.
+ */
+
+.job-table td {
+  vertical-align: top;
+  /* The one table on the page whose cells hold sentences. */
+  white-space: normal;
+}
+
+.job-what {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 400;
+  margin-top: 0.15rem;
+  max-width: 26rem;
+}
+
+.job-state {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+/* Working and clear are both fine, and read as fine without being loud. */
+.job-state-working,
+.job-state-clear,
+.job-state-done {
+  color: var(--muted);
+}
+
+.job-state-done {
+  border-style: dashed;
+}
+
+/* Behind is the first-crawl queue backing up: somebody is waiting on that. */
+.job-state-behind {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Work waiting and nothing happening, which is the one thing on this page that
+   is unambiguously wrong — and the failure a single combined health word hides,
+   because it reads healthy while any one job is busy. */
+.job-state-stalled,
+.job-state-failing {
+  color: #fff;
+  background: #a8321f;
+  border-color: #a8321f;
+}
+
+@media (prefers-color-scheme: dark) {
+  .job-state-stalled,
+  .job-state-failing {
+    background: #7f2618;
+    border-color: #932c1c;
+  }
+}
+
+.job-errors {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--accent);
+  margin-top: 0.3rem;
+}
+
 .crawl-error {
   font-family: var(--mono);
   font-size: 0.78rem;

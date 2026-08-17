@@ -60,6 +60,40 @@ test("a batch summary leads with the backlog, because that is what says whether 
   assert.match(text, /4,021 still due/);
 });
 
+test('the picture hunt says what it found, not just how many it looked at', () => {
+  // Shipped without wording, so every one of these lines was printing raw JSON in
+  // the live log. Three numbers because "looked at 8 feeds" does not say whether
+  // it is finding anything.
+  const text = say({
+    event: 'cards',
+    detail: JSON.stringify({ looked: 8, found: 3, cards: 2, pending: 53_696 }),
+  });
+
+  assert.match(text, /looked at 8 feeds/);
+  assert.match(text, /3 found/);
+  assert.match(text, /2 usable as a card/);
+  assert.match(text, /53,696 still to check/);
+
+  assert.equal(
+    say({ event: 'card-error', status: 'error', subject: 'example.com', detail: 'timeout' }),
+    'could not look up a picture for example.com — timeout',
+  );
+});
+
+test('the cluster walk reports scanned and keyed separately', () => {
+  // They differ on purpose: it reads a page of rows and writes only the un-keyed
+  // ones, so scanned-without-keyed is the walk re-crossing old ground rather than
+  // the walk doing nothing.
+  const text = say({
+    event: 'cluster-backfill',
+    detail: JSON.stringify({ scanned: 500, keyed: 0 }),
+  });
+
+  assert.match(text, /500 scanned/);
+  assert.match(text, /0 keyed/);
+  assert.match(say({ event: 'cluster-backfill-done', detail: '{}' }), /finished/);
+});
+
 test('an event nobody taught the renderer about still shows up', () => {
   // The point of the fallback: adding an event to the poller must not make the
   // log quieter until somebody remembers to teach this file about it.

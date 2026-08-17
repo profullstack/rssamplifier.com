@@ -983,6 +983,142 @@ export async function topicsForSitemap(db, limit = 20_000) {
 }
 
 /**
+ * The backlog each kind of work is sitting on, for the jobs board.
+ *
+ * One pass over `feeds` for all of it, for the same reason `crawlStats` is one
+ * pass: /crawlstats is public, uncached and refreshes itself every fifteen
+ * seconds, so every figure it shows has to be affordable at that rate forever.
+ *
+ * The counts are deliberately per *job* rather than per feed status, because
+ * they answer different questions. `due` is the update queue — feeds already
+ * indexed whose next check has come round — and it is permanently large by
+ * design: 52,000 feeds on an hourly interval want more checks per hour than any
+ * polite crawler will make. `neverCrawled` is the queue that should be near
+ * empty, and is the one worth an alarm when it is not, because those are
+ * submissions nobody has seen the result of yet.
+ *
+ * @param {Client} db
+ * @returns {Promise<object>}
+ */
+export async function jobBacklogs(db) {
+  const now = nowIso();
+  const hourAgo = nowIso(-3_600_000);
+
+  const { rows } = await db.execute({
+    sql: `select
+            sum(case when status <> 'dead' and next_fetch_at <= ? then 1 else 0 end) as due,
+            -- Accepted and not yet attempted at all: the first-crawl queue, and
+            -- the same figure the page's "Pending" stat shows, so the two agree.
+            sum(case when status = 'pending' then 1 else 0 end)             as pending,
+            -- Attempted and never once successful. A wider set, and deliberately
+            -- not the queue above: a feed that has failed nine times is not
+            -- waiting for its first crawl, it is failing, and the page counts it
+            -- under Erroring.
+            sum(case when status <> 'dead' and last_success_at is null then 1 else 0 end) as never_crawled,
+            sum(case when status = 'pending' and created_at >= ?
+                     then 1 else 0 end)                                    as submitted_hour,
+            sum(case when card_state is null then 1 else 0 end)            as cards_pending,
+            sum(case when card_state = 'ok' then 1 else 0 end)             as cards_ok,
+            sum(case when card_state = 'none' then 1 else 0 end)           as cards_none,
+            sum(case when card_state = 'error' then 1 else 0 end)          as cards_error,
+            sum(case when card_checked_at >= ? then 1 else 0 end)          as cards_hour
+          from feeds`,
+    // Deliberately no "first crawls completed this hour". Nothing records when a
+    // feed was read for the *first* time, and every way of inferring it from
+    // these columns is a guess — a status board that mixes measurements with
+    // guesses is worse than one that admits the gap. The first-crawl row shows
+    // its backlog and its inflow, and says outright that it shares the update
+    // queue's throughput.
+    args: [now, hourAgo, hourAgo],
+  });
+
+  const row = rows[0] ?? {};
+  return {
+    due: Number(row.due ?? 0),
+    pendingFirstCrawl: Number(row.pending ?? 0),
+    neverCrawled: Number(row.never_crawled ?? 0),
+    submittedLastHour: Number(row.submitted_hour ?? 0),
+    cardsPending: Number(row.cards_pending ?? 0),
+    cardsOk: Number(row.cards_ok ?? 0),
+    cardsNone: Number(row.cards_none ?? 0),
+    cardsError: Number(row.cards_error ?? 0),
+    cardsLastHour: Number(row.cards_hour ?? 0),
+  };
+}
+
+/**
+ * What each kind of work has been doing lately, from the log it already writes.
+ *
+ * The poller names every line by event — 'feed', 'crawl', 'cards',
+ * 'discovery-search', 'cluster-backfill' — so grouping the log by that column is
+ * a per-job activity feed with no new bookkeeping and nothing for a metrics
+ * table to drift away from. It answers the question a backlog cannot: a queue
+ * that is large and moving and a queue that is large and stopped look identical
+ * in a count.
+ *
+ * Bounded by `at`, which is the one index this table has, and returned as a map
+ * so a caller reads it by event name rather than searching an array.
+ *
+ * @param {Client} db
+ * @param {number} [hours]
+ * @returns {Promise<Record<string, { lines: number, errors: number, amount: number, lastAt: string|null, ms: number|null }>>}
+ */
+export async function logActivity(db, hours = 1) {
+  const since = nowIso(-Math.max(1, hours) * 3_600_000);
+
+  const { rows } = await db.execute({
+    sql: `select event,
+                 count(*)                                              as lines,
+                 sum(case when status = 'error' then 1 else 0 end)      as errors,
+                 coalesce(sum(amount), 0)                              as amount,
+                 -- The poller's own count for the event, whatever that event
+                 -- calls it. Most summary lines put their number inside detail
+                 -- rather than in the amount column, which is how a board built on
+                 -- amount alone came to report a busy discovery worker as stalled:
+                 -- it had checked 700 sites and reported 0.
+                 --
+                 -- Guarded on the leading brace because detail is either a JSON
+                 -- object or a plain error message, and json_extract raises on the
+                 -- second rather than returning null.
+                 coalesce(sum(case when detail like '{%' then coalesce(
+                   json_extract(detail, '$.checked'),
+                   json_extract(detail, '$.searched'),
+                   json_extract(detail, '$.keyed'),
+                   json_extract(detail, '$.looked'),
+                   json_extract(detail, '$.crawled'),
+                   json_extract(detail, '$.topics'),
+                   json_extract(detail, '$.sent'),
+                   json_extract(detail, '$.rows')
+                 ) end), 0)                                            as counted,
+                 max(at)                                               as last_at,
+                 -- The typical cost of one pass, not the total: a job that has
+                 -- run twice in an hour and a job that has run 200 times are
+                 -- not comparable on a sum.
+                 cast(avg(ms) as integer)                              as ms
+          from crawl_log
+          where at >= ?
+          group by event`,
+    args: [since],
+  });
+
+  /** @type {Record<string, { lines: number, errors: number, amount: number, lastAt: string|null, ms: number|null }>} */
+  const byEvent = {};
+  for (const row of rows) {
+    byEvent[String(row.event)] = {
+      lines: Number(row.lines ?? 0),
+      errors: Number(row.errors ?? 0),
+      // The column where it exists, the payload where it does not, so a job's
+      // rate does not depend on which of the two the poller happened to use.
+      amount: Number(row.amount ?? 0) || Number(row.counted ?? 0),
+      lastAt: row.last_at ? String(row.last_at) : null,
+      ms: row.ms == null ? null : Number(row.ms),
+    };
+  }
+
+  return byEvent;
+}
+
+/**
  * A snapshot of what the crawler is doing, for /crawlstats.
  *
  * One round trip rather than a dozen counts: the page is public and uncached,
