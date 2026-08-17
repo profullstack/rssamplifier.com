@@ -99,15 +99,19 @@ export async function refreshFeedKeywords(db, feedId, feed = {}) {
  * feed paths that were already ruled out when it was submitted.
  *
  * @param {import('@libsql/client').Client} db
- * @param {{ id: string, feed_url: string, error_count?: number, fetch_interval_minutes?: number, source_kind?: string }} feed
+ * @param {{ id: string, feed_url: string, error_count?: number, fetch_interval_minutes?: number, source_kind?: string, item_count?: number }} feed
+ * @param {{ resolve?: typeof resolveFeed, scrape?: typeof scrapeFeed }} [opts]
+ *   injected by the tests, the way `enrichFeedAuthors` takes its fetcher: the
+ *   guards in the fetch layer refuse loopback addresses, so a crawl cannot be
+ *   exercised end to end against a local server without this seam.
  * @returns {Promise<{ ok: boolean, newItems: number, error?: string }>}
  */
-export async function crawlFeed(db, feed) {
+export async function crawlFeed(db, feed, opts = {}) {
   const id = String(feed.id);
   const scraped = feed.source_kind === 'scraped';
   const resolved = scraped
-    ? await scrapeFeed(String(feed.feed_url))
-    : await resolveFeed(String(feed.feed_url));
+    ? await (opts.scrape ?? scrapeFeed)(String(feed.feed_url))
+    : await (opts.resolve ?? resolveFeed)(String(feed.feed_url));
 
   if (!resolved.ok) {
     const errorCount = Number(feed.error_count ?? 0) + 1;
@@ -115,15 +119,20 @@ export async function crawlFeed(db, feed) {
     return { ok: false, newItems: 0, error: resolved.error };
   }
 
-  const sent = await q.upsertItems(db, id, resolved.feed.items);
-
-  // Counting is only worth a round trip when the answer can have changed. Most
-  // crawls store nothing — the whole point of the backoff ladder is that a
-  // quiet feed is re-read rarely and finds nothing when it is — so this skips
-  // one of the eleven database round trips a crawl makes on the majority of
-  // them. A feed whose stored count has drifted is corrected by the next crawl
-  // that does store something, which recounts exactly.
-  const total = sent > 0 ? await q.countItems(db, id) : Number(feed.item_count ?? 0);
+  // `upsertItems` reports how many items the document *offered*, not how many
+  // were stored — every crawl re-offers the whole feed and the conflict clause
+  // quietly updates the rows that already existed. Taking that as "new items"
+  // is the bug this line fixes, and it was an expensive one: `sent` was never
+  // zero, so `nextIntervalMinutes` always returned the floor and **every feed
+  // in the directory was re-crawled hourly for ever**. The backoff ladder that
+  // is supposed to let a quiet blog drift out to a day had never once engaged.
+  //
+  // The honest count is the difference the crawl made to the stored total. Both
+  // halves are already in hand — `item_count` rides along on the due row and the
+  // total has to be recounted anyway — so this costs nothing.
+  await q.upsertItems(db, id, resolved.feed.items);
+  const total = await q.countItems(db, id);
+  const sent = Math.max(0, total - Number(feed.item_count ?? 0));
   await q.markCrawlSuccess(
     db,
     id,
