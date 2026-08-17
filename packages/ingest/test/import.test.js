@@ -150,6 +150,79 @@ test('submitCatalogue queues everything past the inline limit', async () => {
   assert.equal(progress.crawled, 0);
 });
 
+test('the queue is durable before any fetching starts', async () => {
+  const entries = Array.from({ length: 4 }, (_, i) => ({
+    url: `https://ordered-${i}.example/feed.xml`,
+    title: `Ordered ${i}`,
+  }));
+
+  /** @type {number|null} */
+  let queuedAtCallback = null;
+  /** @type {number|null} */
+  let rowsWhenCalled = null;
+
+  await submitCatalogue(db, entries, {
+    inlineLimit: 0,
+    submissionId: 'submission-ordering',
+    onQueued: (n) => {
+      queuedAtCallback = n;
+    },
+  });
+
+  // The callback fires with the queue already written, which is what lets the
+  // web route answer a large upload without waiting for the fetching half.
+  assert.equal(queuedAtCallback, 4, 'onQueued reports how many were queued');
+
+  const progress = await q.submissionProgress(db, 'submission-ordering');
+  assert.equal(progress.queued, 4);
+  rowsWhenCalled = progress.waiting;
+  assert.equal(rowsWhenCalled, 4, 'and the rows really are there, not merely counted');
+});
+
+test('onQueued fires even when there is no tail to queue', async () => {
+  let called = 0;
+  let reported = -1;
+
+  // No entries at all: nothing to fetch and nothing to queue, but a caller
+  // waiting on this signal must still be released or its request would hang.
+  await submitCatalogue(db, [], {
+    inlineLimit: 0,
+    submissionId: 'submission-empty',
+    onQueued: (n) => {
+      called += 1;
+      reported = n;
+    },
+  });
+
+  assert.equal(called, 1);
+  assert.equal(reported, 0);
+});
+
+test('completeSubmission fills in the tallies the insert left at zero', async () => {
+  await q.insertSubmission(db, { id: 'submission-two-phase', kind: 'opml', raw_input: 'x' });
+
+  const before = await q.submissionById(db, 'submission-two-phase');
+  assert.equal(Number(before.accepted_count), 0);
+  assert.equal(before.notify_email, null, 'no address until the work is done');
+
+  await q.completeSubmission(db, 'submission-two-phase', {
+    accepted_count: 3,
+    rejected_count: 1,
+    queued_count: 9,
+    errors: [{ url: 'https://bad.example', error: 'timeout' }],
+    notify_email: 'someone@example.com',
+  });
+
+  const after = await q.submissionById(db, 'submission-two-phase');
+  assert.equal(Number(after.accepted_count), 3);
+  assert.equal(Number(after.rejected_count), 1);
+  assert.equal(Number(after.queued_count), 9);
+  assert.equal(String(after.notify_email), 'someone@example.com');
+  assert.deepEqual(JSON.parse(String(after.errors)), [
+    { url: 'https://bad.example', error: 'timeout' },
+  ]);
+});
+
 test('a submission is only owed an email once nothing is still pending', async () => {
   await q.insertSubmission(db, {
     id: 'submission-awaiting',

@@ -64,6 +64,55 @@ test('a run queues its keywords and the sites they find', async () => {
   assert.deepEqual(JSON.parse(String(run.keywords)), ['siberian huskies', 'malamute care']);
 });
 
+test('onStarted fires with the run readable and before any searching', async () => {
+  const fetchImpl = stubSearch({ kites: ['https://kites.example/'] });
+
+  /** @type {string|null} */
+  let seenRunId = null;
+  let searchesWhenStarted = -1;
+  /** @type {object|null} */
+  let rowWhenStarted = null;
+  let keywordsWhenStarted = -1;
+
+  await discoverFromKeywords(db, ['kites'], {
+    inlineLimit: 0,
+    searchOpts: { apiKey: 'k', fetchImpl },
+    onStarted: (runId) => {
+      seenRunId = runId;
+      searchesWhenStarted = fetchImpl.calls.length;
+    },
+  });
+
+  assert.ok(seenRunId, 'the callback is handed the id the status page lives at');
+  assert.equal(
+    searchesWhenStarted,
+    0,
+    'and fires before the first search — that is what the web route stops waiting for',
+  );
+
+  // The point of the signal is that the status page works from that moment on,
+  // so the row and its keywords must already be readable, not merely promised.
+  rowWhenStarted = await discovery.runById(db, seenRunId);
+  assert.ok(rowWhenStarted, 'the run row exists');
+  assert.deepEqual(JSON.parse(String(rowWhenStarted.keywords)), ['kites']);
+
+  const progress = await discovery.keywordProgress(db, seenRunId);
+  keywordsWhenStarted = progress.total;
+  assert.equal(keywordsWhenStarted, 1, 'and its keywords are queued');
+});
+
+test('a run without an onStarted callback behaves exactly as before', async () => {
+  const fetchImpl = stubSearch({ hats: ['https://hats.example/'] });
+
+  const res = await discoverFromKeywords(db, ['hats'], {
+    inlineLimit: 0,
+    searchOpts: { apiKey: 'k', fetchImpl },
+  });
+
+  assert.equal(res.searched, 1);
+  assert.equal(res.queuedCandidates, 1);
+});
+
 test('the search budget stops the inline phase and leaves the rest queued', async () => {
   const fetchImpl = stubSearch({ one: ['https://one.example/'], two: ['https://two.example/'] });
 

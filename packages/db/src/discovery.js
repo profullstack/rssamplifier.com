@@ -435,6 +435,89 @@ export async function rejectedForRun(db, runId, limit = 100) {
 }
 
 /**
+ * A run as a log: one line per thing that has actually happened.
+ *
+ * The two tables are already an event stream in disguise — a keyword carries
+ * `searched_at`, a candidate carries `checked_at`, and neither is set until the
+ * work is done. Unioning them on that timestamp gives the running commentary
+ * without a third table to write, and therefore without a second place for the
+ * truth about a run to live.
+ *
+ * `since` is what makes it pollable: pass the newest `at` you have already seen
+ * and you get only what happened after it, so a watcher costs one small query
+ * per tick rather than the whole history again.
+ *
+ * `tail` is for the other reader: someone opening a run that finished hours ago
+ * wants its last hundred lines, not its first hundred. The rows are reversed
+ * before returning either way, so every caller gets oldest-first and can append
+ * without thinking about it.
+ *
+ * @param {Client} db
+ * @param {string} runId
+ * @param {{ since?: string|null, limit?: number, tail?: boolean }} [opts]
+ * @returns {Promise<object[]>} oldest first, so a caller can append as-is
+ */
+export async function eventsForRun(db, runId, opts = {}) {
+  const since = opts.since ?? null;
+  const limit = opts.limit ?? 200;
+
+  if (opts.tail) {
+    const { rows } = await db.execute({
+      sql: eventsSql('desc'),
+      args: [runId, since, limit],
+    });
+    return rows.reverse();
+  }
+
+  const { rows } = await db.execute({
+    sql: eventsSql('asc'),
+    args: [runId, since, limit],
+  });
+
+  return rows;
+}
+
+/**
+ * The union behind eventsForRun, in one direction or the other.
+ *
+ * Built once rather than written twice: the two orderings must select exactly
+ * the same columns in the same positions, and the surest way to guarantee that
+ * is for there to be only one copy of the list.
+ *
+ * @param {'asc'|'desc'} direction
+ * @returns {string}
+ */
+function eventsSql(direction) {
+  return `select * from (
+            select 'keyword' as kind,
+                   k.keyword   as subject,
+                   k.status    as status,
+                   k.error     as detail,
+                   null        as slug,
+                   k.result_count as amount,
+                   k.searched_at  as at
+            from discovery_keywords k
+            where k.run_id = ?1 and k.searched_at is not null
+              and (?2 is null or k.searched_at > ?2)
+
+            union all
+
+            select 'site',
+                   c.host,
+                   c.status,
+                   c.reason,
+                   c.slug,
+                   c.score,
+                   c.checked_at
+            from discovery_candidates c
+            where c.run_id = ?1 and c.checked_at is not null
+              and (?2 is null or c.checked_at > ?2)
+          )
+          order by at ${direction === 'desc' ? 'desc' : 'asc'}
+          limit ?3`;
+}
+
+/**
  * Runs that asked for an email and have no candidates left to check.
  *
  * @param {Client} db

@@ -3,9 +3,12 @@ import { notFound } from 'next/navigation';
 import { discovery } from '@rssamplifier/db';
 
 import AutoRefresh from '../../AutoRefresh.jsx';
+import LiveProgress from '../../LiveProgress.jsx';
 import Toolbar from '../../Toolbar.jsx';
 import AdBanner from '../../AdBanner.jsx';
 import { db } from '../../../lib/db.js';
+import { RUN_ERRORS, explain } from '../../../lib/reasons.js';
+import { streamSrc } from '../../../lib/sse.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,56 +16,6 @@ export const metadata = {
   title: 'Keyword search status',
   description: 'Progress of a keyword discovery run: what was searched, checked, added and why.',
 };
-
-/** Provider errors, in words a person can act on. */
-const ERRORS = {
-  'no-api-key': 'Search is not configured on this server, so nothing could be searched.',
-  'bad-api-key': 'The search provider rejected our credentials. Nothing could be searched.',
-  'quota-exhausted':
-    'The month’s search credits are spent. Remaining keywords stay queued and will run once the plan resets.',
-  'rate-limited': 'The search provider is rate-limiting us. Remaining keywords stay queued.',
-};
-
-/** Rejection reasons, in words. */
-const REASONS = {
-  'already-indexed': 'already in the directory',
-  'comments-feed': 'a comment feed, not a blog',
-  'partial-feed': 'a tag or category feed',
-  'too-few-items': 'too few entries',
-  abandoned: 'nothing posted in over 18 months',
-  'duplicate-titles': 'every entry has the same title',
-  'unlinked-items': 'entries link nowhere',
-  undated: 'no dates on any entry',
-  untitled: 'no title',
-  'low-score': 'did not score high enough',
-  'no-feed-found': 'no feed on the site',
-  timeout: 'site did not respond',
-  'fetch-failed': 'site could not be reached',
-  'blocked-host': 'not a public address',
-};
-
-/**
- * Turn a stored reason — a JSON array of codes, or a single code — into prose.
- *
- * @param {unknown} raw
- * @returns {string}
- */
-function explain(raw) {
-  const value = String(raw ?? '');
-  if (!value) return 'unknown';
-
-  let codes = [value];
-  if (value.startsWith('[')) {
-    try {
-      codes = JSON.parse(value);
-    } catch {
-      codes = [value];
-    }
-  }
-
-  const words = codes.map((code) => REASONS[code] ?? String(code));
-  return words.length > 0 ? words.join(', ') : 'unknown';
-}
 
 /**
  * Progress page for one keyword run.
@@ -81,11 +34,14 @@ export default async function DiscoveryPage({ params }) {
   const run = await discovery.runById(client, id);
   if (!run) notFound();
 
-  const [keywords, candidates, accepted, rejected] = await Promise.all([
+  const [keywords, candidates, accepted, rejected, events] = await Promise.all([
     discovery.keywordProgress(client, id),
     discovery.runProgress(client, id),
     discovery.acceptedForRun(client, id, 100),
     discovery.rejectedForRun(client, id, 50),
+    // The log's recent history, so it is populated on arrival rather than only
+    // from whatever happens next.
+    discovery.eventsForRun(client, id, { limit: 60, tail: true }),
   ]);
 
   let terms = [];
@@ -98,6 +54,24 @@ export default async function DiscoveryPage({ params }) {
   const failed = String(run.status) === 'failed';
   const working = keywords.waiting > 0 || candidates.waiting > 0;
   const checked = candidates.total - candidates.waiting;
+
+  // A run has two queues and the bar has to cover both, or it sits at 100%
+  // while a hundred keywords are still waiting to be searched.
+  const totalSteps = keywords.total + candidates.total;
+  const settledSteps = totalSteps - keywords.waiting - candidates.waiting;
+
+  // Rows become plain objects here rather than in the component: everything
+  // crossing into a client component has to be serialisable, and a libSQL row
+  // carries values React will not send.
+  const lines = events.map((row) => ({
+    kind: String(row.kind),
+    subject: String(row.subject ?? ''),
+    status: String(row.status ?? ''),
+    detail: row.detail == null ? null : String(row.detail),
+    slug: row.slug == null ? null : String(row.slug),
+    amount: row.amount == null ? null : Number(row.amount),
+    at: String(row.at),
+  }));
 
   return (
     <>
@@ -113,7 +87,25 @@ export default async function DiscoveryPage({ params }) {
             : `${terms.length} ${terms.length === 1 ? 'keyword' : 'keywords'} searched, ${checked.toLocaleString()} sites checked, ${candidates.accepted.toLocaleString()} blogs added.`}
       </p>
 
-      {run.error && <p className="notice">{ERRORS[String(run.error)] ?? String(run.error)}</p>}
+      {run.error && <p className="notice">{RUN_ERRORS[String(run.error)] ?? String(run.error)}</p>}
+
+      {/*
+       * Rendered whether or not the run is still going: a finished run keeps a
+       * full bar and its log, which is the difference between "it worked" and
+       * "something happened and I have no idea what".
+       */}
+      <LiveProgress
+        src={streamSrc(`/api/discoveries/${id}/stream`, lines)}
+        lines={lines}
+        unit="steps"
+        verb="Search"
+        initial={{
+          total: totalSteps,
+          settled: settledSteps,
+          percent: totalSteps === 0 ? 0 : Math.floor((settledSteps / totalSteps) * 100),
+          done: !working,
+        }}
+      />
 
       <dl className="stats">
         <div>
@@ -187,7 +179,12 @@ export default async function DiscoveryPage({ params }) {
 
       <AdBanner />
 
-      {working && <AutoRefresh seconds={15} />}
+      {/*
+       * The stream carries the bar and the log; this is only what fills in the
+       * lists of blogs below them, so it can be slow. Both were 15s before, and
+       * two things refreshing the same page that often is just noise.
+       */}
+      {working && <AutoRefresh seconds={30} />}
       <Toolbar />
     </>
   );
