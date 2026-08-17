@@ -126,3 +126,32 @@ test('an id that is not a row number is left off rather than trusted', () => {
   assert.ok(!decoder.decode(frame('log', {}, 'x\nevent: fake')).startsWith('id:'));
   assert.ok(!decoder.decode(frame('log', {}, null)).startsWith('id:'));
 });
+
+test('topic discovery names the keywords instead of printing NaN', () => {
+  // The poller sends the keywords themselves, and the renderer used to hand
+  // that array to Number(). Every one of these lines read "NaN keywords
+  // queued" in the live log.
+  assert.equal(
+    say({
+      event: 'discovery-topics',
+      detail: JSON.stringify({ keywords: ['home lab', 'self hosting', 'rss'], runId: 'r1' }),
+    }),
+    'looked for more of what we already cover — 3 keywords queued: home lab, self hosting, rss',
+  );
+
+  assert.equal(
+    say({ event: 'discovery-topics', detail: JSON.stringify({ keywords: ['home lab'] }) }),
+    'looked for more of what we already cover — 1 keyword queued: home lab',
+  );
+});
+
+test('topic discovery still reads correctly if it is ever given a count', () => {
+  assert.equal(
+    say({ event: 'discovery-topics', detail: JSON.stringify({ keywords: 3 }) }),
+    'looked for more of what we already cover — 3 keywords queued',
+  );
+  assert.equal(
+    say({ event: 'discovery-topics', detail: null }),
+    'looked for more of what we already cover — 0 keywords queued',
+  );
+});
