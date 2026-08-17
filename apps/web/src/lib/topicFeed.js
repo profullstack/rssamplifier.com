@@ -2,11 +2,22 @@ import { q } from '@rssamplifier/db';
 import { SYNDICATION_FORMATS, buildSyndication } from '@rssamplifier/feed';
 
 import { db, siteUrl } from './db.js';
+import { playerPath, wantsPlayer } from './player.js';
 import { slugFromUrl, topicGroup } from './topicGroups.js';
 
 /** How many items a topic feed carries by default, and at most. */
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+
+/**
+ * The queue length the player pages render.
+ *
+ * Exported so the page and the playlist it stands in for cannot drift: a reader
+ * who plays a topic in the browser and then downloads the same topic as an
+ * `.m3u` should get the same episodes in the same order, and they will only
+ * keep doing that if there is one number.
+ */
+export const PLAYLIST_LIMIT = DEFAULT_LIMIT;
 
 /**
  * One topic — or one category of it — as something a reader can subscribe to.
@@ -31,10 +42,22 @@ const MAX_LIMIT = 200;
  * different questions. A reader subscribing to `/topics/physics.rss` wants to be
  * told when somebody writes about physics, not to be handed a directory.
  *
- * @param {{ keyword: string, format: string, group?: string|null, limit?: unknown }} req
+ * @param {{
+ *   keyword: string,
+ *   format: string,
+ *   group?: string|null,
+ *   limit?: unknown,
+ *   req?: Request,
+ * }} args `req` is the incoming request, needed only to tell a browser from a player
  * @returns {Promise<Response>}
  */
-export async function topicFeed({ keyword, format: rawFormat, group: rawGroup = null, limit: rawLimit }) {
+export async function topicFeed({
+  keyword,
+  format: rawFormat,
+  group: rawGroup = null,
+  limit: rawLimit,
+  req = null,
+}) {
   const format = String(rawFormat ?? '').toLowerCase();
   const spec = SYNDICATION_FORMATS.get(format);
 
@@ -62,6 +85,22 @@ export async function topicFeed({ keyword, format: rawFormat, group: rawGroup = 
   // an address somebody can link to and a feed is a subscription somebody has
   // already made.
   const group = topicGroup(rawGroup);
+
+  // A browser asked for a playlist. No browser can play one — see lib/player.js
+  // — so it is sent to the page that can, rather than to its downloads folder
+  // with a file nothing on the machine may be registered to open. Only the
+  // playlist formats: a browser opening `.rss` gets the feed, which it has
+  // always been able to render and which some readers rely on seeing.
+  //
+  // 303 rather than 302, because what the reader asked for and what they are
+  // being given are genuinely different resources, and 303 is the status that
+  // says so without implying the playlist has moved.
+  if (spec.media && wantsPlayer(req)) {
+    return Response.redirect(
+      `${siteUrl()}${playerPath(slug, group?.segment ?? null)}`,
+      303,
+    );
+  }
 
   const client = db();
   const topic = await q.topicBySlug(client, slug);

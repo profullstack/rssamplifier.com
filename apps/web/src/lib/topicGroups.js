@@ -64,7 +64,7 @@ const AUDIO = {
  * enclosure, and writing generally has none. Offering the link anyway would
  * mean advertising a download that turns out to be empty.
  */
-const PLAYABLE_KINDS = new Set(['podcast', 'music', 'live']);
+export const PLAYABLE_KINDS = new Set(['podcast', 'music', 'live']);
 
 /**
  * Every sub-group a topic can be cut into, in the order they are offered.
