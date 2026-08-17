@@ -1560,7 +1560,10 @@ export async function dueFeeds(db, limit = 25) {
     // blog and links to its page is worth two columns the crawl itself is
     // holding the row for anyway. source_kind is what main added, and the
     // crawl still needs it to know what it is fetching.
-    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind
+    // item_count comes along so a crawl that stored nothing can pass the number
+    // straight back instead of paying for a count(*) to be told it is unchanged.
+    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
+                 item_count
           from feeds
           where status <> 'dead' and next_fetch_at <= ?
           order by next_fetch_at asc limit ?`,
