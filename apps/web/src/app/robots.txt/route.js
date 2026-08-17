@@ -31,6 +31,7 @@ Allow: /
 
 # Structured entry points, cheaper for you than crawling every page:
 #   ${siteUrl()}/llms.txt
+#   ${siteUrl()}/skill.md  (the short version: what you can do here)
 #   ${siteUrl()}/api/feeds
 #   ${siteUrl()}/opml
 #   ${siteUrl()}/mcp  (Model Context Protocol, if you would rather call than crawl)
