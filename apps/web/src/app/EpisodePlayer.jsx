@@ -1,4 +1,4 @@
-import { mediaKind } from '../lib/media.js';
+import { isStream, mediaKind } from '../lib/media.js';
 
 /**
  * The episode, playing while you read it.
@@ -53,6 +53,7 @@ export default function EpisodePlayer({
   const kind = given ?? mediaKind({ audio_url: src, audio_type: type });
   const embed = kind === 'youtube' || kind === 'peertube';
   const video = kind === 'video';
+  const stream = isStream(type);
 
   // What the player is looking at. `attached` is the caller saying this file
   // came with an article rather than being one: an mp4 in a tutorial is not an
@@ -100,10 +101,20 @@ export default function EpisodePlayer({
           sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"
         />
       ) : video ? (
-        <video className="episode-video" controls preload="none" playsInline>
-          <source src={src} type={type ?? 'video/mp4'} />
+        // A stream is handed to the element directly and a file is offered as a
+        // typed `<source>`. The distinction is not cosmetic: a browser skips a
+        // source whose type it does not recognise, and no browser recognises
+        // HLS's, so a live channel announced that way never starts.
+        <video
+          className="episode-video"
+          controls
+          preload="none"
+          playsInline
+          src={stream ? src : undefined}
+        >
+          {!stream && <source src={src} type={type ?? 'video/mp4'} />}
           <a href={src} rel="noopener">
-            Download the video
+            {stream ? 'Open the stream' : 'Download the video'}
           </a>
         </video>
       ) : (

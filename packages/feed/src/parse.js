@@ -1,5 +1,8 @@
 import { XMLParser } from 'fast-xml-parser';
 
+import { KIND_BLOG, KIND_PODCAST, KIND_MUSIC, KIND_VIDEO } from './kinds.js';
+import { hasPlaylistHeader, parsePlaylist, playlistExtension } from './playlist.js';
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@',
@@ -39,19 +42,7 @@ function arr(v) {
   return Array.isArray(v) ? v : [v];
 }
 
-/**
- * What a feed is, judged by what it carries.
- *
- * Four categories rather than two, because "has audio attached" and "is a
- * podcast" are not the same claim: a netlabel publishing tracks and a show
- * publishing episodes both attach mp3s, and filing the first under podcasts
- * makes the category mean nothing. Video is its own thing again, and on this
- * web it is mostly YouTube channel feeds.
- */
-export const KIND_BLOG = 'blog';
-export const KIND_PODCAST = 'podcast';
-export const KIND_MUSIC = 'music';
-export const KIND_VIDEO = 'video';
+export { KIND_BLOG, KIND_PODCAST, KIND_MUSIC, KIND_VIDEO };
 
 /** An enclosure or attachment that carries audio, whatever else it says. */
 const AUDIO_TYPE = /^audio\//i;
@@ -556,6 +547,11 @@ export function parseFeed(body, feedUrl = '') {
   const trimmed = body.trim();
   if (trimmed.startsWith('{')) return parseJsonFeed(trimmed);
 
+  // A playlist is a feed in everything but format. Checked before the XML
+  // parser rather than after it, because the plain form of the format is a
+  // list of bare URLs that no parser rejects loudly enough to fall through.
+  if (isPlaylist(trimmed, feedUrl)) return parsePlaylist(trimmed, feedUrl);
+
   let doc;
   try {
     doc = parser.parse(trimmed);
@@ -569,6 +565,22 @@ export function parseFeed(body, feedUrl = '') {
   if (doc?.['rdf:RDF']) return parseRdf(doc['rdf:RDF']);
 
   return null;
+}
+
+/**
+ * Is this document a playlist rather than a feed?
+ *
+ * The header answers on its own. Failing that, the extension answers for a
+ * document that is plainly not markup, which is the plain form of m3u: no
+ * header, no titles, one path per line.
+ *
+ * @param {string} trimmed
+ * @param {string} feedUrl
+ * @returns {boolean}
+ */
+function isPlaylist(trimmed, feedUrl) {
+  if (hasPlaylistHeader(trimmed)) return true;
+  return Boolean(playlistExtension(feedUrl)) && !trimmed.startsWith('<');
 }
 
 /**

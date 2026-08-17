@@ -73,10 +73,9 @@ export const CATEGORIES = {
     noun: 'live channels',
     one: 'live channel',
     title: 'Live',
-    lede: 'Channels that stream live. RSS has no way to say “this was a livestream”, so these are curated — PeerTube and Owncast publish the feeds that make the category possible at all.',
+    lede: 'Channels that stream live — radio stations, television, and everything else going out now rather than published. RSS has no way to say “this is a livestream”, but a playlist does: submit an m3u8 or a station’s pls and it lands here.',
     schemaType: 'BroadcastService',
     item: 'streams',
-    curated: true,
   },
   reel: {
     path: '/reels',

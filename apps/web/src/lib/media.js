@@ -39,6 +39,23 @@ export function mediaKind(post) {
 }
 
 /**
+ * Is this a live stream rather than a file?
+ *
+ * HLS manifests arrive from playlist parsing, where a whole broadcast is stored
+ * as one item playing at the manifest's URL. Worth telling apart from a file
+ * for two reasons: a stream has no length and nothing to download, and its
+ * content type is one no browser will admit to supporting if it is asked in
+ * advance — Safari plays HLS but answers `canPlayType` with an empty string, so
+ * a `<source type>` carrying it is a source the player skips.
+ *
+ * @param {unknown} type
+ * @returns {boolean}
+ */
+export function isStream(type) {
+  return /vnd\.apple\.mpegurl|x-mpegurl|mpegurl/i.test(String(type ?? ''));
+}
+
+/**
  * Is the post something to watch rather than something to read?
  *
  * @param {{ audio_url?: unknown, audio_type?: unknown, url?: unknown }} post

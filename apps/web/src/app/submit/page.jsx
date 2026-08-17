@@ -4,7 +4,8 @@ import Toolbar from '../Toolbar.jsx';
 
 export const metadata = {
   title: 'Submit a blog',
-  description: 'Add a URL, a list of URLs or an OPML file to the directory. No account needed.',
+  description:
+    'Add a URL, a playlist, a list of URLs or an OPML file to the directory. No account needed.',
 };
 
 /**
@@ -22,12 +23,15 @@ export default async function SubmitPage({ searchParams }) {
     <>
       <h1>Submit a blog</h1>
       <p className="lede">
-        Paste a homepage and we will find the feed. No account, no waiting list, no fee.
+        Paste a homepage and we will find the feed. A playlist works too — an m3u, m3u8 or pls is
+        read as a feed of what it lists, and a live stream lands under Live. No account, no waiting
+        list, no fee.
       </p>
 
       {params.error && (
         <p className="notice">
-          We could not find a feed at that address. Check the URL, or paste the feed link directly.
+          We could not find a feed at that address. Check the URL, or paste the feed or playlist
+          link directly.
         </p>
       )}
 
@@ -37,7 +41,7 @@ export default async function SubmitPage({ searchParams }) {
           name="input"
           rows={5}
           defaultValue={shared}
-          placeholder={'example.com\nanotherblog.net/feed.xml'}
+          placeholder={'example.com\nanotherblog.net/feed.xml\nnetlabel.example/album.m3u'}
           aria-label="URLs to submit"
           required
         />

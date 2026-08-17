@@ -21,13 +21,17 @@ export const KINDS = ['blog', 'podcast', 'music', 'video', 'comic', 'live', 'ree
 /**
  * The categories a crawler can work out for itself.
  *
- * `comic`, `live` and `reel` are absent on purpose. A webcomic's feed is a
- * blog with pictures in it as far as any parser is concerned; RSS has no way
- * to say "this entry was a livestream" or "this one is a short", and YouTube's
- * feed marks neither — that needs the platform's own API. Those three only
- * ever arrive from a curated list. See `category_source` in 0013.
+ * `comic` and `reel` are absent on purpose. A webcomic's feed is a blog with
+ * pictures in it as far as any parser is concerned; RSS has no way to say "this
+ * one is a short", and YouTube's feed does not mark one — that needs the
+ * platform's own API. Those two only ever arrive from a curated list. See
+ * `category_source` in 0013.
+ *
+ * `live` was among them until playlists were indexed. RSS still cannot state
+ * it, but HLS can and does: a manifest with no `#EXT-X-ENDLIST` is a
+ * broadcaster saying the stream has not finished. See packages/feed/src/kinds.js.
  */
-export const DERIVED_KINDS = ['blog', 'podcast', 'music', 'video'];
+export const DERIVED_KINDS = ['blog', 'podcast', 'music', 'video', 'live'];
 
 /**
  * Read a caller-supplied kind, rejecting anything that is not one.
