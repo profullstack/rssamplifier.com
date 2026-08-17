@@ -49,10 +49,18 @@ const CLEAR = 'clear';
  *   fetchedLastHour: number,
  *   keywordQueue: number,
  *   candidateQueue: number,
+ *   alertAccounts?: number,
  * }} input
  * @returns {Array<object>}
  */
-export function jobRows({ backlogs, activity, fetchedLastHour, keywordQueue, candidateQueue }) {
+export function jobRows({
+  backlogs,
+  activity,
+  fetchedLastHour,
+  keywordQueue,
+  candidateQueue,
+  alertAccounts = 0,
+}) {
   const seen = (events) => {
     const times = events.map((e) => activity[e]?.lastAt).filter(Boolean).sort();
     return times.length ? String(times[times.length - 1]) : null;
@@ -139,14 +147,22 @@ export function jobRows({ backlogs, activity, fetchedLastHour, keywordQueue, can
       key: 'alerts',
       label: 'Alerts',
       what: 'Tells readers about new posts on the blogs and topics they asked about',
-      // Nothing to count. A backlog here would be "posts published since each
-      // account's watermark", which is a query per account against the largest
-      // table in the database — and the answer is almost always zero. The pass
-      // reports what it sent instead, so this row shows movement rather than a
-      // total, the way the cluster walk above does.
-      backlog: null,
+      // Nothing to count while anybody is subscribed: a real backlog here would
+      // be "posts published since each account's watermark", which is a query
+      // per account against the largest table in the database. So this row
+      // shows movement rather than a total, the way the cluster walk above does.
+      //
+      // Zero when nobody has switched alerts on, and that distinction is the
+      // whole point. The pass logs only when it had somebody to consider, so on
+      // a deployment with no subscribers it writes no lines at all — and a null
+      // backlog with no lines is how this board says *stalled*, its one
+      // unambiguous alarm. Reporting a healthy sender as stalled because nobody
+      // has subscribed yet is exactly the crying wolf the board exists to stop.
+      backlog: alertAccounts > 0 ? null : 0,
       rate: activity.alerts?.amount ?? 0,
-      rateNote: 'posts alerted',
+      // The note says why the row is quiet rather than leaving the reader to
+      // wonder whether something is broken.
+      rateNote: alertAccounts > 0 ? 'posts alerted' : 'nobody has alerts switched on yet',
       events: ['alerts', 'alert-error', 'purged-alerts'],
     },
     {

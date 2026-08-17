@@ -451,6 +451,35 @@ export async function usersWithAlerts(db, limit = 50) {
 }
 
 /**
+ * How many accounts the sender has anything to do for.
+ *
+ * The same predicate as `usersWithAlerts`, counted rather than listed, and it
+ * exists for one reason: /crawlstats cannot otherwise tell a sender that has
+ * stopped from a sender with nobody to send to.
+ *
+ * The pass logs only when it had somebody to consider, so on a deployment where
+ * nobody has switched alerts on it writes nothing at all — which the job board
+ * reads as a worker that has died, and reports as the one unambiguous alarm on
+ * the page. That is a false alarm on a feature that is working perfectly, and
+ * this number is what tells the two apart.
+ *
+ * @param {Client} db
+ * @returns {Promise<number>}
+ */
+export async function alertingAccountCount(db) {
+  const { rows } = await db.execute(
+    `select count(*) as n from users u
+     where exists (select 1 from alert_channels c
+                   where c.user_id = u.id and c.enabled = 1)
+       and (exists (select 1 from follows fo
+                    where fo.user_id = u.id and fo.alerts = 1)
+         or exists (select 1 from topic_follows tf
+                    where tf.user_id = u.id and tf.alerts = 1))`,
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
  * How far through the firehose an account has been told, or null if never.
  *
  * Null is load-bearing: it means "switched alerts on just now", and the sender

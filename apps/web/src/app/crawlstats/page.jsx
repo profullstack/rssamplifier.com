@@ -1,4 +1,4 @@
-import { q, discovery } from '@rssamplifier/db';
+import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import { categoryStats, indexingHistory, GROWTH_DAYS } from '../../lib/crawlstats.js';
@@ -45,6 +45,7 @@ export default async function CrawlStatsPage() {
     logTail,
     backlogs,
     activity,
+    alertAccounts,
   ] = await Promise.all([
     q.crawlStats(client),
     q.failingFeeds(client, 15),
@@ -63,6 +64,10 @@ export default async function CrawlStatsPage() {
     // one thing this page must never give.
     q.jobBacklogs(client),
     q.logActivity(client, 1),
+    // Only to tell a sender with nothing to do from one that has stopped: the
+    // alert pass writes no log line at all when nobody is subscribed, and a
+    // silent job is otherwise indistinguishable from a dead one.
+    alerts.alertingAccountCount(client),
   ]);
 
   const jobs = jobRows({
@@ -71,6 +76,7 @@ export default async function CrawlStatsPage() {
     fetchedLastHour: stats.fetchedLastHour,
     keywordQueue,
     candidateQueue: discoveryQueue,
+    alertAccounts,
   });
 
   // The whole directory's curve is the categories' curves added up, which is

@@ -1,4 +1,4 @@
-import { q, discovery } from '@rssamplifier/db';
+import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { categoryStats, indexingHistory } from '../../../lib/crawlstats.js';
@@ -32,6 +32,7 @@ export async function GET() {
     categories,
     backlogs,
     activity,
+    alertAccounts,
   ] = await Promise.all([
     q.crawlStats(client),
     q.failingFeeds(client, 20),
@@ -42,6 +43,9 @@ export async function GET() {
     categoryStats(),
     q.jobBacklogs(client),
     q.logActivity(client, 1),
+    // See the page: this only tells a sender with nobody to serve from one that
+    // has stopped, which the log alone cannot say.
+    alerts.alertingAccountCount(client),
   ]);
 
   const jobs = jobRows({
@@ -50,6 +54,7 @@ export async function GET() {
     fetchedLastHour: stats.fetchedLastHour,
     keywordQueue: keywordsQueued,
     candidateQueue: sitesToCheck,
+    alertAccounts,
   });
 
   return new Response(

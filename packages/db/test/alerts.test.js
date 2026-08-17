@@ -245,6 +245,23 @@ test('a story is keyed by its cluster, and otherwise by feed and guid', () => {
   );
 });
 
+test('the subscriber count agrees with the list it is a count of', async () => {
+  // /crawlstats uses this to tell a sender with nobody to serve from one that
+  // has died, so the two must never disagree — a count that drifted from the
+  // list would put the board's one alarm on a healthy sender, or hide a dead
+  // one behind a number.
+  const listed = (await al.usersWithAlerts(db, 1_000)).length;
+  assert.equal(await al.alertingAccountCount(db), listed);
+
+  const user = await a.findOrCreateUser(db, `counted-${newId()}@example.com`);
+  const id = await feed(`counted-${newId()}`);
+  await a.follow(db, user.id, id);
+  await al.setFeedAlerts(db, user.id, id, true);
+  await al.addChannel(db, { userId: user.id, kind: 'email', target: 'counted@example.com' });
+
+  assert.equal(await al.alertingAccountCount(db), listed + 1);
+});
+
 test('an account is only a candidate with both a flag and a channel', async () => {
   const user = await a.findOrCreateUser(db, `candidate-${newId()}@example.com`);
   const id = await feed(`candidate-${newId()}`);
