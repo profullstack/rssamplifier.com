@@ -34,6 +34,7 @@ function busy(overrides = {}) {
       alerts: { lines: 30, errors: 0, amount: 48, lastAt: at, ms: 600 },
       ...overrides.activity,
     },
+    alertAccounts: overrides.alertAccounts ?? 4,
     fetchedLastHour: overrides.fetchedLastHour ?? 1_500,
     keywordQueue: overrides.keywordQueue ?? 40,
     candidateQueue: overrides.candidateQueue ?? 900,
@@ -164,9 +165,29 @@ test('a quiet alert pass is idle, not stalled', () => {
   );
   assert.equal(quiet.state, 'idle');
 
-  // And one that has genuinely never run still says so.
-  const absent = find(busy({ activity: { alerts: undefined } }), 'alerts');
-  assert.equal(absent.state, 'stalled');
+  // Subscribers, and no line at all: the sender really has stopped, and this is
+  // the one case that should raise the alarm.
+  const dead = find(busy({ activity: { alerts: undefined } }), 'alerts');
+  assert.equal(dead.state, 'stalled');
+});
+
+test('nobody subscribed is idle, not a dead sender', () => {
+  // The state every deployment is in the day alerts ship, and the one that was
+  // wrong in production for a few minutes: the pass only writes a log line when
+  // it had somebody to consider, so with no subscribers it writes nothing — and
+  // "no lines, uncountable backlog" is how this board says stalled. Reporting a
+  // healthy sender as the page's one unambiguous alarm, on every deployment,
+  // from the moment the feature lands, would have taught its reader to ignore
+  // the word.
+  const fresh = find(busy({ alertAccounts: 0, activity: { alerts: undefined } }), 'alerts');
+  assert.equal(fresh.backlog, 0, 'nothing to do is a real, countable zero');
+  assert.equal(fresh.state, 'idle');
+  assert.match(fresh.rateNote, /nobody has alerts/, 'and the row says why it is quiet');
+
+  // One subscriber is enough to make silence worth alarming about again.
+  const watched = find(busy({ alertAccounts: 1, activity: { alerts: undefined } }), 'alerts');
+  assert.equal(watched.backlog, null);
+  assert.equal(watched.state, 'stalled');
 });
 
 test('every job reports when it last ran, from the log it already writes', () => {
