@@ -48,6 +48,9 @@ export const STATIC_PAGES = [
   { path: '/about', changefreq: 'monthly', priority: '0.5' },
   { path: '/contact', changefreq: 'yearly', priority: '0.4' },
   { path: '/privacy', changefreq: 'yearly', priority: '0.3' },
+  // Monthly rather than yearly like the other legal page: the availability
+  // figures on it are live, so the page genuinely does change.
+  { path: '/terms', changefreq: 'monthly', priority: '0.3' },
 ];
 
 /**

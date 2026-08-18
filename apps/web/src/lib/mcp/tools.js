@@ -4,6 +4,7 @@ import { submitCatalogue, hashIp } from '@rssamplifier/ingest';
 
 import { db, siteUrl } from '../db.js';
 import { readerView } from '../reader.js';
+import { freshness } from '../freshness.js';
 import { clampRawInput } from '../submitted.js';
 import { clip, plainText } from './text.js';
 
@@ -613,6 +614,8 @@ export function describe(tool) {
  * @returns {object}
  */
 function feed(f) {
+  const fresh = freshness(f, f.last_published_at);
+
   return {
     slug: f.slug,
     title: f.title,
@@ -624,6 +627,27 @@ function feed(f) {
     itemCount: f.item_count,
     status: f.status,
     lastSuccessAt: f.last_success_at,
+
+    // Whether this feed is worth trusting, answered rather than implied.
+    //
+    // `lastSuccessAt` was already here and on its own it is not enough: it is a
+    // raw instant, and every caller has to invent the same interpretation of it
+    // — against a schedule it cannot see, since a monthly blog read a week ago
+    // is as current as a news site read an hour ago. Worse, it says nothing at
+    // all about the question that actually bites, which is whether the
+    // publisher is still publishing. Sampling production, 15.8% of active feeds
+    // had published nothing in over two years, and an agent quoting one of them
+    // as current is the silent failure this directory most needs to avoid.
+    //
+    // So the interpretation is made here, once, by the service that knows the
+    // schedule. `freshness` is 'live' | 'dormant' | 'overdue' | 'failing' |
+    // 'unread'; the timestamps stay alongside it so a caller that disagrees
+    // with the judgement can make its own.
+    freshness: fresh.state,
+    lastPublishedAt: fresh.publishedAt,
+    nextCheckAt: fresh.nextCheckAt,
+    freshnessNote: fresh.note,
+
     page: `${siteUrl()}/${f.slug}`,
   };
 }
