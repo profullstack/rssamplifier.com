@@ -3039,3 +3039,134 @@ export async function feedsForSitemapChunk(db, { month, part = 1, chunkSize = 20
   });
   return rows;
 }
+
+/**
+ * What the directory can actually claim about its own reliability.
+ *
+ * Every figure here is measured rather than promised, which is the whole point
+ * of the page it feeds. A published uptime *target* is a claim about the
+ * future that nobody can check; these are claims about the past that anybody
+ * can, and they get stronger as the service does rather than becoming
+ * embarrassing when it does not.
+ *
+ * Four numbers, and what each is honestly evidence of:
+ *
+ *   * **hours the crawler recorded work in**, over the last 30 days. The poller
+ *     writes one `crawl_hourly` row per tick, so an hour with no row is an hour
+ *     it did nothing — a deploy, a crash, or a stall. It is a real availability
+ *     measure for the crawler and it is *not* a measure of whether the website
+ *     answered, which is a different question this database cannot see. The
+ *     page says so rather than letting one stand in for the other.
+ *   * **crawls in the last 24 hours**, and how many of them succeeded. A
+ *     success rate over somebody else's servers is partly a measure of the open
+ *     web rather than of us, which is also worth saying.
+ *   * **the freshness of the directory itself**: how much of it is dormant. At
+ *     the sampled 15.8% this is the most useful single fact a reader can have
+ *     about what they are searching.
+ *   * **the oldest scheduled check**, which bounds the freshness claim: no feed
+ *     waits longer than this, by construction.
+ *
+ * Cheap by construction. The rollup is ~720 tiny rows; the dormancy counts come
+ * off `feeds_last_published_idx` (0030); nothing here touches feed_items, which
+ * is the join 0017 established must never appear on a page.
+ *
+ * @param {Client} db
+ * @param {number} [days]
+ * @returns {Promise<object>}
+ */
+export async function reliability(db, days = 30) {
+  const hours = days * 24;
+  const start = nowIso(-hours * 3_600_000).slice(0, 13);
+  const dayAgo = nowIso(-86_400_000).slice(0, 13);
+  const yearAgo = nowIso(-365 * 86_400_000);
+
+  const [recorded, lastDay, states, dormant] = await Promise.all([
+    // `min(hour)` rides along because without it this figure lies in the one
+    // direction that matters. The rollup is younger than the window — it began
+    // recording when 0017 shipped — so "30 hours with work out of 720" reads as
+    // 4% availability when the truth is that the other 690 hours have no
+    // records at all, not an outage. The window is therefore bounded by the
+    // oldest row rather than by the calendar, and a hand-backfilled row
+    // (`ticks = 0`, see 0017) is not evidence of the crawler running either.
+    db.execute({
+      sql: `select count(*) as n, min(hour) as oldest
+            from crawl_hourly where hour >= ? and ticks > 0`,
+      args: [start],
+    }),
+    db.execute({
+      sql: `select coalesce(sum(fetched), 0) as fetched, coalesce(sum(succeeded), 0) as succeeded
+            from crawl_hourly where hour >= ?`,
+      args: [dayAgo],
+    }),
+    db.execute('select status, count(*) as n from feeds group by status'),
+    // Split three ways rather than two: a feed we have not re-crawled since
+    // 0030 shipped has no last_published_at, and counting those as "not
+    // dormant" would overstate how alive the directory is. Unknown is its own
+    // answer and shrinks on its own as the crawler comes round.
+    //
+    // Caught rather than allowed to throw, because the poller owns migration
+    // and the web service does not wait for it: between a deploy going out and
+    // the crawler booting, `last_published_at` does not exist yet and this
+    // statement is a hard error. A reliability page that 500s during a deploy
+    // is a bad joke, so the dormancy figures go missing for a few minutes
+    // instead and the page says it does not know them.
+    db
+      .execute({
+        sql: `select
+                (select count(*) from feeds
+                  where last_published_at is not null and last_published_at < ?) as dormant,
+                (select count(*) from feeds
+                  where last_published_at is not null and last_published_at >= ?) as publishing,
+                (select min(next_fetch_at) from feeds where status <> 'dead') as soonest,
+                (select max(next_fetch_at) from feeds where status <> 'dead') as furthest`,
+        args: [yearAgo, yearAgo],
+      })
+      .catch(() => ({ rows: [] })),
+  ]);
+
+  const byStatus = new Map(states.rows.map((r) => [String(r.status), Number(r.n ?? 0)]));
+  const total = [...byStatus.values()].reduce((a, b) => a + b, 0);
+  // Absent entirely when the read above was refused, which is different from
+  // "we looked and the answer is zero" — hence null rather than 0 below.
+  const d = dormant.rows[0] ?? null;
+  const known = d === null ? null : Number(d.dormant ?? 0) + Number(d.publishing ?? 0);
+
+  const fetched = Number(lastDay.rows[0]?.fetched ?? 0);
+  const succeeded = Number(lastDay.rows[0]?.succeeded ?? 0);
+
+  // How far back the evidence actually goes. Whichever is shorter: the window
+  // asked for, or the time since the first hour we have a record of.
+  const oldest = recorded.rows[0]?.oldest ? Date.parse(`${recorded.rows[0].oldest}:00:00.000Z`) : null;
+  const observed = oldest === null
+    ? 0
+    : Math.min(hours, Math.max(1, Math.ceil((Date.now() - oldest) / 3_600_000)));
+
+  return {
+    windowDays: days,
+    // Hours the crawler recorded any work in, out of the hours we have been
+    // watching — not out of the calendar window, which the rollup is younger
+    // than. Capped at the observed window: a rollup row for an hour that has
+    // not finished yet is still an hour it worked in.
+    hoursRecorded: Math.min(Number(recorded.rows[0]?.n ?? 0), observed),
+    hoursInWindow: observed,
+    // Stated separately so the page can say "we have only been keeping this
+    // record for two days" rather than quietly implying a month of history.
+    hoursRequested: hours,
+    fetchedLastDay: fetched,
+    succeededLastDay: succeeded,
+    successRate: fetched > 0 ? succeeded / fetched : null,
+    feeds: total,
+    active: byStatus.get('active') ?? 0,
+    pending: byStatus.get('pending') ?? 0,
+    errored: byStatus.get('error') ?? 0,
+    // Null, not zero, when the column is not there yet: "we do not know how
+    // much of the directory is dormant" and "none of it is dormant" are
+    // opposite claims and the page has to be able to tell them apart.
+    dormant: d === null ? null : Number(d.dormant ?? 0),
+    publishing: d === null ? null : Number(d.publishing ?? 0),
+    freshnessUnknown: known === null ? null : Math.max(0, total - known),
+    soonestCheck: d?.soonest ? String(d.soonest) : null,
+    furthestCheck: d?.furthest ? String(d.furthest) : null,
+    generatedAt: nowIso(),
+  };
+}
