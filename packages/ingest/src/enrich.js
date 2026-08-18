@@ -261,7 +261,17 @@ export async function enrichFeedAuthors(db, feed, opts = {}) {
 
       const identity = identityFromHtml(page.body, page.url || target);
       collect(identity.profiles);
-      credits.push(...identity.credits);
+
+      // The page's bio belongs to the people that page credits. It is attached
+      // here rather than inside the extractor because only the caller knows
+      // that these credits and this bio came off the same page -- and a bio
+      // from somebody's homepage must not be pinned to a name found later on a
+      // different one. Only filled where a credit has none of its own, so a
+      // per-person h-card note always beats the page-level summary.
+      for (const found of identity.credits) {
+        if (!found.bio && identity.bio) found.bio = identity.bio;
+        credits.push(found);
+      }
 
       // The homepage named somebody and linked them somewhere: that is the
       // whole answer, and the /about page would only repeat it.
