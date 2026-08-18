@@ -1,6 +1,10 @@
 export { slugify, isReserved, uniqueSlug } from './src/slug.js';
 export { parseOpml, buildOpml, opmlHead, opmlOutline, opmlFoot } from './src/opml.js';
 export {
+  AD_EVERY,
+  AD_MAX,
+  adSlotsFor,
+  interleaveAds,
   SYNDICATION_FORMATS,
   buildSyndication,
   buildRss,

@@ -1,7 +1,13 @@
 import { accounts } from '@rssamplifier/db';
-import { SYNDICATION_FORMATS, buildSyndication } from '@rssamplifier/feed';
+import {
+  SYNDICATION_FORMATS,
+  adSlotsFor,
+  buildSyndication,
+  interleaveAds,
+} from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../../../lib/db.js';
+import { fetchFeedAds } from '../../../../../lib/feedAds.js';
 import { RIVER_LIMIT, following, followingFeedUrl } from '../../../../../lib/following.js';
 
 export const dynamic = 'force-dynamic';
@@ -58,6 +64,23 @@ export async function GET(req, { params }) {
 
   const origin = siteUrl();
 
+  const rows = items.map((row) => ({
+    ...row,
+    // The publisher's guid, the same identity every other feed on the site
+    // uses, so a re-crawl that renumbers our rows does not make a reader show
+    // the same post twice.
+    id: String(row.guid ?? row.url ?? ''),
+  }));
+
+  // Sponsored items at the same one-in-ten rate as the topic feeds. The ad is
+  // not personalised and carries nothing about this account: the request to the
+  // ad network names the slot and nothing else, and the surface tag is what
+  // distinguishes this river from a topic's in the advertiser's own analytics.
+  // That matters here in a way it does not elsewhere — this is the one feed on
+  // the site that belongs to a particular person.
+  const wanted = adSlotsFor(rows.length);
+  const ads = wanted > 0 ? await fetchFeedAds(wanted, { src: 'following' }) : [];
+
   const body = buildSyndication(
     format,
     {
@@ -69,13 +92,7 @@ export async function GET(req, { params }) {
       link: `${origin}/following`,
       selfUrl: followingFeedUrl(origin, token, format),
     },
-    items.map((row) => ({
-      ...row,
-      // The publisher's guid, the same identity every other feed on the site
-      // uses, so a re-crawl that renumbers our rows does not make a reader show
-      // the same post twice.
-      id: String(row.guid ?? row.url ?? ''),
-    })),
+    interleaveAds(rows, ads),
   );
 
   return new Response(body, {

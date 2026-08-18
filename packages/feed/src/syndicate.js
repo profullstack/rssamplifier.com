@@ -100,7 +100,111 @@ export function buildSyndication(format, channel, items) {
  * @property {string} [feed_title] the publication it came from
  * @property {string} [feed_slug]
  * @property {string} [feed_url] that publication's own feed
+ * @property {boolean} [sponsored] a paid item rather than something a feed published
+ * @property {string|null} [content_html] a ready-made HTML body, used in place
+ *   of `summary`. Only sponsored items carry one — a crawled post's body is
+ *   somebody else's HTML and is deliberately reduced to a plain-text summary.
  */
+
+/**
+ * How often a sponsored item is placed, and how many a document may carry.
+ *
+ * One in ten is the ratio: frequent enough to be worth selling, rare enough
+ * that a reader scrolling a river meets nine real posts first. The cap matters
+ * more than it looks — feeds here go up to 200 items, and at one in ten with no
+ * ceiling a long topic feed would carry twenty ads, which is not a river with
+ * advertising in it, it is an advertising feed.
+ */
+export const AD_EVERY = 10;
+export const AD_MAX = 3;
+
+/**
+ * How many sponsored items a list of this length will actually take.
+ *
+ * Exported because the caller has to decide how many ads to *fetch* before it
+ * can interleave them, and every fetched ad costs an impression the moment the
+ * ad network records it. If the two disagreed, the difference would be metered
+ * against an advertiser and then never published — the caller would pay for
+ * reach nobody got. So the count lives here, next to the placement rule it has
+ * to match, rather than being re-derived at each call site.
+ *
+ * @param {number} total how many real items the document will carry
+ * @param {{ every?: number, max?: number }} [opts]
+ * @returns {number}
+ */
+export function adSlotsFor(total, { every = AD_EVERY, max = AD_MAX } = {}) {
+  const n = Number(total) || 0;
+  if (n < every) return 0;
+  // Boundaries strictly inside the list: the last one is dropped when it would
+  // land at the end, for the same reason interleaveAds refuses to trail.
+  const boundaries = Math.ceil(n / every) - 1;
+  return Math.max(0, Math.min(max, boundaries));
+}
+
+/**
+ * Place sponsored items among real ones.
+ *
+ * Pure and index-based rather than date-based on purpose: the caller has
+ * already sorted the river, and an ad carrying today's date would otherwise
+ * sort itself to the top of every feed regardless of where it was meant to sit.
+ *
+ * A list shorter than one full interval gets nothing. A six-post feed cannot
+ * carry an ad without the ad becoming the feed, and the same rule already
+ * governs the web units (see apps/web/src/lib/ads.js).
+ *
+ * @param {Item[]} items the real posts, in the order they should appear
+ * @param {Item[]} ads sponsored items, already in Item shape
+ * @param {{ every?: number, max?: number }} [opts]
+ * @returns {Item[]} one list, ads interleaved
+ */
+export function interleaveAds(items, ads, { every = AD_EVERY, max = AD_MAX } = {}) {
+  if (!Array.isArray(ads) || ads.length === 0) return items;
+  if (items.length < every) return items;
+
+  const out = [];
+  let placed = 0;
+
+  for (let i = 0; i < items.length; i += 1) {
+    out.push(items[i]);
+    // Never trailing: an ad as the last entry of a feed reads as the feed
+    // having ended in an advertisement, and costs the slot nothing to skip.
+    const boundary = (i + 1) % every === 0 && i + 1 < items.length;
+    if (boundary && placed < max && placed < ads.length) {
+      out.push(ads[placed]);
+      placed += 1;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Wrap a body in CDATA.
+ *
+ * The one sequence a CDATA section cannot contain is its own terminator, and
+ * there is no escape for it — the section has to be closed and reopened around
+ * the `>`. Only sponsored bodies take this path and ours never produce `]]>`,
+ * but the copy inside them is written by an advertiser, so this is a
+ * correctness guard rather than a theoretical one.
+ *
+ * @param {unknown} html
+ * @returns {string}
+ */
+function cdata(html) {
+  const safe = String(html ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+  return `<![CDATA[${safe.replace(/]]>/g, ']]]]><![CDATA[>')}]]>`;
+}
+
+/**
+ * The disclosure label carried on a sponsored item.
+ *
+ * A constant rather than a per-item field: a reader filtering on `<category>`
+ * needs one term to filter on, and letting an advertiser choose the wording
+ * their own disclosure appears under defeats the point of having one.
+ */
+const SPONSORED = 'Sponsored';
 
 // --------------------------------------------------------------------- RSS
 
@@ -133,7 +237,15 @@ export function buildRss(channel, items) {
 
       if (item.url) parts.push(`      <link>${esc(item.url)}</link>`);
       if (item.published_at) parts.push(`      <pubDate>${esc(rfc822(item.published_at))}</pubDate>`);
-      if (item.summary) parts.push(`      <description>${esc(item.summary)}</description>`);
+      // A sponsored item brings its own HTML body and has to be labelled where
+      // a reader will actually see it: <category> is the machine-readable half,
+      // and the title it arrived with already carries the human half.
+      if (item.sponsored) parts.push(`      <category>${esc(SPONSORED)}</category>`);
+      if (item.content_html) {
+        parts.push(`      <description>${cdata(item.content_html)}</description>`);
+      } else if (item.summary) {
+        parts.push(`      <description>${esc(item.summary)}</description>`);
+      }
       // dc:creator rather than <author>, which RSS defines as an email address.
       // Almost nothing publishes one, and readers show dc:creator anyway.
       if (item.author) parts.push(`      <dc:creator>${esc(item.author)}</dc:creator>`);
@@ -210,7 +322,15 @@ export function buildAtom(channel, items) {
 
       if (item.published_at) parts.push(`    <published>${esc(item.published_at)}</published>`);
       if (item.url) parts.push(`    <link rel="alternate" type="text/html" href="${esc(item.url)}" />`);
-      if (item.summary) parts.push(`    <summary type="text">${esc(item.summary)}</summary>`);
+      if (item.sponsored) {
+        parts.push(`    <category term="sponsored" label="${esc(SPONSORED)}" />`);
+        parts.push(`    <rights>${esc(SPONSORED)}</rights>`);
+      }
+      if (item.content_html) {
+        parts.push(`    <content type="html">${cdata(item.content_html)}</content>`);
+      } else if (item.summary) {
+        parts.push(`    <summary type="text">${esc(item.summary)}</summary>`);
+      }
       if (item.author) parts.push(`    <author><name>${esc(item.author)}</name></author>`);
       if (item.feed_title) parts.push(`    <source><title>${esc(item.feed_title)}</title></source>`);
       // Atom has no image element either, and the same Media RSS namespace is
@@ -270,6 +390,14 @@ export function buildJsonFeed(channel, items) {
 
       if (item.url) out.url = item.url;
       if (item.summary) out.summary = item.summary;
+      if (item.content_html) out.content_html = item.content_html;
+      // JSON Feed has no notion of an ad, so the disclosure goes in both the
+      // human field readers display and an extension field an agent can branch
+      // on. The `_` prefix is the spec's own marker for "this is ours".
+      if (item.sponsored) {
+        out.tags = [SPONSORED];
+        out._crawlproof = { sponsored: true, label: SPONSORED };
+      }
       if (item.image_url) out.image = item.image_url;
       if (item.published_at) out.date_published = item.published_at;
       if (item.author) out.authors = [{ name: item.author }];
