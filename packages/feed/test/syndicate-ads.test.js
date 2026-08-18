@@ -78,6 +78,77 @@ test('adSlotsFor predicts exactly what interleaveAds will place', () => {
   }
 });
 
+test('an ad is dated to sort after the post it follows, not above the feed', () => {
+  // The bug this exists to prevent: ads dated "start of today" while the newest
+  // post in the river is a day older, so every reader -- which orders by date,
+  // not by document position -- floated all three above every real post and
+  // showed them as a block of adverts at the top of the feed.
+  const dated = Array.from({ length: 30 }, (_, i) => ({
+    ...post(i + 1),
+    published_at: new Date(Date.UTC(2026, 7, 17 - i, 12, 0, 0)).toISOString(),
+  }));
+  const ads = [0, 1, 2].map((i) => ({ ...ad, id: `ad-${i}`, published_at: '2026-08-18T00:00:00.000Z' }));
+
+  const out = interleaveAds(dated, ads);
+  const placed = out.filter((i) => i.sponsored);
+  assert.equal(placed.length, 2);
+
+  // Each ad is strictly older than the post before it and strictly newer than
+  // the post after it, so document order and reader order agree.
+  for (const a of placed) {
+    const at = out.indexOf(a);
+    assert.ok(
+      new Date(a.published_at) < new Date(out[at - 1].published_at),
+      'ad must sort below the post it follows',
+    );
+    assert.ok(
+      new Date(a.published_at) > new Date(out[at + 1].published_at),
+      'ad must sort above the post after it',
+    );
+  }
+
+  // And none of them outranks the newest real post.
+  const newestPost = out.find((i) => !i.sponsored);
+  for (const a of placed) {
+    assert.ok(new Date(a.published_at) < new Date(newestPost.published_at));
+  }
+
+  // Sorting the document the way a reader does must not move anything.
+  const bySortedDate = [...out].sort(
+    (x, y) => new Date(y.published_at) - new Date(x.published_at),
+  );
+  assert.deepEqual(bySortedDate.map((i) => i.id), out.map((i) => i.id));
+});
+
+test('two ads in one feed never share a timestamp', () => {
+  // Identical dates are what made them arrive as one clump rather than spread
+  // through the river.
+  const dated = Array.from({ length: 30 }, (_, i) => ({
+    ...post(i + 1),
+    published_at: new Date(Date.UTC(2026, 7, 17 - i, 12, 0, 0)).toISOString(),
+  }));
+  const out = interleaveAds(dated, [0, 1, 2].map((i) => ({ ...ad, id: `ad-${i}` })));
+  const stamps = out.filter((i) => i.sponsored).map((i) => i.published_at);
+  assert.equal(new Set(stamps).size, stamps.length);
+});
+
+test('an undated neighbour leaves the ad dated as it arrived', () => {
+  // Plenty of rows genuinely have no date; inventing one for the neighbour
+  // would be worse than leaving the ad where it was.
+  const undated = Array.from({ length: 20 }, (_, i) => ({ ...post(i + 1), published_at: null }));
+  const out = interleaveAds(undated, [ad]);
+  assert.equal(out.find((i) => i.sponsored).published_at, ad.published_at);
+});
+
+test('re-dating does not touch the identity a reader dedupes on', () => {
+  const dated = Array.from({ length: 20 }, (_, i) => ({
+    ...post(i + 1),
+    published_at: new Date(Date.UTC(2026, 7, 17 - i, 12, 0, 0)).toISOString(),
+  }));
+  const out = interleaveAds(dated, [ad]);
+  assert.equal(out.find((i) => i.sponsored).id, ad.id);
+});
+
 test('interleaveAds leaves a short list alone', () => {
   // Nine posts cannot carry an ad without the ad becoming the feed.
   const short = posts(AD_EVERY - 1);
