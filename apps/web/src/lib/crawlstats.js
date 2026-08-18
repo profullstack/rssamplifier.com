@@ -71,13 +71,53 @@ export async function indexingHistory() {
  * @returns {Promise<Awaited<ReturnType<typeof q.categoryStats>>>}
  */
 export async function categoryStats() {
-  if (categoryCache && Date.now() - categoryCache.at < CATEGORY_TTL_MS) return categoryCache.value;
+  const fresh = categoryCache && Date.now() - categoryCache.at < CATEGORY_TTL_MS;
+  if (fresh) return categoryCache.value;
 
+  // Expired but present: hand back the old answer and refresh behind it.
+  //
+  // This read is the slowest thing left on the page — 6.1 seconds against
+  // production, because it wants five columns per feed (category, status,
+  // created_at, last_success_at, item_count) and three of them are rewritten on
+  // every crawl, so an index wide enough to cover it would cost more on the
+  // write path than the read is worth. A plain TTL therefore does not make the
+  // page fast, it makes one reader in every five minutes wait six seconds for a
+  // breakdown that was already almost right.
+  //
+  // Serving stale while revalidating is the honest trade for this particular
+  // number: it is a shape-of-the-directory figure that moves at the speed of
+  // the crawler finding new blogs, so five minutes and five minutes plus six
+  // seconds are the same answer.
+  if (categoryCache) {
+    if (!categoryRefreshing) {
+      categoryRefreshing = true;
+      refreshCategories().finally(() => {
+        categoryRefreshing = false;
+      });
+    }
+    return categoryCache.value;
+  }
+
+  // Nothing cached at all — the first request after a deploy has to wait.
+  return (await refreshCategories()) ?? { total: 0, days: [], categories: [] };
+}
+
+/** Guards against a slow refresh being started once per concurrent request. */
+let categoryRefreshing = false;
+
+/**
+ * Re-read the breakdown and store it, returning null rather than throwing.
+ *
+ * @returns {Promise<Awaited<ReturnType<typeof q.categoryStats>>|null>}
+ */
+async function refreshCategories() {
   try {
     const value = await q.categoryStats(db(), GROWTH_DAYS);
     categoryCache = { at: Date.now(), value };
     return value;
   } catch {
-    return { total: 0, days: [], categories: [] };
+    // A failed refresh leaves the previous answer in place and is retried on
+    // the next request, which is the whole point of keeping the old value.
+    return null;
   }
 }
