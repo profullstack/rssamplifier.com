@@ -106,6 +106,60 @@ test('a re-crawl fills in the thumbnail a post was stored without', async () => 
   assert.equal(again.image_url, 'https://test.example/hero.jpg');
 });
 
+test('a re-crawl that offers nothing new writes no rows at all', async () => {
+  // The guard on the conflict clause, and the number it exists to protect.
+  //
+  // Every crawl re-offers the publisher's whole document, so the DO UPDATE
+  // fires once per item the feed still lists. Until the WHERE was added it
+  // rewrote each of those rows to assign the values they already held: with
+  // ~62k active feeds carrying ~250 items each, one pass over the directory was
+  // millions of row-writes that changed nothing, against a Turso account that
+  // had reached 286% of its rows-written quota.
+  //
+  // Measured with total_changes(), which counts rows the connection has
+  // actually written -- the only way to tell "updated to the same value" from
+  // "not updated", since both leave identical rows behind.
+  const feed = await q.insertFeed(db, {
+    slug: 'guard-subject',
+    feed_url: 'https://guard.example/feed.xml',
+    site_url: 'https://guard.example/',
+    title: 'Guard',
+    kind: 'blog',
+    status: 'active',
+  });
+  const id = String(feed.id);
+
+  const items = [
+    { guid: 'a', title: 'First post', imageUrl: 'https://guard.example/a.jpg' },
+    { guid: 'b', title: 'Second post', audio: { url: 'https://guard.example/b.mp3' } },
+  ];
+
+  await q.upsertItems(db, id, items);
+
+  const changes = async () => Number((await db.execute('select total_changes() as n')).rows[0].n);
+
+  // The same document again, which is what every crawl of a dormant feed sees.
+  const before = await changes();
+  const offered = await q.upsertItems(db, id, items);
+  const written = (await changes()) - before;
+
+  assert.equal(offered, 2, 'both items are still offered to the database');
+  assert.equal(written, 0, 'and neither is rewritten, because neither changed');
+
+  // The healing path must still work: a crawl that genuinely fills in a gap
+  // has to get through the guard, or the image and audio backfills stop.
+  const healBefore = await changes();
+  await q.upsertItems(db, id, [
+    { guid: 'a', title: 'First post', imageUrl: 'https://guard.example/a.jpg' },
+    { guid: 'b', title: 'Second post', audio: { url: 'https://guard.example/b.mp3' },
+      imageUrl: 'https://guard.example/b.jpg' },
+  ]);
+  assert.ok((await changes()) - healBefore > 0, 'a real change is still written');
+
+  const stored = await q.itemsForFeed(db, id, 200);
+  assert.equal(stored.find((r) => r.guid === 'b').image_url, 'https://guard.example/b.jpg');
+});
+
 test('the jobs board separates the queue that is meant to be deep from the one that is not', async () => {
   const feed = await q.insertFeed(db, {
     slug: 'jobs-subject',
