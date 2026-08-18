@@ -399,7 +399,10 @@ export async function authorBySlug(db, slug) {
   const [author] = await withLinks(db, /** @type {any} */ (rows));
 
   const feeds = await db.execute({
-    sql: `select f.slug, f.title, f.site_url, f.image_url, f.kind, f.description,
+    // `f.id` rides along so the caller can ask what these feeds published
+    // without a second lookup -- see `postsByAuthor`, which is bounded by
+    // exactly these ids rather than searching feed_items for an author.
+    sql: `select f.id, f.slug, f.title, f.site_url, f.image_url, f.kind, f.description,
                  fa.role, f.item_count
             from feed_authors fa
             join feeds f on f.id = fa.feed_id
@@ -764,4 +767,45 @@ export function feedLinkStatements(feedId, links) {
         nowIso(),
       ],
     }));
+}
+
+/**
+ * What one person has published lately, across every feed credited to them.
+ *
+ * Bounded by the author's own feeds rather than searched for, which is the
+ * whole reason this is safe to put on a page. The obvious spelling joins
+ * feed_items to feeds to feed_authors, and 0017 established what that costs
+ * here: a feed_items-to-feeds aggregate measured **215 seconds** against
+ * production. This takes the handful of feed ids the caller already has —
+ * an author writes one or two blogs, not thousands — and reads them straight
+ * off `feed_items_feed_pub_idx`, which is the index the feed page itself uses.
+ *
+ * Capped at a small number of feeds for the same reason. A person credited on
+ * hundreds of feeds is a mis-attribution rather than a prolific writer, and the
+ * page should degrade to showing some of their work rather than to a query that
+ * takes a minute.
+ *
+ * @param {Client} db
+ * @param {string[]} feedIds
+ * @param {number} [limit] posts
+ * @returns {Promise<object[]>}
+ */
+export async function postsByAuthor(db, feedIds, limit = 12) {
+  const ids = (feedIds ?? []).map((id) => String(id)).filter(Boolean).slice(0, 20);
+  if (ids.length === 0) return [];
+
+  const marks = ids.map(() => '?').join(',');
+  const { rows } = await db.execute({
+    sql: `select i.guid, i.title, i.url, i.published_at, i.image_url,
+                 i.audio_url, i.audio_type,
+                 f.slug as feed_slug, f.title as feed_title, f.category
+          from feed_items i
+          join feeds f on f.id = i.feed_id
+          where i.feed_id in (${marks})
+          order by i.published_at desc nulls last, i.created_at desc
+          limit ?`,
+    args: [...ids, limit],
+  });
+
+  return rows;
 }
