@@ -199,20 +199,13 @@ export default function RootLayout({ children }) {
                 blocking round trip in front of the first paint. Width and height
                 are the intrinsic pixels, so the strip reserves its space before
                 the file lands and the nav below it never jumps — which means
-                they have to be rechecked whenever the asset is recut, and both
-                variants have to agree on them, since only one <img> carries
-                them however the <picture> below resolves. */}
+                they have to be rechecked whenever the asset is recut. */}
             <a className="wordmark" href="/">
-              {/* Two files rather than one, because the logo's "RSS" half and
-                  the megaphone are near-black and disappear into the dark
-                  palette. <picture> rather than a CSS filter so each version
-                  keeps its own colour, and rather than two <img>s so only the
-                  matching one is ever fetched. The alt lives on the <img>, which
-                  is the element that actually renders either way. */}
-              <picture>
-                <source srcSet="/logo-dark.png" media="(prefers-color-scheme: dark)" />
-                <img src="/logo.png" alt="RSS Amplifier" width="1256" height="192" />
-              </picture>
+              {/* One asset for both palettes. The recut wordmark carries its own
+                  contrast, so there is no dark variant to swap in and no
+                  <picture> wrapper to resolve — which also means nothing here
+                  needs rechecking when the theme changes. */}
+              <img src="/logo.png" alt="RSS Amplifier" width="1256" height="192" />
             </a>
 
             {/* A checkbox rather than a button, so the menu opens with no
