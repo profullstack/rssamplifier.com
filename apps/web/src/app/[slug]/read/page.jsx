@@ -217,7 +217,7 @@ export default async function ReaderPage({ params, searchParams }) {
   // Whether the media is the post or a file attached to one. Judged on what the
   // feed shipped rather than on what is being rendered, so the answer does not
   // change when a reader asks for a translation.
-  const episode = isEpisode(post, source?.content_html ?? null, source?.content_chars ?? null);
+  const episode = isEpisode(post, source?.content_html ?? null);
 
   // The article we read off a page that refused to be framed — used only when
   // there is no translation to show in its place, since a translated body is

@@ -81,21 +81,13 @@ export async function saveTranslation(db, row) {
  * itemsForFeed() does not carry everything the translator wants, and the reader
  * page has already narrowed to one post by the time it asks.
  *
- * `content_html` is null for everything stored after 0031 -- the body is no
- * longer kept at crawl time, and the reader gets one from `item_extracts`
- * instead. It is still selected because rows predating that change do carry
- * theirs, and a body already in hand beats a fetch. Treat it as "sometimes
- * there" rather than as the source of truth.
- *
- * `content_chars` is how long that body was, and outlives it: see 0031.
- *
  * @param {Client} db
  * @param {string} itemId
- * @returns {Promise<{ id: string, title: string, summary: string|null, content_html: string|null, content_chars: number|null }|null>}
+ * @returns {Promise<{ id: string, title: string, summary: string|null, content_html: string|null }|null>}
  */
 export async function itemText(db, itemId) {
   const { rows } = await db.execute({
-    sql: 'select id, title, summary, content_html, content_chars from feed_items where id = ? limit 1',
+    sql: 'select id, title, summary, content_html from feed_items where id = ? limit 1',
     args: [itemId],
   });
   return /** @type {any} */ (rows[0]) ?? null;
