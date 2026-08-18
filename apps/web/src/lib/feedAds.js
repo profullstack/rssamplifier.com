@@ -86,9 +86,14 @@ export async function fetchFeedAds(count, { src = 'feed' } = {}) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.items;
 
+  // style=card, not the default single line. These items sit between real blog
+  // posts that each have a headline, a picture and a few paragraphs, and a bare
+  // sponsored line next to them does not read as restrained — it reads as
+  // broken, and gets scrolled past. The card carries the advertiser's own
+  // artwork, headline, body and call to action.
   const url =
     `${CRAWLPROOF}/api/ads/feed?slot=${encodeURIComponent(AD_SLOT)}` +
-    `&as=fields&n=${want}&src=${encodeURIComponent(src)}`;
+    `&as=fields&style=card&n=${want}&src=${encodeURIComponent(src)}`;
 
   let items = [];
 
@@ -157,9 +162,16 @@ function toItem(ad) {
     title,
     summary: typeof ad.body === 'string' && ad.body ? ad.body : null,
     content_html: typeof ad.html === 'string' && ad.html ? ad.html : null,
+    // A starting date only. interleaveAds overwrites it with one derived from
+    // the post the ad ends up following, because readers order by date and this
+    // one would otherwise float the ad to the top of the river.
     published_at: isoOrNull(ad.publishedAt),
     author: null,
-    image_url: null,
+    // The advertiser's artwork, carried the same way a crawled post's picture
+    // is. It is already inside content_html, but a great many readers render
+    // only the thumbnail in a list view, and an item with no picture beside
+    // items that all have one is the one that looks like filler.
+    image_url: typeof ad.imageUrl === 'string' && ad.imageUrl ? ad.imageUrl : null,
     sponsored: true,
   };
 }

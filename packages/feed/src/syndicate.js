@@ -144,9 +144,26 @@ export function adSlotsFor(total, { every = AD_EVERY, max = AD_MAX } = {}) {
 /**
  * Place sponsored items among real ones.
  *
- * Pure and index-based rather than date-based on purpose: the caller has
- * already sorted the river, and an ad carrying today's date would otherwise
- * sort itself to the top of every feed regardless of where it was meant to sit.
+ * Position in the document is only half the job, and the half that does not
+ * matter. **Readers sort by date**, so where an ad *sits* in the XML is
+ * irrelevant next to what date it carries — and an ad dated "now" floats to the
+ * top of the river no matter which index it was written at.
+ *
+ * That is not hypothetical. The first version of this shipped ads dated to the
+ * start of the current UTC day, which is *newer than most of the feed*: the
+ * directory is a river of other people's blogs and the newest post is routinely
+ * a day or more old. All three ads therefore sorted above every real post, and
+ * because they shared one timestamp they arrived as a block of three
+ * advertisements at the top of the feed. Precisely the thing nobody opens.
+ *
+ * So each ad is re-dated to sit just behind the post it follows — one second
+ * older, which is enough to order it and small enough that it reads as
+ * contemporary with its neighbours. Document order and reader order then agree,
+ * and the ads are spread through the river instead of stacked on top of it.
+ *
+ * Re-dating is safe because identity is the guid, not the date: a reader that
+ * has already stored the item keeps whatever date it first saw, and one that
+ * has not gets an item that sorts where we intended.
  *
  * A list shorter than one full interval gets nothing. A six-post feed cannot
  * carry an ad without the ad becoming the feed, and the same rule already
@@ -170,12 +187,30 @@ export function interleaveAds(items, ads, { every = AD_EVERY, max = AD_MAX } = {
     // having ended in an advertisement, and costs the slot nothing to skip.
     const boundary = (i + 1) % every === 0 && i + 1 < items.length;
     if (boundary && placed < max && placed < ads.length) {
-      out.push(ads[placed]);
+      out.push(datedAfter(ads[placed], items[i]));
       placed += 1;
     }
   }
 
   return out;
+}
+
+/**
+ * An ad re-dated to sort immediately after the post it follows.
+ *
+ * Falls back to the ad's own date when the preceding post has none — a great
+ * many rows genuinely do not (an item parsed out of a playlist has no date), and
+ * inventing one for the neighbour would be worse than leaving the ad where it
+ * was.
+ *
+ * @param {Item} ad
+ * @param {Item} previous
+ * @returns {Item}
+ */
+function datedAfter(ad, previous) {
+  const at = new Date(String(previous?.published_at ?? ''));
+  if (Number.isNaN(at.getTime())) return ad;
+  return { ...ad, published_at: new Date(at.getTime() - 1000).toISOString() };
 }
 
 /**
