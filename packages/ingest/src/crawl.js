@@ -1,5 +1,5 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
-import { q } from '@rssamplifier/db';
+import { q, authors } from '@rssamplifier/db';
 
 import { storeCredits } from './enrich.js';
 
@@ -119,24 +119,19 @@ export async function crawlFeed(db, feed, opts = {}) {
     return { ok: false, newItems: 0, error: resolved.error };
   }
 
-  // `upsertItems` reports how many items the document *offered*, not how many
-  // were stored — every crawl re-offers the whole feed and the conflict clause
-  // quietly updates the rows that already existed. Taking that as "new items"
-  // is the bug this line fixes, and it was an expensive one: `sent` was never
-  // zero, so `nextIntervalMinutes` always returned the floor and **every feed
-  // in the directory was re-crawled hourly for ever**. The backoff ladder that
-  // is supposed to let a quiet blog drift out to a day had never once engaged.
-  //
-  // The honest count is the difference the crawl made to the stored total. Both
-  // halves are already in hand — `item_count` rides along on the due row and the
-  // total has to be recounted anyway — so this costs nothing.
-  // One write transaction for the items *and* the feed row, and no `count(*)`
+  // One write transaction for the items *and* the feed row, with no `count(*)`
   // round trip between them — see `storeCrawl`. Against this database an empty
   // write transaction measured 29–118 seconds while a read measured 100ms, so
   // the only number that moves the crawler is how many write transactions a
-  // feed costs. This is the two cheapest of the six to merge; the interval
-  // ladder that used to be applied here by `nextIntervalMinutes` is applied
-  // inside the same statement instead.
+  // feed costs. The interval ladder that used to be applied here by
+  // `nextIntervalMinutes` is applied inside that same statement instead.
+  //
+  // `sent` is the change in the stored total, which is the only honest way to
+  // count what a crawl added: every crawl re-offers the publisher's whole
+  // document, so "items the document contained" is never zero. Reading it as
+  // "new items" is what once kept `nextIntervalMinutes` pinned to its floor and
+  // had **every feed in the directory re-crawled hourly for ever**, with the
+  // backoff ladder never once engaging.
   const { stored: sent } = await q.storeCrawl(
     db,
     id,
@@ -166,13 +161,29 @@ export async function crawlFeed(db, feed, opts = {}) {
   // and the credits came out of it with it. The links half of enrichment costs
   // requests and lives in enrichDue instead.
   //
-  // Guarded for the same reason topics are. A byline that fails to store is a
-  // missing name; a byline that fails the *crawl* backs the feed off and
-  // eventually marks a healthy blog dead, which is a far worse trade.
+  // Guarded for the same reason topics are, on the same condition, and it is
+  // the more expensive of the two omissions. "Stored for free" was true of the
+  // parsing and false of the storing: `storeCredits` issued **three write
+  // transactions on every crawl** — an `update authors` coalescing every column
+  // onto the value already in it, an insert into feed_authors, and one into
+  // author_links — and on a re-crawl of an unchanged feed all three wrote the
+  // answer that was already there. Counted by instrumenting a crawl against a
+  // local database: 4 write transactions, 3 of them pointless.
+  //
+  // Against this database a write transaction costs ~370ms and they serialize
+  // per database, so those three were most of the crawler's ceiling. A byline
+  // cannot have changed if the feed published nothing, which is exactly the
+  // argument the topics block above already makes about its text.
+  //
+  // Guarded for one more reason too. A byline that fails to store is a missing
+  // name; a byline that fails the *crawl* backs the feed off and eventually
+  // marks a healthy blog dead, which is a far worse trade.
   let people = 0;
   try {
-    const stored = await storeCredits(db, { id, feed_url: String(feed.feed_url) }, resolved.feed.credits ?? []);
-    people = stored.people;
+    if (sent > 0 || !(await authors.feedHasAuthors(db, id))) {
+      const stored = await storeCredits(db, { id, feed_url: String(feed.feed_url) }, resolved.feed.credits ?? []);
+      people = stored.people;
+    }
   } catch (err) {
     return { ok: true, newItems: sent, topics, authorError: String(err?.message ?? err) };
   }

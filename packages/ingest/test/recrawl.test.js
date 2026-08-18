@@ -102,6 +102,64 @@ test('a quiet feed backs off instead of being re-read hourly for ever', async ()
   assert.equal(Number(third.fetch_interval_minutes), 240);
 });
 
+test('a re-crawl that stored nothing does not go near the author path again', async () => {
+  // What limits this crawler is write transactions per feed, not bytes and not
+  // fetches: against production an *empty* write transaction measured 29-118
+  // seconds while a read measured 100ms, and they serialize per database.
+  //
+  // `storeCredits` was three of them on every single crawl -- an `update
+  // authors` coalescing each column onto the value already in it, an insert
+  // into feed_authors and one into author_links -- re-deriving an unchanged
+  // byline from an unchanged document. Instrumenting a crawl showed a re-crawl
+  // costing 4 write transactions of which 3 changed nothing; guarding it on the
+  // same condition the topics block uses takes that to 1.
+  // The shared DOCUMENT names nobody, so this test brings its own byline.
+  const credited = async () => ({
+    ok: true,
+    feed: {
+      ...DOCUMENT.feed,
+      credits: [{ name: 'A Quiet Author', url: 'https://quiet.example/about',
+                  confidence: 0.9, source: 'feed', role: 'author' }],
+    },
+  });
+
+  const feed = await seed();
+
+  // First crawl: the author is genuinely new, so it must be stored.
+  await crawlFeed(db, feed, { resolve: credited });
+  const after = await db.execute({
+    sql: 'select count(*) as n from feed_authors where feed_id = ?',
+    args: [String(feed.id)],
+  });
+  assert.equal(Number(after.rows[0].n), 1, 'a first crawl files the byline it was given');
+
+  // `updated_at` on the author row is the witness: `upsertAuthor` stamps it on
+  // every call, so if the author path ran at all this value moves -- even
+  // though every other column it writes would land on the value already there.
+  // That indistinguishability is the whole reason the waste went unnoticed.
+  const stamp = async () =>
+    String((await db.execute("select updated_at from authors limit 1")).rows[0].updated_at);
+  const was = await stamp();
+
+  // Second crawl of the same document, which stores no new items.
+  const res = await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: credited });
+
+  assert.equal(res.newItems, 0, 'nothing new was stored');
+  assert.equal(await stamp(), was, 'and the author was never written again');
+
+  // The feed row itself is of course still updated -- a crawl has to record
+  // that it happened. This test is about the three writes that came after it.
+  const touched = await q.feedBySlug(db, 'quiet');
+  assert.ok(touched.last_fetched_at, 'the crawl still recorded itself');
+
+  // And the byline is still there -- skipped, not dropped.
+  const still = await db.execute({
+    sql: 'select count(*) as n from feed_authors where feed_id = ?',
+    args: [String(feed.id)],
+  });
+  assert.equal(Number(still.rows[0].n), 1);
+});
+
 test('the interval the crawl writes is one SQL statement agreeing with the JS ladder', async () => {
   // `storeCrawl` computes the backoff inside the UPDATE, so that the items and
   // the feed row cost one write transaction between them rather than two. That

@@ -355,7 +355,7 @@ function itemStatements(feedId, items, now) {
         -- The picture heals the same way, and for a bigger population: the
         -- parser only ever read media:thumbnail and an image enclosure, so
         -- four fifths of the posts in the directory were stored without one
-        -- that their feed was in fact carrying. This is the whole backfill —
+        -- that their feed was in fact carrying. This is the whole backfill --
         -- every feed is re-crawled on its own timer, so the column fills in
         -- over one crawl cycle with no migration and no script to remember.
         --
@@ -367,7 +367,29 @@ function itemStatements(feedId, items, now) {
         audio_url = coalesce(feed_items.audio_url, excluded.audio_url),
         audio_type = coalesce(feed_items.audio_type, excluded.audio_type),
         audio_bytes = coalesce(feed_items.audio_bytes, excluded.audio_bytes),
-        audio_seconds = coalesce(feed_items.audio_seconds, excluded.audio_seconds)`,
+        audio_seconds = coalesce(feed_items.audio_seconds, excluded.audio_seconds)
+      -- The guard, and the reason it is worth the five lines.
+      --
+      -- Every crawl re-offers the publisher's entire document, so this conflict
+      -- clause fires for every item the feed still lists -- and until this
+      -- WHERE existed it *rewrote* every one of those rows to assign them the
+      -- values they already held. With ~62k active feeds carrying ~250 items
+      -- each, a single pass over the directory was millions of row-writes that
+      -- changed nothing. The account was at 286% of its rows-written quota.
+      --
+      -- It buys no latency: a write transaction against this database costs the
+      -- same whatever is inside it (a 1-row upsert, a 100-row upsert and a
+      -- no-op all measured 30-50 seconds), so skipping the row work does not
+      -- make the crawl faster. What it buys is quota, which is what is
+      -- throttling the writes in the first place.
+      --
+      -- Every branch mirrors a coalesce above: update only if this crawl can
+      -- actually fill in something the stored row is missing.
+      where (feed_items.image_url is null and excluded.image_url is not null)
+         or (feed_items.audio_url is null and excluded.audio_url is not null)
+         or (feed_items.audio_type is null and excluded.audio_type is not null)
+         or (feed_items.audio_bytes is null and excluded.audio_bytes is not null)
+         or (feed_items.audio_seconds is null and excluded.audio_seconds is not null)`,
     args: [
       newId(),
       feedId,
@@ -375,6 +397,13 @@ function itemStatements(feedId, items, now) {
       i.url || null,
       i.title || '(untitled)',
       i.summary || null,
+      // Kept, deliberately, though it is ~10 GB of a 14 GB database. Storing
+      // it was investigated as the cause of the crawler's write stalls and
+      // cleared: a write transaction against this database costs ~370ms
+      // whatever is inside it, and payload size does not move that number --
+      // one insert measured 168s while a hundred measured 23.7s in the same
+      // session. Bytes are not the constraint here, transactions are, and the
+      // body rides along inside a transaction that is happening anyway.
       i.contentHtml || null,
       i.author || null,
       i.imageUrl || null,
@@ -393,6 +422,7 @@ function itemStatements(feedId, items, now) {
     ],
   }));
 }
+
 
 /**
  * Store a crawl's items and settle the feed row, in **one** write transaction.
