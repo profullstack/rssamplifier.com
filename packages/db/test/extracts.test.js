@@ -111,3 +111,44 @@ test('a failure goes stale and is tried again', async () => {
 test('a row with an unreadable timestamp is treated as due, not as permanent', () => {
   assert.equal(e.shouldFetch({ status: 'empty', fetchedAt: 'not a date' }), true);
 });
+
+test('a 5xx is a hiccup and is retried in minutes, not tomorrow', () => {
+  // The case this exists for: c0mpute.com answered 500 once in ninety-nine
+  // requests, the reader's single probe landed on it, and the post lost its
+  // reader page for a day. A server saying it failed is not a server refusing.
+  const at = Date.parse('2026-08-18T08:54:06.232Z');
+  const stored = {
+    status: /** @type {const} */ ('blocked'),
+    reason: 'http-500',
+    fetchedAt: '2026-08-18T08:54:06.232Z',
+  };
+
+  assert.equal(e.isTransient(stored), true);
+  assert.equal(e.shouldFetch(stored, at + e.TRANSIENT_RETRY_MS - 1000), false);
+  assert.equal(e.shouldFetch(stored, at + e.TRANSIENT_RETRY_MS), true);
+  // And emphatically sooner than the day a refusal gets.
+  assert.ok(e.TRANSIENT_RETRY_MS < e.RETRY_AFTER_MS);
+});
+
+test('a network error is transient too — we never heard an answer', () => {
+  const stored = { status: 'error', reason: 'fetch-failed', fetchedAt: '2026-08-18T08:54:06.232Z' };
+  assert.equal(e.isTransient(stored), true);
+});
+
+test('a refusal is an answer, and keeps the full day', () => {
+  const at = Date.parse('2026-08-18T08:54:06.232Z');
+  for (const reason of ['http-401', 'http-403', 'http-404', 'http-451', 'blocked-host']) {
+    const stored = { status: 'blocked', reason, fetchedAt: '2026-08-18T08:54:06.232Z' };
+    assert.equal(e.isTransient(stored), false, reason);
+    assert.equal(e.shouldFetch(stored, at + e.TRANSIENT_RETRY_MS), false, reason);
+    assert.equal(e.shouldFetch(stored, at + e.RETRY_AFTER_MS), true, reason);
+  }
+});
+
+test('a paywall parses to nothing today and tomorrow, so it waits the day', () => {
+  const at = Date.parse('2026-08-18T08:54:06.232Z');
+  const stored = { status: 'empty', reason: 'no-article', fetchedAt: '2026-08-18T08:54:06.232Z' };
+
+  assert.equal(e.isTransient(stored), false);
+  assert.equal(e.shouldFetch(stored, at + e.TRANSIENT_RETRY_MS), false);
+});

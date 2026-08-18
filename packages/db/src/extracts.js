@@ -37,6 +37,45 @@ import { nowIso } from './client.js';
 export const RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * How long a *transient* failure stands, which is a different question.
+ *
+ * The comment above is right about a paywall and wrong about a hiccup, and it
+ * had them share a number. An origin that answered 500 once is not refusing us;
+ * it dropped one request. Measured on a real post: c0mpute.com served a single
+ * 500 in ninety-nine requests — no cold start, no load trigger, just an
+ * occasional error — and the reader's one probe happened to land on it. That
+ * cost the post its reader page for a full day, which is a thousandfold
+ * over-reaction to a one-per-cent event.
+ *
+ * Ten minutes is long enough that a genuinely broken origin is not hammered by
+ * every viewer, and short enough that nobody files a bug about it.
+ */
+export const TRANSIENT_RETRY_MS = 10 * 60 * 1000;
+
+/**
+ * Whether a stored failure is the kind that clears up by itself.
+ *
+ * The distinction is the response, not our opinion of the site: a 5xx is the
+ * server saying it failed, and a network error is us never having heard from
+ * it. Both are worth asking again shortly. A 4xx — unauthorised, forbidden,
+ * gone — is an answer, and asking again in ten minutes would only be rude.
+ * `empty` is an answer too: a paywall or a JavaScript-only page parses to
+ * nothing today and will parse to nothing at teatime.
+ *
+ * @param {Extract} stored
+ * @returns {boolean}
+ */
+export function isTransient(stored) {
+  if (stored.status === 'error') return true;
+  if (stored.status !== 'blocked') return false;
+
+  // Recorded by the reader as `http-<status>`; anything else under `blocked`
+  // (a private address, say) is a refusal we made ourselves and means it.
+  const match = /^http-(\d{3})$/.exec(stored.reason ?? '');
+  return match ? Number(match[1]) >= 500 : false;
+}
+
+/**
  * A successful extraction is kept, and not refreshed.
  *
  * Articles are not edited often, and when they are, the version somebody read
@@ -99,7 +138,7 @@ export function shouldFetch(stored, now = Date.now()) {
   // An unparseable timestamp is a row we cannot reason about; treat it as due
   // rather than as permanently fresh.
   if (!Number.isFinite(age)) return true;
-  return age >= RETRY_AFTER_MS;
+  return age >= (isTransient(stored) ? TRANSIENT_RETRY_MS : RETRY_AFTER_MS);
 }
 
 /**
