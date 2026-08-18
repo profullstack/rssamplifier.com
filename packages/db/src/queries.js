@@ -1128,45 +1128,76 @@ export async function jobBacklogs(db) {
   const now = nowIso();
   const hourAgo = nowIso(-3_600_000);
 
-  const { rows } = await db.execute({
-    sql: `select
-            sum(case when status <> 'dead' and next_fetch_at <= ? then 1 else 0 end) as due,
-            -- Accepted and not yet attempted at all: the first-crawl queue, and
-            -- the same figure the page's "Pending" stat shows, so the two agree.
-            sum(case when status = 'pending' then 1 else 0 end)             as pending,
-            -- Attempted and never once successful. A wider set, and deliberately
-            -- not the queue above: a feed that has failed nine times is not
-            -- waiting for its first crawl, it is failing, and the page counts it
-            -- under Erroring.
-            sum(case when status <> 'dead' and last_success_at is null then 1 else 0 end) as never_crawled,
-            sum(case when status = 'pending' and created_at >= ?
-                     then 1 else 0 end)                                    as submitted_hour,
-            sum(case when card_state is null then 1 else 0 end)            as cards_pending,
-            sum(case when card_state = 'ok' then 1 else 0 end)             as cards_ok,
-            sum(case when card_state = 'none' then 1 else 0 end)           as cards_none,
-            sum(case when card_state = 'error' then 1 else 0 end)          as cards_error,
-            sum(case when card_checked_at >= ? then 1 else 0 end)          as cards_hour
-          from feeds`,
-    // Deliberately no "first crawls completed this hour". Nothing records when a
-    // feed was read for the *first* time, and every way of inferring it from
-    // these columns is a guess — a status board that mixes measurements with
-    // guesses is worse than one that admits the gap. The first-crawl row shows
-    // its backlog and its inflow, and says outright that it shares the update
-    // queue's throughput.
-    args: [now, hourAgo, hourAgo],
-  });
+  // Nine conditional aggregates over all 368k feed rows, exactly as `crawlStats`
+  // used to be, and slow for exactly the same reason: to evaluate a CASE the
+  // planner has to visit the row, so the statement dragged the whole of a 14 GB
+  // table through memory. Measured at 3,713ms, on a page that refreshes itself
+  // every fifteen seconds.
+  //
+  // The fix is not "stop using conditional aggregates" — two of them survive
+  // below. It is to make sure the scan they force is over a *covering index*
+  // rather than over the table, at which point the same CASE is cheap.
+  const [byStatus, backlog, submitted, cards] = await Promise.all([
+    // One covering scan of feeds_status_success_idx (0028) answering three
+    // questions at once: the status breakdown, and how many feeds in each state
+    // have never once been read successfully.
+    db.execute(`select status, count(*) as n,
+                       sum(case when last_success_at is null then 1 else 0 end) as never
+                from feeds group by status`),
 
-  const row = rows[0] ?? {};
+    // The backlog by its complement — see `crawlStats` and `countDueFeeds`.
+    db.execute({
+      sql: `select count(*) as n from feeds where status <> 'dead' and next_fetch_at > ?`,
+      args: [now],
+    }),
+
+    // A short range read off feeds_created_idx: an hour of submissions is a
+    // handful of rows however large the directory gets.
+    db.execute({
+      sql: `select count(*) as n from feeds where created_at >= ? and status = 'pending'`,
+      args: [hourAgo],
+    }),
+
+    // One covering scan of feeds_card_state_idx (0029).
+    db.execute({
+      sql: `select card_state, count(*) as n,
+                   sum(case when card_checked_at >= ? then 1 else 0 end) as hour
+            from feeds group by card_state`,
+      args: [hourAgo],
+    }),
+  ]);
+
+  // Deliberately no "first crawls completed this hour". Nothing records when a
+  // feed was read for the *first* time, and every way of inferring it from
+  // these columns is a guess — a status board that mixes measurements with
+  // guesses is worse than one that admits the gap. The first-crawl row shows
+  // its backlog and its inflow, and says outright that it shares the update
+  // queue's throughput.
+  const states = new Map(byStatus.rows.map((r) => [String(r.status), r]));
+  const n = (status) => Number(states.get(status)?.n ?? 0);
+
+  const total = [...states.values()].reduce((a, r) => a + Number(r.n ?? 0), 0);
+  // Attempted and never once successful, across everything not given up on. A
+  // wider set than the first-crawl queue, and deliberately not the same: a feed
+  // that has failed nine times is not waiting for its first crawl, it is
+  // failing, and the page counts it under Erroring.
+  const neverCrawled = [...states.entries()]
+    .filter(([status]) => status !== 'dead')
+    .reduce((a, [, r]) => a + Number(r.never ?? 0), 0);
+
+  const byCard = new Map(cards.rows.map((r) => [r.card_state === null ? null : String(r.card_state), r]));
+  const card = (state) => Number(byCard.get(state)?.n ?? 0);
+
   return {
-    due: Number(row.due ?? 0),
-    pendingFirstCrawl: Number(row.pending ?? 0),
-    neverCrawled: Number(row.never_crawled ?? 0),
-    submittedLastHour: Number(row.submitted_hour ?? 0),
-    cardsPending: Number(row.cards_pending ?? 0),
-    cardsOk: Number(row.cards_ok ?? 0),
-    cardsNone: Number(row.cards_none ?? 0),
-    cardsError: Number(row.cards_error ?? 0),
-    cardsLastHour: Number(row.cards_hour ?? 0),
+    due: Math.max(0, total - n('dead') - Number(backlog.rows[0]?.n ?? 0)),
+    pendingFirstCrawl: n('pending'),
+    neverCrawled,
+    submittedLastHour: Number(submitted.rows[0]?.n ?? 0),
+    cardsPending: card(null),
+    cardsOk: card('ok'),
+    cardsNone: card('none'),
+    cardsError: card('error'),
+    cardsLastHour: cards.rows.reduce((a, r) => a + Number(r.hour ?? 0), 0),
   };
 }
 
