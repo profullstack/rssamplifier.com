@@ -58,7 +58,7 @@ import { connect } from '@rssamplifier/db';
 const CHUNK = 200;
 
 /** Feeds written per transaction. Write transactions are the scarce thing. */
-const WRITE_CHUNK = 1000;
+const WRITE_CHUNK = 25;
 
 const MIN_INTERVAL = 60;
 const MAX_INTERVAL = 129_600; // 90 days, matching packages/ingest/src/cadence.js
@@ -110,16 +110,29 @@ let pending = [];
 async function flush() {
   if (pending.length === 0) return;
   if (apply) {
+    const started = Date.now();
     await db.batch(pending, 'write');
     written += pending.length;
+    // Reported per transaction rather than per thousand rows, because on this
+    // database the transaction is the unit that can fail and the one whose cost
+    // is worth watching. Written straight to fd 1 so it survives being piped.
+    if (written % 500 === 0 || Date.now() - started > 5000) {
+      process.stdout.write(`  ${written} written (last txn ${Date.now() - started}ms)\n`);
+    }
   }
   pending = [];
 }
 
 for (;;) {
+  // `last_published_at is null` is the resume condition, and it is what makes
+  // this safe to re-run. Every earlier attempt died on a 300-second write
+  // timeout partway through -- the write path could not accept a large batch --
+  // so the script has to be able to pick up where it stopped rather than
+  // starting the walk again. A feed that has been rescheduled already carries
+  // the column; one that has not, does not.
   const { rows } = await db.execute({
     sql: `select id, slug, item_count from feeds
-          where status = 'active' and item_count > 0 and id > ?
+          where status = 'active' and item_count > 0 and last_published_at is null and id > ?
           order by id limit ?`,
     args: [cursor, CHUNK],
   });
