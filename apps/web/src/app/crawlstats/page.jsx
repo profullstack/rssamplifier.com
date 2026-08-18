@@ -86,9 +86,15 @@ export default async function CrawlStatsPage() {
     categories.categories.reduce((n, row) => n + (row.growth[day] ?? 0), 0),
   );
 
-  // A crawler that has fetched nothing in an hour is either idle because
-  // nothing was due, or stopped. The backlog tells those apart.
-  const idle = stats.fetchedLastHour === 0;
+  // A crawler that has not landed a single successful read in a quarter of an
+  // hour is stopped, not merely between batches. The backlog tells "stopped"
+  // apart from "idle because nothing was due".
+  //
+  // Measured against the last successful crawl rather than against the hourly
+  // throughput figure: throughput comes from a rollup the poller is allowed to
+  // fail to write, and an outage badge must not be able to fire on missing
+  // bookkeeping. See `idleMinutes` in crawlStats.
+  const idle = stats.idleMinutes === null || stats.idleMinutes >= 15;
   const health = idle && stats.due > 0 ? 'stalled' : stats.staleActive > 0 ? 'degraded' : 'healthy';
 
   return (
@@ -104,16 +110,16 @@ export default async function CrawlStatsPage() {
       <p className={`crawl-health crawl-health-${health}`}>
         <strong>{label(health)}</strong>{' '}
         {health === 'stalled'
-          ? `${fmt(stats.due)} feeds are due and nothing has been fetched in the last hour.`
+          ? `${fmt(stats.due)} feeds are due and nothing has been read successfully in ${fmt(stats.idleMinutes ?? 0)} minutes.`
           : health === 'degraded'
             ? `${fmt(stats.staleActive)} active feeds have not been read successfully in over a day.`
-            : `${fmt(stats.fetchedLastHour)} feeds fetched in the last hour.`}
+            : `${fmt(stats.fetchedLastHour)} feeds an hour, most recently ${fmt(stats.idleMinutes ?? 0)} minutes ago.`}
       </p>
 
       <div className="stat-grid">
         <Stat label="Feeds" value={fmt(stats.total)} note={`${fmt(stats.active)} active`} />
         <Stat label="Due now" value={fmt(stats.due)} note="waiting to be crawled" />
-        <Stat label="Fetched (1h)" value={fmt(stats.fetchedLastHour)} note="crawler throughput" />
+        <Stat label="Fetched/hour" value={fmt(stats.fetchedLastHour)} note="crawler throughput" />
         <Stat label="Fetched (24h)" value={fmt(stats.fetchedLastDay)} note={`${fmt(stats.succeededLastDay)} succeeded`} />
         <Stat label="New posts (24h)" value={fmt(stats.itemsLastDay)} note="items ingested" />
         <Stat label="Stale" value={fmt(stats.staleActive)} note="active, no success in 24h" />

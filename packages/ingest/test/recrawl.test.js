@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { connect, migrate, newId, q } from '@rssamplifier/db';
 
-import { crawlFeed } from '../src/crawl.js';
+import { crawlFeed, nextIntervalMinutes } from '../src/crawl.js';
 
 /**
  * What a re-crawl reports, and what the crawler does about it.
@@ -100,6 +100,58 @@ test('a quiet feed backs off instead of being re-read hourly for ever', async ()
   await crawlFeed(db, second, { resolve });
   const third = await q.feedBySlug(db, 'quiet');
   assert.equal(Number(third.fetch_interval_minutes), 240);
+});
+
+test('the interval the crawl writes is one SQL statement agreeing with the JS ladder', async () => {
+  // `storeCrawl` computes the backoff inside the UPDATE, so that the items and
+  // the feed row cost one write transaction between them rather than two. That
+  // makes `nextIntervalMinutes` a second, independent statement of the same
+  // ladder -- so it is worth asserting they cannot drift apart.
+  for (const [newItems, current, expected] of [
+    [1, 60, 60],
+    [1, 480, 60],
+    [0, 60, 120],
+    [0, 120, 240],
+    [0, 720, 1440],
+    [0, 1440, 1440],
+  ]) {
+    assert.equal(
+      nextIntervalMinutes(newItems, current),
+      expected,
+      `ladder: ${newItems} new at ${current}m`,
+    );
+  }
+});
+
+test('next_fetch_at is written in the format the due query compares against', async () => {
+  // This is the one that would fail silently. `next_fetch_at` moved from a JS
+  // `toISOString()` into SQL `strftime`, and `dueFeeds` selects on
+  // `next_fetch_at <= ?` against an ISO string -- a string comparison. A format
+  // that merely *sorts* differently (a space instead of the T, a missing Z, no
+  // milliseconds) would leave every feed either permanently due or permanently
+  // not, with nothing in the logs to say why.
+  const feed = await seed();
+  await crawlFeed(db, feed, { resolve });
+
+  const row = await q.feedBySlug(db, 'quiet');
+  const written = String(row.next_fetch_at);
+
+  assert.match(
+    written,
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    `next_fetch_at must be an ISO instant, got ${written}`,
+  );
+  // Round-trips through Date, and lands an hour out rather than anywhere else.
+  const minutes = (Date.parse(written) - Date.now()) / 60_000;
+  assert.ok(minutes > 55 && minutes <= 61, `an hour ahead, got ${minutes.toFixed(1)}m`);
+
+  // And the scheduler agrees: not due now, due once the clock passes it.
+  const dueNow = await q.dueFeeds(db, 100);
+  assert.equal(
+    dueNow.some((f) => String(f.slug) === 'quiet'),
+    false,
+    'a feed just crawled is not immediately due again',
+  );
 });
 
 test('a feed that publishes again drops straight back to hourly', async () => {

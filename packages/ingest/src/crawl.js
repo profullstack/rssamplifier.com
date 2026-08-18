@@ -130,15 +130,19 @@ export async function crawlFeed(db, feed, opts = {}) {
   // The honest count is the difference the crawl made to the stored total. Both
   // halves are already in hand — `item_count` rides along on the due row and the
   // total has to be recounted anyway — so this costs nothing.
-  await q.upsertItems(db, id, resolved.feed.items);
-  const total = await q.countItems(db, id);
-  const sent = Math.max(0, total - Number(feed.item_count ?? 0));
-  await q.markCrawlSuccess(
+  // One write transaction for the items *and* the feed row, and no `count(*)`
+  // round trip between them — see `storeCrawl`. Against this database an empty
+  // write transaction measured 29–118 seconds while a read measured 100ms, so
+  // the only number that moves the crawler is how many write transactions a
+  // feed costs. This is the two cheapest of the six to merge; the interval
+  // ladder that used to be applied here by `nextIntervalMinutes` is applied
+  // inside the same statement instead.
+  const { stored: sent } = await q.storeCrawl(
     db,
     id,
+    resolved.feed.items,
     resolved.feed,
-    total,
-    nextIntervalMinutes(sent, feed.fetch_interval_minutes),
+    Number(feed.item_count ?? 0),
   );
 
   // Only when the feed actually published something, or when it has no topics

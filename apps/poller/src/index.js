@@ -133,10 +133,12 @@ let stopping = false;
 // walk reaches the end of the table, so a finished backfill costs nothing on
 // every later tick.
 let clusterBackfill = true;
-// How far through feed_items the walk has got. Held in memory rather than
-// stored: a restart re-walks from the start, and re-walking is cheap because
-// rows that already carry a key are read and skipped without a write.
-let clusterCursor = '';
+// There is no cursor any more. There used to be, and holding it in memory was
+// the whole problem: the walk restarted at the beginning of a 1.75M-row table
+// on every deploy, so it re-read the same already-keyed rows for a day and
+// never reached the 15,821 that needed work. The query now asks for unkeyed
+// rows directly and is therefore stateless — a restart resumes exactly where
+// the work is. See `backfillClusterKeys`.
 // Guards the walk against overlapping itself if one page runs long.
 let backfilling = false;
 // The same guard for the card pass, which makes outbound requests and so must
@@ -370,15 +372,16 @@ async function backfillTick() {
   backfilling = true;
 
   try {
-    const filled = await q.backfillClusterKeys(db, clusterBatch, clusterCursor);
-    if (filled.cursor === null) {
-      // Walked off the end of the table. Done for the life of this process;
-      // everything stored from here on is keyed as it arrives.
+    const filled = await q.backfillClusterKeys(db, clusterBatch);
+    if (filled.done) {
+      // No unkeyed row left anywhere in the table — which this now genuinely
+      // knows, rather than inferring it from having reached the end of a walk.
+      // Done for the life of the process; everything stored from here on is
+      // keyed as it arrives.
       clusterBackfill = false;
       clearInterval(backfillTimer);
       log('cluster-backfill-done', {});
     } else {
-      clusterCursor = filled.cursor;
       // Logged on every pass that read anything, not only ones that wrote.
       // A silent worker and an absent one are indistinguishable, which is the
       // mistake that hid this the first time.
