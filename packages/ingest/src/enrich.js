@@ -88,45 +88,36 @@ export async function claimAuthorSlug(db, name, fallbackUrl = '') {
 export async function storeCredits(db, feed, credits, links = []) {
   const merged = mergeCredits(credits.filter(Boolean));
 
-  // The feed's own accounts, stored whether or not anybody was named. This is
-  // the common case on the small web and it used to be thrown away: a blog
-  // with a Mastodon link in its footer and no byline anywhere published a way
-  // to reach whoever writes it, and an empty `merged` meant returning before
-  // anything was written. On a probe of fifteen production feeds twelve had at
-  // least one account and only nine named a person, so a third of what the
-  // directory could find was being discarded for want of a name to file it
-  // under.
-  const feedLinks = await a.addFeedLinks(db, feed.id, links);
-
-  if (merged.length === 0) return { people: 0, links: 0, feedLinks };
-
-  let people = 0;
-  let stored = 0;
-
+  // Slugs first, and they are the only reads left here.
+  //
+  // A slug has to be unique and it is chosen by looking at the ones already
+  // taken, so it cannot be decided inside the write. Everything else can:
+  // `creditStatements` resolves each author's id in SQL rather than reading it
+  // back, which is what collapses this whole function into one write
+  // transaction. It used to be four -- and on this database a write transaction
+  // costs ~370ms and they serialize, so four per feed was most of the crawler's
+  // ceiling.
+  //
+  // Only asked for a person we do not already have. An author we know keeps the
+  // slug they were given: it is a permanent address, and re-deriving it from a
+  // display name that has since changed would break every link to their page.
+  const prepared = [];
   for (const person of merged) {
     const key = identityKey(person, feed.feed_url);
     const existing = await a.authorByIdentity(db, key);
-    const slug = existing?.slug ?? (await claimAuthorSlug(db, person.name, person.url));
-
-    const { id } = await a.upsertAuthor(db, {
-      identityKey: key,
-      slug,
-      name: person.name,
-      normName: normalizeName(person.name),
-      bio: person.bio ?? '',
-      avatarUrl: person.avatar,
-      siteUrl: person.url,
-      email: person.email,
-      confidence: person.confidence,
+    prepared.push({
+      key,
+      person,
+      slug: existing?.slug ?? (await claimAuthorSlug(db, person.name, person.url)),
     });
+  }
 
-    await a.linkFeedAuthor(db, feed.id, id, {
-      role: person.role,
-      confidence: person.confidence,
-      evidence: person.source,
-    });
+  const statements = [];
+  let authorLinkCount = 0;
 
+  for (const [index, { key, person, slug }] of prepared.entries()) {
     const own = [];
+
     // A personal address published by the author is a link like any other, and
     // storing it here is what makes "how do I reach this person" one query.
     if (person.email) {
@@ -144,16 +135,64 @@ export async function storeCredits(db, feed, credits, links = []) {
     // Links found on a page belong to *a* person, and a page crediting three
     // people does not say which. Attributing a footer's Mastodon account to
     // all three would be wrong twice out of three times, so a multi-author
-    // feed keeps only what each credit carried on its own — and the footer's
-    // accounts stay on the feed above, which is the claim that is actually
+    // feed keeps only what each credit carried on its own -- and the footer's
+    // accounts stay on the feed below, which is the claim that is actually
     // true of a group blog.
     if (merged.length === 1) own.push(...links);
+    authorLinkCount += own.filter((l) => l?.url && l?.network).length;
 
-    stored += await a.addAuthorLinks(db, id, own);
-    people += 1;
+    statements.push(
+      ...a.creditStatements({
+        feedId: feed.id,
+        identityKey: key,
+        slug,
+        person: {
+          name: person.name,
+          normName: normalizeName(person.name),
+          bio: person.bio ?? '',
+          avatarUrl: person.avatar,
+          siteUrl: person.url,
+          email: person.email,
+          confidence: person.confidence,
+          role: person.role,
+          evidence: person.source,
+        },
+        authorLinks: own,
+        // The feed's own accounts ride along with the first person only, so a
+        // feed crediting three people does not queue the same feed_links rows
+        // three times. Stored whether or not anybody was named -- see below.
+        feedLinks: index === 0 ? links : [],
+      }),
+    );
   }
 
-  return { people, links: stored, feedLinks };
+  // The feed's own accounts, stored whether or not anybody was named. This is
+  // the common case on the small web and it used to be thrown away: a blog
+  // with a Mastodon link in its footer and no byline anywhere published a way
+  // to reach whoever writes it, and an empty `merged` meant returning before
+  // anything was written. On a probe of fifteen production feeds twelve had at
+  // least one account and only nine named a person, so a third of what the
+  // directory could find was being discarded for want of a name to file it
+  // under.
+  if (merged.length === 0) statements.push(...a.feedLinkStatements(feed.id, links));
+
+  if (statements.length === 0) return { people: 0, links: 0, feedLinks: 0 };
+
+  // One transaction for the people, the feed's link to them, their accounts and
+  // the feed's own accounts. Ordered so that each author row is inserted before
+  // anything selects its id.
+  await db.batch(statements, 'write');
+
+  return {
+    people: merged.length,
+    // Statements issued rather than rows changed. The guards on the conflict
+    // clauses mean an unchanged credit writes nothing, so a row count here
+    // would report a healthy re-crawl as having stored no links at all -- which
+    // is true and useless. What the callers want to know is how much the
+    // document offered.
+    links: authorLinkCount,
+    feedLinks: (links ?? []).filter((l) => l?.url && l?.network).length,
+  };
 }
 
 /**

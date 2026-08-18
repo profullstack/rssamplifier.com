@@ -599,3 +599,169 @@ export async function feedHasAuthors(db, feedId) {
   });
   return rows.length > 0;
 }
+
+/* ------------------------------------------------- credits, as one write */
+
+/**
+ * The author writes a crawl needs, as statements for a single batch.
+ *
+ * Storing one credit used to cost four write transactions -- a read for the
+ * identity, another inside `upsertAuthor`, the insert or update itself, a
+ * re-read to settle concurrent writers, then `linkFeedAuthor` and
+ * `addAuthorLinks` on top. That was measured by instrumenting a real crawl: a
+ * first crawl of a 150-item feed spent 10 round trips and 5 write transactions,
+ * and 3 of the 5 were these.
+ *
+ * On this database a write transaction costs ~370ms and they serialize per
+ * database, so write transactions per feed is the crawler's entire throughput
+ * ceiling -- an empty write transaction and a hundred-row one measured the
+ * same. Collapsing these into one batch is worth more than any amount of making
+ * the statements themselves cheaper.
+ *
+ * **The author id is resolved in SQL rather than read back.** That is what makes
+ * one batch possible: the feed_authors row needs the id the upsert decides, and
+ * the obvious way to get it is to insert, read it back, then link -- three round
+ * trips that cannot be merged because the middle one is a read. Written as
+ * `insert into feed_authors (...) select ?, id, ... from authors where
+ * identity_key = ?`, the id is looked up inside the same transaction, after the
+ * upsert above it has run. It is also *safer* than the round trip it replaces:
+ * a concurrent writer that wins the race changes which id the select finds and
+ * the link still lands on the right person, where reading an id into JS and
+ * binding it later can attach a link to the loser of the race.
+ *
+ * Every statement carries a WHERE guard so that re-storing an unchanged credit
+ * writes no rows. That buys no latency -- the transaction happens either way --
+ * but rows written is a metered resource on this account.
+ *
+ * @param {object} input
+ * @param {string} input.feedId
+ * @param {string} input.identityKey
+ * @param {string} input.slug slug to use if this person is new; ignored if not
+ * @param {object} input.person the merged credit
+ * @param {Array<object>} [input.authorLinks] accounts to file under the person
+ * @param {Array<object>} [input.feedLinks] accounts to file under the feed
+ * @returns {Array<{ sql: string, args: unknown[] }>} in dependency order
+ */
+export function creditStatements({ feedId, identityKey, slug, person, authorLinks = [], feedLinks = [] }) {
+  const now = nowIso();
+  const statements = [];
+
+  // One statement for both the create and the update path. `do update` rather
+  // than `do nothing`, so a person we already know gains whatever this crawl
+  // learned about them; the slug is deliberately absent from the SET list,
+  // because a slug is a permanent address and re-deriving it from a changed
+  // display name would break every link to that author's page.
+  statements.push({
+    sql: `insert into authors
+            (id, slug, identity_key, name, norm_name, bio, avatar_url, site_url,
+             email, confidence, created_at, updated_at)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          on conflict (identity_key) do update set
+            name = case when excluded.name <> '' then excluded.name else authors.name end,
+            norm_name = case when excluded.norm_name <> '' then excluded.norm_name else authors.norm_name end,
+            bio = coalesce(nullif(excluded.bio, ''), authors.bio),
+            avatar_url = coalesce(nullif(excluded.avatar_url, ''), authors.avatar_url),
+            site_url = coalesce(nullif(excluded.site_url, ''), authors.site_url),
+            email = coalesce(nullif(excluded.email, ''), authors.email),
+            confidence = max(authors.confidence, excluded.confidence),
+            updated_at = excluded.updated_at
+          where (excluded.name <> '' and authors.name <> excluded.name)
+             or (authors.bio is null and excluded.bio is not null)
+             or (authors.avatar_url is null and excluded.avatar_url is not null)
+             or (authors.site_url is null and excluded.site_url is not null)
+             or (authors.email is null and excluded.email is not null)
+             or authors.confidence < excluded.confidence`,
+    args: [
+      newId(),
+      slug,
+      identityKey,
+      person.name,
+      person.normName ?? '',
+      person.bio || null,
+      person.avatarUrl || null,
+      person.siteUrl || null,
+      person.email || null,
+      Number(person.confidence ?? 0),
+      now,
+      now,
+    ],
+  });
+
+  statements.push({
+    sql: `insert into feed_authors (feed_id, author_id, role, confidence, evidence, created_at)
+          select ?, id, ?, ?, ?, ? from authors where identity_key = ?
+          on conflict (feed_id, author_id) do update set
+            role = case when excluded.role = 'owner' then 'owner' else feed_authors.role end,
+            confidence = max(feed_authors.confidence, excluded.confidence),
+            evidence = excluded.evidence
+          where (feed_authors.role <> 'owner' and excluded.role = 'owner')
+             or feed_authors.confidence < excluded.confidence
+             or feed_authors.evidence is not excluded.evidence`,
+    args: [
+      feedId,
+      person.role ?? 'author',
+      Number(person.confidence ?? 0),
+      person.evidence ?? null,
+      now,
+      identityKey,
+    ],
+  });
+
+  for (const link of authorLinks) {
+    if (!link?.url || !link?.network) continue;
+    statements.push({
+      sql: `insert into author_links (id, author_id, network, url, handle, source, verified, created_at)
+            select ?, id, ?, ?, ?, ?, ?, ? from authors where identity_key = ?
+            on conflict (author_id, url) do update set
+              source = case when excluded.source = 'rel-me' then excluded.source else author_links.source end,
+              verified = max(author_links.verified, excluded.verified)
+            where (author_links.source <> 'rel-me' and excluded.source = 'rel-me')
+               or author_links.verified < excluded.verified`,
+      args: [
+        newId(),
+        link.network,
+        link.url,
+        link.handle || null,
+        link.source,
+        link.verified ? 1 : 0,
+        now,
+        identityKey,
+      ],
+    });
+  }
+
+  statements.push(...feedLinkStatements(feedId, feedLinks));
+  return statements;
+}
+
+/**
+ * The feed's own accounts, as statements. No author id to resolve, so these are
+ * plain inserts -- split out only so they can join the same batch.
+ *
+ * @param {string} feedId
+ * @param {Array<object>} links
+ * @returns {Array<{ sql: string, args: unknown[] }>}
+ */
+export function feedLinkStatements(feedId, links) {
+  return (links ?? [])
+    .filter((link) => link?.url && link?.network)
+    .map((link) => ({
+      sql: `insert into feed_links (id, feed_id, network, url, handle, source, verified, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict (feed_id, url) do update set
+              source = case when excluded.source = 'rel-me' then excluded.source else feed_links.source end,
+              verified = max(feed_links.verified, excluded.verified)
+            where (feed_links.source <> 'rel-me' and excluded.source = 'rel-me')
+               or feed_links.verified < excluded.verified`,
+      args: [
+        newId(),
+        feedId,
+        link.network,
+        link.url,
+        link.handle || null,
+        link.source,
+        link.verified ? 1 : 0,
+        nowIso(),
+      ],
+    }));
+}
