@@ -593,6 +593,10 @@ function absorb(into, from) {
   into.email ||= from.email;
   into.url ||= from.url;
   into.avatar ||= from.avatar;
+  // Same omission as the one in `credit`, and it bites in the other direction:
+  // even once a bio exists, merging two credits for one person would drop it
+  // whenever the credit carrying it lost the merge.
+  into.bio ||= from.bio;
   into.confidence = Math.max(into.confidence, from.confidence);
   // Owner outranks author: it is the stronger claim about the feed.
   if (from.role === 'owner') into.role = 'owner';
@@ -607,13 +611,14 @@ function absorb(into, from) {
  * @param {unknown} [input.email]
  * @param {unknown} [input.url]
  * @param {unknown} [input.avatar]
+ * @param {unknown} [input.bio] a sentence or two the page says about them
  * @param {'author'|'owner'} [input.role]
  * @param {string} input.source
  * @param {number} input.confidence
  * @param {string} [input.base]
  * @returns {Credit | null}
  */
-export function credit({ name, email, url, avatar, role = 'author', source, confidence, base = '' }) {
+export function credit({ name, email, url, avatar, bio, role = 'author', source, confidence, base = '' }) {
   const cleaned = cleanName(name);
   if (!looksLikePersonName(cleaned)) return null;
 
@@ -622,6 +627,14 @@ export function credit({ name, email, url, avatar, role = 'author', source, conf
     email: personalEmail(email ?? name),
     url: normalizeIdentityUrl(url, base),
     avatar: normalizeIdentityUrl(avatar, base),
+    // Carried, and it was not. `identityFromHtml` has always extracted a bio --
+    // from an h-card's .p-note, a schema.org Person's description -- and this
+    // object was the hole it fell through: with no `bio` field here there was
+    // nowhere for it to go, so `storeCredits` wrote `person.bio ?? ''` and the
+    // empty string became null. Production had **0 bios across 35,280 authors**
+    // while 2,388 of the same rows had a site_url from the same pass, which is
+    // the shape of a dropped field rather than a scraper that cannot find one.
+    bio: typeof bio === 'string' ? bio.trim() : '',
     role,
     source,
     confidence,

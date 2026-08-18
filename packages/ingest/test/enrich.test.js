@@ -293,6 +293,35 @@ test('a credit re-stored unchanged writes nothing at all', async () => {
   assert.ok((await changes()) - richer > 0, 'a better credit is still written');
 });
 
+test('an author keeps the bio the page published', async () => {
+  // Production had **0 bios across 35,280 authors** while 2,388 of the same
+  // rows carried a site_url found by the same pass. That is the shape of a
+  // dropped field, not of a scraper that cannot find one -- and it was: the
+  // extractor read a bio, `credit()` had nowhere to put it, `absorb()` dropped
+  // it on merge, and the call site used `identity.credits` while ignoring
+  // `identity.bio` entirely. Three holes, all silent.
+  const feed = await seedFeed({ slug: 'has-bio', feedUrl: 'https://bio.example/feed.xml' });
+
+  await storeCredits(db, feed, [
+    {
+      name: 'Ada Byron',
+      url: 'https://ada.example/',
+      bio: 'Writes about analytical engines and the weather.',
+      confidence: 0.9,
+      source: 'h-card',
+      role: 'author',
+    },
+  ]);
+
+  const { rows } = await db.execute({
+    sql: `select a.bio from authors a join feed_authors fa on fa.author_id = a.id where fa.feed_id = ?`,
+    args: [String(feed.id)],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(String(rows[0].bio), 'Writes about analytical engines and the weather.');
+});
+
 test('a blog with accounts but no byline keeps its accounts', async () => {
   const feed = await seedFeed({
     slug: 'unsigned',
