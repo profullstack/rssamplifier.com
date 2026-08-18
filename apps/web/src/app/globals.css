@@ -3420,3 +3420,52 @@ html:not([data-dock]) .playlist-hint {
     gap: 0.9rem;
   }
 }
+
+/* When a feed was last read, and whether it is still publishing.
+   Sits under the feed's meta line and is shown in every state, including the
+   healthy one — see Freshness.jsx for why a signal that only appears when
+   something is wrong carries almost no information. */
+.freshness {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+  border-left: 3px solid var(--line);
+  padding: 0.5rem 0 0.5rem 0.9rem;
+  margin: 0.9rem 0 0;
+}
+
+.freshness strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.freshness time {
+  /* The instant is in the datetime attribute; the prose is what people read.
+     No underline: this is not a link and must not invite a click. */
+  border-bottom: 1px dotted var(--line);
+}
+
+.freshness-note {
+  display: inline-block;
+  margin-top: 0.35rem;
+}
+
+/* Live is the ordinary state and is deliberately quiet — a badge on every
+   healthy feed in the directory should not shout. */
+.freshness-live {
+  border-color: var(--accent);
+}
+
+/* Dormant is the one this exists for: our copy is current and the publisher
+   has stopped. It is not an error, so it is marked rather than alarmed. */
+.freshness-dormant {
+  border-color: var(--muted);
+  background: var(--accent-soft);
+}
+
+.freshness-overdue,
+.freshness-failing,
+.freshness-unread {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}

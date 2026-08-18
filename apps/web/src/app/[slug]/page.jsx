@@ -11,6 +11,7 @@ import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import AuthorLinks from '../AuthorLinks.jsx';
 import FollowControls from '../FollowControls.jsx';
+import Freshness from '../Freshness.jsx';
 import PlayButton from '../PlayButton.jsx';
 import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
@@ -212,6 +213,12 @@ export default async function FeedPage({ params }) {
           {feed.item_count} {category.item}
         </span>
       </div>
+
+      {/* How current this page is, and whether the feed behind it is still
+          publishing — two different questions, both answered, always. See
+          lib/freshness.js. The newest post's date comes off the list this page
+          has already loaded, so the signal costs no extra query. */}
+      <Freshness feed={feed} newestPost={posts[0]?.published_at ?? null} />
 
       {/* Follow and share, side by side, because they are the two things to do
           with a feed you have just found and only one of them needs an

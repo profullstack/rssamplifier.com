@@ -2,7 +2,7 @@ import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
 
 import { storeCredits } from './enrich.js';
-import { intervalFromDates, nextInterval } from './cadence.js';
+import { intervalFromDates, nextInterval, newestPublished } from './cadence.js';
 
 /** Backoff ladder in minutes, indexed by consecutive error count. */
 const BACKOFF = [60, 180, 360, 720, 1440];
@@ -151,6 +151,12 @@ export async function crawlFeed(db, feed, opts = {}) {
   // for 2,241 an hour — 28 times fewer, and inside what the crawler can do.
   const interval = intervalFromDates(resolved.feed.items);
 
+  // When this publisher last published, as distinct from when we last read
+  // them. Stored on the feed row so that a page or an API response can say
+  // "current, and dormant since 2023" without a feed_items join -- see 0030.
+  // It falls out of the same date scan the interval above needed, so it is free.
+  const published = newestPublished(resolved.feed.items);
+
   const { stored: sent } = await q.storeCrawl(
     db,
     id,
@@ -158,6 +164,7 @@ export async function crawlFeed(db, feed, opts = {}) {
     resolved.feed,
     Number(feed.item_count ?? 0),
     interval,
+    published,
   );
 
   // Only when the feed actually published something, or when it has no topics

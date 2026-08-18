@@ -15,7 +15,7 @@ import { newId, nowIso } from './client.js';
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
-  fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at, source_kind,
+  fetch_interval_minutes, next_fetch_at, item_count, last_published_at, created_at, updated_at, source_kind,
   card_url, card_width, card_height, card_type, authors_checked_at`;
 
 /** The categories the directory is browsable by. */
@@ -458,7 +458,7 @@ function itemStatements(feedId, items, now) {
  * @returns {Promise<{ total: number, stored: number }>} `stored` is the change
  *   in the stored total — posts actually new, not posts offered.
  */
-export async function storeCrawl(db, id, items, feed, previousItemCount = 0, intervalMinutes = null) {
+export async function storeCrawl(db, id, items, feed, previousItemCount = 0, intervalMinutes = null, lastPublishedAt = null) {
   const now = nowIso();
   const before = Number(previousItemCount) || 0;
 
@@ -501,6 +501,12 @@ export async function storeCrawl(db, id, items, feed, previousItemCount = 0, int
             -- merely sorts differently would quietly break scheduling.
             next_fetch_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+' || (${LADDER}) || ' minutes'),
             item_count = (select count(*) from feed_items where feed_id = ?),
+            -- Kept when a crawl cannot work one out, rather than overwritten
+            -- with nothing: a date that was true last week is a better answer
+            -- than null, and null here reads to a caller as "we do not know
+            -- whether this publisher is still active" -- which would be a
+            -- worse claim than the one we already had.
+            last_published_at = coalesce(?, last_published_at),
             updated_at = ?
           where id = ?
           returning item_count`,
@@ -516,6 +522,7 @@ export async function storeCrawl(db, id, items, feed, previousItemCount = 0, int
       ...ladderArgs, // fetch_interval_minutes
       ...ladderArgs, // next_fetch_at
       id, // item_count
+      lastPublishedAt,
       now,
       id,
     ],

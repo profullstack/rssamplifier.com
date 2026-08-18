@@ -141,6 +141,23 @@ export function nextInterval({ items = [], newItems = 0, currentMinutes = MIN_IN
 }
 
 /**
+ * The most recent believable publication date in a document, as an ISO string.
+ *
+ * Stored on the feed row so that "is this publisher still publishing" can be
+ * answered without touching feed_items — see migration 0030. It reuses
+ * `publishedTimes`, so a feed stamping tomorrow on every entry cannot make
+ * itself look freshly published here either.
+ *
+ * @param {Array<{ publishedAt?: unknown }>} items
+ * @param {number} [now] epoch ms
+ * @returns {string|null} null when the document carries no believable date
+ */
+export function newestPublished(items, now = Date.now()) {
+  const times = publishedTimes(items, now);
+  return times.length === 0 ? null : new Date(times[0]).toISOString();
+}
+
+/**
  * The interval a document's own dates imply, or null if they imply nothing.
  *
  * Split out from `nextInterval` because of *when* the two can be answered. This

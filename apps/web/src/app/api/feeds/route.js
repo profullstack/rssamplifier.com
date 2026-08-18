@@ -2,6 +2,7 @@ import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { guard } from '../../../lib/apiguard.js';
+import { freshness } from '../../../lib/freshness.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +38,9 @@ export async function GET(req) {
       offset,
       kind,
       kinds: q.KINDS,
-      feeds: rows.map((f) => ({
+      feeds: rows.map((f) => {
+        const fresh = freshness(f, f.last_published_at);
+        return {
         slug: f.slug,
         title: f.title,
         description: f.description,
@@ -48,8 +51,17 @@ export async function GET(req) {
         itemCount: f.item_count,
         status: f.status,
         lastSuccessAt: f.last_success_at,
+        // Whether this feed is worth trusting, answered rather than implied.
+        // `lastSuccessAt` alone says when we last read the publisher and
+        // nothing about whether the publisher is still publishing -- and about
+        // a sixth of the directory is dormant, current as of minutes ago and
+        // silent since 2023. See lib/freshness.js.
+        freshness: fresh.state,
+        lastPublishedAt: fresh.publishedAt,
+        nextCheckAt: fresh.nextCheckAt,
         page: `${siteUrl()}/${f.slug}`,
-      })),
+        };
+      }),
     },
     allowed.headers,
   );
