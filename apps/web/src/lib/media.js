@@ -94,9 +94,24 @@ const ARTICLE_TEXT = 1200;
  * @param {unknown} contentHtml the post's own body, as the feed shipped it
  * @returns {boolean}
  */
-export function isEpisode(post, contentHtml) {
+export function isEpisode(post, contentHtml, contentChars = null) {
   if (!mediaKind(post)) return false;
-  return textLength(contentHtml) < ARTICLE_TEXT;
+
+  // The stored count first, the body second. Bodies stopped being stored at
+  // crawl time in 0031 -- they were 10 GB of a 14 GB database -- so for
+  // anything crawled since, `contentHtml` is null and measuring it would return
+  // 0 and call every podcast-shaped post an episode. The crawl now records the
+  // length instead, which is the only thing this function ever wanted from it.
+  // Rows that predate the change still carry their body and are measured
+  // directly.
+  // Tested for null explicitly rather than through Number(), because
+  // `Number(null)` is 0 and `Number.isFinite(0)` is true -- so the obvious
+  // spelling accepts "no count" as "a body of zero length" and calls every post
+  // with media an episode. Written that way first; two tests caught it.
+  const known = contentChars !== null && contentChars !== undefined && Number.isFinite(Number(contentChars));
+  const chars = known ? Number(contentChars) : textLength(contentHtml);
+
+  return chars < ARTICLE_TEXT;
 }
 
 /**
