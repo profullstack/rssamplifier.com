@@ -339,11 +339,26 @@ export async function upsertItems(db, feedId, items) {
  * @returns {Array<{ sql: string, args: unknown[] }>}
  */
 function itemStatements(feedId, items, now) {
-  const rows = items.filter((i) => i.guid);
+  // Newest first, then capped. A feed that ships its entire archive -- and they
+  // exist, up to 1,494 entries in a production sample -- otherwise costs a
+  // single first crawl one row-write per entry, and there are 302k feeds in the
+  // queue that have never been read. Capping the *write* rather than the stored
+  // total is what keeps the archive growing: later crawls add whatever is new,
+  // so a feed accumulates history at the rate it publishes instead of arriving
+  // all at once.
+  //
+  // Undated items sort last rather than being dropped: plenty of the small web
+  // publishes no dates at all, and a feed with none would otherwise have its
+  // items chosen arbitrarily.
+  const rows = items
+    .filter((i) => i.guid)
+    .slice()
+    .sort((a, b) => published(b) - published(a))
+    .slice(0, ITEMS_PER_CRAWL);
 
   return rows.map((i) => ({
     sql: `insert into feed_items
-      (id, feed_id, guid, url, title, summary, content_html, author, image_url, published_at,
+      (id, feed_id, guid, url, title, summary, content_chars, author, image_url, published_at,
        categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at, cluster_key)
       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict (feed_id, guid) do update set
@@ -367,7 +382,8 @@ function itemStatements(feedId, items, now) {
         audio_url = coalesce(feed_items.audio_url, excluded.audio_url),
         audio_type = coalesce(feed_items.audio_type, excluded.audio_type),
         audio_bytes = coalesce(feed_items.audio_bytes, excluded.audio_bytes),
-        audio_seconds = coalesce(feed_items.audio_seconds, excluded.audio_seconds)
+        audio_seconds = coalesce(feed_items.audio_seconds, excluded.audio_seconds),
+        content_chars = coalesce(feed_items.content_chars, excluded.content_chars)
       -- The guard, and the reason it is worth the five lines.
       --
       -- Every crawl re-offers the publisher's entire document, so this conflict
@@ -389,7 +405,8 @@ function itemStatements(feedId, items, now) {
          or (feed_items.audio_url is null and excluded.audio_url is not null)
          or (feed_items.audio_type is null and excluded.audio_type is not null)
          or (feed_items.audio_bytes is null and excluded.audio_bytes is not null)
-         or (feed_items.audio_seconds is null and excluded.audio_seconds is not null)`,
+         or (feed_items.audio_seconds is null and excluded.audio_seconds is not null)
+         or (feed_items.content_chars is null and excluded.content_chars is not null)`,
     args: [
       newId(),
       feedId,
@@ -397,14 +414,13 @@ function itemStatements(feedId, items, now) {
       i.url || null,
       i.title || '(untitled)',
       i.summary || null,
-      // Kept, deliberately, though it is ~10 GB of a 14 GB database. Storing
-      // it was investigated as the cause of the crawler's write stalls and
-      // cleared: a write transaction against this database costs ~370ms
-      // whatever is inside it, and payload size does not move that number --
-      // one insert measured 168s while a hundred measured 23.7s in the same
-      // session. Bytes are not the constraint here, transactions are, and the
-      // body rides along inside a transaction that is happening anyway.
-      i.contentHtml || null,
+      // The length, not the body -- see 0031. Payload size genuinely does not
+      // decide how long a single write takes here (a 1.1 MB batch beat a 12 KB
+      // one), but it decides how big the database gets, and size is what makes
+      // write slots scarce. This column was 10 GB of 14. The body a reader
+      // actually opens is fetched then and cached in `item_extracts`; the only
+      // question ever asked of the stored copy was how long it was.
+      textLength(i.contentHtml),
       i.author || null,
       i.imageUrl || null,
       i.publishedAt ?? null,
@@ -421,6 +437,47 @@ function itemStatements(feedId, items, now) {
       clusterKey(i.title || '') ?? '',
     ],
   }));
+}
+
+/**
+ * How many items one crawl may write.
+ *
+ * Not how many a feed may have. See `itemStatements`: a crawl stores the newest
+ * this many, and the next crawl stores whatever has appeared since, so a feed's
+ * archive still grows -- it just stops arriving in one 1,500-row transaction on
+ * a database whose write path is the scarce resource.
+ */
+const ITEMS_PER_CRAWL = Number(process.env['ITEMS_PER_CRAWL']) || 50;
+
+/**
+ * An item's publication time as a number, for sorting. Undated sorts last.
+ *
+ * @param {{ publishedAt?: unknown }} item
+ * @returns {number}
+ */
+function published(item) {
+  const t = Date.parse(String(item?.publishedAt ?? ''));
+  return Number.isFinite(t) ? t : -Infinity;
+}
+
+/**
+ * How much text a body carries, with the markup taken out.
+ *
+ * Deliberately identical to `textLength` in apps/web/src/lib/media.js, which is
+ * where this measurement is consumed and where it used to be taken. It moved to
+ * the write path when the body stopped being stored: the reader cannot measure
+ * what it is not given, so the crawl measures it once instead.
+ *
+ * @param {unknown} html
+ * @returns {number|null} null when the feed shipped no body at all, which is
+ *   different from an empty one and is what the coalesce above relies on.
+ */
+function textLength(html) {
+  if (html === null || html === undefined) return null;
+  return String(html)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().length;
 }
 
 
