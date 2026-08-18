@@ -24,22 +24,26 @@
 //
 // v5 is a pure artwork bump: both logos were recut and the home-screen icons
 // were redrawn from the current mark, under the names they already had.
-const VERSION = 'v5';
+//
+// v6 drops the dark wordmark: the masthead serves one logo to every palette
+// now, so the shell is one URL shorter. Without the bump an install that
+// precached the pair under v5 would hold the retired file forever, since
+// nothing requests it any more and only the version sweep can evict it.
+const VERSION = 'v6';
 const SHELL = `shell-${VERSION}`;
 const ASSETS = `assets-${VERSION}`;
 
 const OFFLINE_URL = '/offline';
 // The logo is in the shell because the masthead is on the offline page too, and
 // a brand that only appears once you are back online is worse than none.
-// Both logos, because which one the masthead asks for is decided by the
-// reader's colour scheme and the install has no way to know which that is.
+// One logo, because the masthead asks for the same file whatever the reader's
+// colour scheme is, so there is no second variant for the install to guess at.
 // The icon is the one the manifest names, not the root alias beside it: an
 // install that precached a different URL than the manifest asks for is an
 // install holding two copies of the same drawing.
 const SHELL_URLS = [
   OFFLINE_URL,
   '/logo.png',
-  '/logo-dark.png',
   '/icons/icon-192x192.png',
   '/manifest.webmanifest',
 ];
