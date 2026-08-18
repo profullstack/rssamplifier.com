@@ -48,6 +48,15 @@ export default async function AuthorPage({ params }) {
   const feeds = person.feeds ?? [];
   const links = person.links ?? [];
 
+  // What they have published lately, read off their own feeds' ids rather than
+  // searched for -- see `postsByAuthor`. A profile that lists the blogs but not
+  // the writing is a card catalogue entry; the point of a page about a person
+  // is what they wrote.
+  const posts = await authors.postsByAuthor(
+    db(),
+    feeds.map((f) => String(f.id ?? '')).filter(Boolean),
+  );
+
   // Their own site is a link like any other in the row below, but it is also
   // the thing schema.org means by `url`, so it is pulled out here.
   const homepage =
@@ -86,10 +95,41 @@ export default async function AuthorPage({ params }) {
       <p className="eyebrow">
         <a href="/authors">Authors</a>
       </p>
-      <h1>{person.name}</h1>
-      {person.bio && <p className="lede">{person.bio}</p>}
 
-      <AuthorLinks links={links} />
+      {/* The profile proper: picture, name, bio, and the links as things to
+          press. This is the shape everybody already reads as "a page about a
+          person", and it is worth matching rather than inventing -- somebody
+          arriving from a byline is looking for who this is and where else to
+          find them, in that order. */}
+      <header className="profile">
+        {person.avatar_url && (
+          // Their own published avatar, from an h-card or structured data. It
+          // was in this page's JSON-LD from the start and never rendered, which
+          // is an odd way round: the machines could see their face and the
+          // people could not.
+          //
+          // A plain <img>: the picture is on somebody else's host, and Next's
+          // optimiser would need every author's domain allow-listed in advance,
+          // which for an open directory is a list that cannot be written.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="profile-avatar"
+            src={String(person.avatar_url)}
+            alt=""
+            width={96}
+            height={96}
+            loading="lazy"
+            // A dead avatar URL is common -- people move hosts -- and the
+            // broken-image icon is worse than no picture at all.
+            referrerPolicy="no-referrer"
+          />
+        )}
+
+        <h1>{person.name}</h1>
+        {person.bio && <p className="profile-bio">{person.bio}</p>}
+      </header>
+
+      <AuthorLinks links={links} prominent />
 
       <h2>
         {feeds.length === 1 ? 'Publishes' : 'Publishes'}{' '}
@@ -121,6 +161,36 @@ export default async function AuthorPage({ params }) {
             );
           })}
         </ul>
+      )}
+
+      {posts.length > 0 && (
+        <>
+          <h2>Lately</h2>
+          <ul className="post-list">
+            {posts.map((post) => (
+              <li key={`${post.feed_slug}-${post.guid}`}>
+                <h3>
+                  <a
+                    href={`/${encodeURIComponent(String(post.feed_slug))}/read?p=${encodeURIComponent(String(post.guid))}`}
+                  >
+                    {post.title}
+                  </a>
+                </h3>
+                <p className="hint">
+                  <a href={`/${encodeURIComponent(String(post.feed_slug))}`}>{post.feed_title}</a>
+                  {post.published_at && (
+                    <>
+                      {' · '}
+                      <time dateTime={String(post.published_at)}>
+                        {String(post.published_at).slice(0, 10)}
+                      </time>
+                    </>
+                  )}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {/* Said plainly, on the page it is about. Somebody who finds themselves
