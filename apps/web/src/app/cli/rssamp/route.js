@@ -38,7 +38,7 @@ export async function GET() {
       'content-type': 'text/plain; charset=utf-8',
       'content-disposition': 'inline; filename="rssamp"',
       'access-control-allow-origin': '*',
-      'cache-control': 'public, max-age=300',
+      'cache-control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=3600',
     },
   });
 }

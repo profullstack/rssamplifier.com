@@ -88,7 +88,7 @@ function json(body, extra = {}) {
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'access-control-allow-origin': '*',
-      'cache-control': 'public, max-age=300',
+      'cache-control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=3600',
       ...extra,
     },
   });

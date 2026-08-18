@@ -21,7 +21,7 @@ export async function GET() {
       'access-control-allow-origin': '*',
       // Short: this is the URL printed on the homepage, and a stale installer
       // pointing at a moved download is the one failure nobody can debug.
-      'cache-control': 'public, max-age=300',
+      'cache-control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=3600',
     },
   });
 }
