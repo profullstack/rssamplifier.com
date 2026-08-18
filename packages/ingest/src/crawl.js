@@ -2,6 +2,7 @@ import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
 
 import { storeCredits } from './enrich.js';
+import { intervalFromDates, nextInterval } from './cadence.js';
 
 /** Backoff ladder in minutes, indexed by consecutive error count. */
 const BACKOFF = [60, 180, 360, 720, 1440];
@@ -27,23 +28,27 @@ export function backoffMinutes(errorCount) {
 }
 
 /**
- * How long to wait before re-crawling a feed that answered.
+ * How long to wait before re-crawling a feed whose document carried no dates.
  *
- * Re-fetching every feed hourly is affordable for a hundred blogs and not for
- * fifty thousand: at one crawl per feed per hour a 47k directory needs 783
- * fetches a minute, forever. Most of the small web posts monthly, so a feed
- * that produced nothing new doubles its gap up to a day, and one that did
- * publish drops straight back to hourly. The directory ends up spending its
- * request budget on the blogs that are actually active.
+ * This is now only the fallback half of the schedule — see cadence.js, which
+ * decides from the feed's own publishing rhythm whenever the document gives it
+ * two believable dates to work with, and which is what the crawl actually
+ * calls. This remains as the answer for an undated feed, and it is deliberately
+ * the *old* answer, ceiling included: without dates there is no evidence that a
+ * quiet feed has been abandoned, only that it is quiet, and a 90-day gap is too
+ * strong a conclusion to draw from no data at all.
+ *
+ * Delegated rather than reimplemented so there is one statement of the policy.
+ * The same ladder also exists in SQL inside `storeCrawl`, because this branch
+ * depends on how many posts the crawl stored and that is not known until the
+ * write has run; the tests pin the two together.
  *
  * @param {number} newItems items stored by the crawl that just ran
  * @param {number} currentMinutes the feed's existing interval
  * @returns {number} minutes
  */
 export function nextIntervalMinutes(newItems, currentMinutes = MIN_INTERVAL) {
-  if (newItems > 0) return MIN_INTERVAL;
-  const current = Number(currentMinutes) || MIN_INTERVAL;
-  return Math.min(Math.max(current, MIN_INTERVAL) * 2, MAX_QUIET_INTERVAL);
+  return nextInterval({ items: [], newItems, currentMinutes });
 }
 
 /**
@@ -132,12 +137,27 @@ export async function crawlFeed(db, feed, opts = {}) {
   // "new items" is what once kept `nextIntervalMinutes` pinned to its floor and
   // had **every feed in the directory re-crawled hourly for ever**, with the
   // backoff ladder never once engaging.
+  // When to come back, decided from the feed's own publishing rhythm — see
+  // cadence.js. Null when the document carries no usable dates, which hands the
+  // decision to the old doubling ladder inside `storeCrawl` (it depends on what
+  // this write stores, so it cannot be known before the write happens).
+  //
+  // This is the change that made the directory schedulable at all. The old
+  // ladder capped a silent feed at one re-read a day, so an abandoned podcast
+  // was fetched 365 times a year for ever; sampling production, 15.8% of active
+  // feeds had not published in two years and three quarters had not published
+  // in a month. Demand was 62,700 crawls an hour against a measured capacity
+  // near 2,000. Projected over the same sample, rhythm-based scheduling asks
+  // for 2,241 an hour — 28 times fewer, and inside what the crawler can do.
+  const interval = intervalFromDates(resolved.feed.items);
+
   const { stored: sent } = await q.storeCrawl(
     db,
     id,
     resolved.feed.items,
     resolved.feed,
     Number(feed.item_count ?? 0),
+    interval,
   );
 
   // Only when the feed actually published something, or when it has no topics

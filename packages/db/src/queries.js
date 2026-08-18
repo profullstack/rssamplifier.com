@@ -458,15 +458,34 @@ function itemStatements(feedId, items, now) {
  * @returns {Promise<{ total: number, stored: number }>} `stored` is the change
  *   in the stored total — posts actually new, not posts offered.
  */
-export async function storeCrawl(db, id, items, feed, previousItemCount = 0) {
+export async function storeCrawl(db, id, items, feed, previousItemCount = 0, intervalMinutes = null) {
   const now = nowIso();
   const before = Number(previousItemCount) || 0;
 
-  // Kept verbatim from `nextIntervalMinutes`: floor 60, double a quiet feed,
-  // ceiling one day. See the note above about why it appears twice.
-  const LADDER = `case when (select count(*) from feed_items where feed_id = ?) > ?
-                       then 60
-                       else min(max(coalesce(fetch_interval_minutes, 60), 60) * 2, 1440) end`;
+  // How long until this feed is read again, and there are two ways to know.
+  //
+  // Usually the caller has already worked it out from the dates in the document
+  // it just parsed — see `intervalFromDates` in packages/ingest/src/cadence.js,
+  // which schedules a feed on its own publishing rhythm rather than on a fixed
+  // ladder. That is by far the better answer and it is free, since the document
+  // is in hand either way.
+  //
+  // When the document carries no usable dates the caller passes null, and the
+  // fallback below has to be evaluated in SQL rather than in JS: it depends on
+  // whether this crawl actually stored anything, and that is not known until
+  // this very statement has run. It is the old ladder verbatim — floor 60,
+  // double a quiet feed, ceiling one day.
+  const chosen = Number(intervalMinutes);
+  const LADDER = Number.isFinite(chosen) && chosen > 0
+    ? String(Math.round(chosen))
+    : `case when (select count(*) from feed_items where feed_id = ?) > ?
+             then 60
+             else min(max(coalesce(fetch_interval_minutes, 60), 60) * 2, 1440) end`;
+  // The ladder binds two parameters; a literal interval binds none, so the
+  // argument list has to follow it. Getting this wrong shifts every later
+  // parameter by two and is exactly the kind of silent corruption that a
+  // scheduling column does not advertise, so it is derived rather than typed.
+  const ladderArgs = LADDER.startsWith('case') ? [id, before] : [];
 
   const settle = {
     sql: `update feeds set
@@ -494,8 +513,8 @@ export async function storeCrawl(db, id, items, feed, previousItemCount = 0) {
       feed.language || null,
       now,
       now,
-      id, before, // fetch_interval_minutes ladder
-      id, before, // next_fetch_at ladder
+      ...ladderArgs, // fetch_interval_minutes
+      ...ladderArgs, // next_fetch_at
       id, // item_count
       now,
       id,

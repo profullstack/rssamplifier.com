@@ -27,21 +27,46 @@ import { crawlFeed, nextIntervalMinutes } from '../src/crawl.js';
 let dir;
 let db;
 
-/** A feed document that never changes, the way a dormant blog's does not. */
-const DOCUMENT = {
+const DAY = 86_400_000;
+
+/**
+ * A feed document that never changes, the way a dormant blog's does not.
+ *
+ * Its posts are a week apart with the newest a day old, and the dates are
+ * relative to now rather than fixed, because the schedule is now derived from
+ * them: a hard-coded 2026 date would quietly become a two-year-dead feed and
+ * these tests would start asserting the abandonment path by accident.
+ *
+ * @param {number} [newestAgoDays]
+ * @param {number} [gapDays]
+ */
+function document(newestAgoDays = 1, gapDays = 7) {
+  return {
+    ok: true,
+    feed: {
+      title: 'A Quiet Blog',
+      description: 'It posts rarely.',
+      categories: ['writing'],
+      credits: [],
+      items: Array.from({ length: 5 }, (_, i) => ({
+        guid: `post-${i}`,
+        url: `https://quiet.example/${i}`,
+        title: `Post ${i}`,
+        summary: 'Words.',
+        publishedAt: new Date(Date.now() - (newestAgoDays + i * gapDays) * DAY).toISOString(),
+      })),
+    },
+  };
+}
+
+const DOCUMENT = document();
+
+/** The same blog, with no dates at all: the fallback ladder's territory. */
+const UNDATED = {
   ok: true,
   feed: {
-    title: 'A Quiet Blog',
-    description: 'It posts rarely.',
-    categories: ['writing'],
-    credits: [],
-    items: Array.from({ length: 5 }, (_, i) => ({
-      guid: `post-${i}`,
-      url: `https://quiet.example/${i}`,
-      title: `Post ${i}`,
-      summary: 'Words.',
-      publishedAt: '2026-08-01T00:00:00.000Z',
-    })),
+    ...DOCUMENT.feed,
+    items: DOCUMENT.feed.items.map(({ publishedAt, ...rest }) => rest),
   },
 };
 
@@ -86,20 +111,49 @@ test('a re-crawl that stores nothing reports nothing', async () => {
   assert.equal(res.newItems, 0, 'items offered is not items stored');
 });
 
-test('a quiet feed backs off instead of being re-read hourly for ever', async () => {
+test('a feed is scheduled on its own rhythm rather than on a fixed ladder', async () => {
+  // The weekly blog. It is read every few days whatever the previous interval
+  // was -- the schedule is a property of the feed, not a counter that has to
+  // climb, so it is right on the very first crawl instead of after eight.
   const feed = await seed();
   await crawlFeed(db, feed, { resolve });
 
-  const first = await q.feedBySlug(db, 'quiet');
-  assert.equal(Number(first.fetch_interval_minutes), 60, 'a feed that just published stays hourly');
+  const first = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes);
+  assert.ok(first / 1440 > 3 && first / 1440 < 4, `weekly blog -> ${(first / 1440).toFixed(1)} days`);
 
-  await crawlFeed(db, first, { resolve });
-  const second = await q.feedBySlug(db, 'quiet');
-  assert.equal(Number(second.fetch_interval_minutes), 120, 'and one that did not, doubles');
+  // Crawling it again does not ratchet it anywhere: same document, same answer.
+  await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve });
+  const second = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes);
+  assert.equal(second, first, 'and it is stable, not a ratchet');
+});
 
-  await crawlFeed(db, second, { resolve });
-  const third = await q.feedBySlug(db, 'quiet');
-  assert.equal(Number(third.fetch_interval_minutes), 240);
+test('the abandoned feed stops being fetched daily for ever', async () => {
+  // This is the case the whole change exists for: under the old ladder a feed
+  // whose last post was in 2024 was still fetched every single day, and 15.8%
+  // of the sampled directory looked like that.
+  const feed = await seed();
+  const abandoned = async () => document(800, 7);
+
+  await crawlFeed(db, feed, { resolve: abandoned });
+
+  const minutes = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes);
+  assert.ok(minutes / 1440 > 30, `two years dead -> ${(minutes / 1440).toFixed(0)} days, not 1`);
+});
+
+test('an undated feed keeps the old doubling ladder, ceiling included', async () => {
+  // No dates is not evidence of abandonment, so these feeds keep exactly the
+  // behaviour they had -- including the one-day cap that the dated path drops.
+  const feed = await seed();
+  const undated = async () => UNDATED;
+
+  await crawlFeed(db, feed, { resolve: undated });
+  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 60, 'stored posts, so hourly');
+
+  await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: undated });
+  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 120, 'then doubles');
+
+  await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: undated });
+  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 240);
 });
 
 test('a re-crawl that stored nothing does not go near the author path again', async () => {
@@ -199,9 +253,16 @@ test('next_fetch_at is written in the format the due query compares against', as
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
     `next_fetch_at must be an ISO instant, got ${written}`,
   );
-  // Round-trips through Date, and lands an hour out rather than anywhere else.
+  // Round-trips through Date, and lands exactly where the scheduler said: the
+  // weekly blog's half-cycle, not some other number arrived at by a different
+  // route. The two are computed in different languages -- JS chooses the
+  // interval, SQL turns it into an instant -- so this is the join between them.
   const minutes = (Date.parse(written) - Date.now()) / 60_000;
-  assert.ok(minutes > 55 && minutes <= 61, `an hour ahead, got ${minutes.toFixed(1)}m`);
+  const chosen = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes);
+  assert.ok(
+    Math.abs(minutes - chosen) < 2,
+    `next_fetch_at must be ${chosen}m out to match fetch_interval_minutes, got ${minutes.toFixed(1)}m`,
+  );
 
   // And the scheduler agrees: not due now, due once the clock passes it.
   const dueNow = await q.dueFeeds(db, 100);
@@ -212,23 +273,30 @@ test('next_fetch_at is written in the format the due query compares against', as
   );
 });
 
-test('a feed that publishes again drops straight back to hourly', async () => {
+test('a feed that comes back is picked up again rather than written off', async () => {
+  // The reason the ceiling is 90 days and not "never". A feed left for dead is
+  // still asked occasionally, and the moment it answers with something recent
+  // it goes straight back onto a normal schedule.
   const feed = await seed();
-  await crawlFeed(db, feed, { resolve });
-  await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve });
-  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 120);
+  await crawlFeed(db, feed, { resolve: async () => document(800, 7) });
 
-  const withNews = {
-    ok: true,
-    feed: {
-      ...DOCUMENT.feed,
-      items: [...DOCUMENT.feed.items, { guid: 'post-new', url: 'https://quiet.example/new', title: 'New' }],
-    },
-  };
+  const dormant = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes);
+  assert.ok(dormant / 1440 > 30, 'left for dead');
 
-  const res = await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: async () => withNews });
-  assert.equal(res.newItems, 1);
-  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 60);
+  // It posts again today.
+  const returned = async () => document(0.1, 7);
+  const res = await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: returned });
+
+  // Nothing is *stored*: the guids are the ones already on file, only their
+  // dates moved. The schedule still recovers, and that is the property worth
+  // pinning -- it is read off the document the crawl parsed, not inferred from
+  // what the write happened to insert. A feed that re-dates its archive, or
+  // that we first met while it was dormant, is rescheduled correctly anyway.
+  assert.equal(res.newItems, 0, 'no new posts were stored');
+
+  const revived = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes);
+  assert.ok(revived / 1440 < 5, `back on its rhythm -> ${(revived / 1440).toFixed(1)} days`);
+  assert.ok(revived < dormant, 'and far sooner than it was going to be asked');
 });
 
 test('the stored item count tracks what is really there', async () => {
