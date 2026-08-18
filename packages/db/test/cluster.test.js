@@ -98,17 +98,15 @@ test('the backfill walks to the end of the table and then says so', async () => 
   // Put the rows back the way they looked before the column existed.
   await db.execute(`update feed_items set cluster_key = null`);
 
-  // Walk the whole table in pages, exactly as the poller does.
-  let cursor = '';
+  // Take the remaining rows in pages, exactly as the poller does.
   let keyed = 0;
   let passes = 0;
   for (;;) {
-    const pass = await q.backfillClusterKeys(db, 2, cursor);
+    const pass = await q.backfillClusterKeys(db, 2);
     passes += 1;
     keyed += pass.keyed;
-    if (pass.cursor === null) break;
-    cursor = pass.cursor;
-    assert.ok(passes < 100, 'the walk must terminate');
+    if (pass.done) break;
+    assert.ok(passes < 100, 'the backfill must terminate');
   }
 
   const { rows } = await db.execute(
@@ -124,25 +122,38 @@ test('the backfill walks to the end of the table and then says so', async () => 
   assert.equal(generic.rows[0].cluster_key, '', 'a generic title is scanned but not keyed');
 });
 
-test('the cursor advances rather than repeating the same page', async () => {
+test('each pass consumes work rather than repeating it', async () => {
   const f = await feed('cursor');
   await items(
     f.id,
     Array.from({ length: 6 }, (_, i) => `A sufficiently long headline number ${i}`),
   );
+  await db.execute(`update feed_items set cluster_key = null where feed_id = '${f.id}'`);
 
-  const first = await q.backfillClusterKeys(db, 3, '');
-  const second = await q.backfillClusterKeys(db, 3, first.cursor);
+  const first = await q.backfillClusterKeys(db, 3);
+  const second = await q.backfillClusterKeys(db, 3);
 
   assert.equal(first.scanned, 3);
-  assert.ok(second.cursor > first.cursor, 'the walk moves forward');
+  assert.equal(second.scanned, 3, 'the second pass sees the rows the first left');
+  assert.equal(first.done, false);
+  assert.equal(second.done, false);
+
+  // Six rows keyed in two passes of three: the search is stateless, so it can
+  // only make progress if each pass actually writes what it read.
+  const { rows } = await db.execute(
+    `select count(*) as n from feed_items where feed_id = '${f.id}' and cluster_key is null`,
+  );
+  assert.equal(Number(rows[0].n), 0, 'both passes stuck');
 });
 
-test('a pass over already-keyed rows writes nothing', async () => {
+test('a pass with no unkeyed rows left reports itself done', async () => {
   const f = await feed('already');
   await items(f.id, ['A sufficiently long headline for this one']);
 
-  // Rows keyed on the way in must not be rewritten by a re-walk after restart.
-  const pass = await q.backfillClusterKeys(db, 500, '');
+  // Rows keyed on the way in are never selected at all, so a restart after the
+  // backfill has drained costs one read and then stops the timer for good.
+  const pass = await q.backfillClusterKeys(db, 500);
   assert.equal(pass.keyed, 0, 'nothing needed keying');
+  assert.equal(pass.scanned, 0, 'already-keyed rows are not even read');
+  assert.equal(pass.done, true, 'and the caller is told to latch off');
 });

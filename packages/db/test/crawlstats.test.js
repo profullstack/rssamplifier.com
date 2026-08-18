@@ -90,6 +90,13 @@ test('crawlStats counts states, backlog and throughput', async () => {
 
   await q.upsertItems(db, healthy.id, [{ guid: 'new-1', title: 'Just in' }]);
 
+  // Throughput no longer comes from counting distinct feeds by their
+  // last_fetched_at -- that needed a scan of the whole table, which is what
+  // made this page take fifteen seconds. It comes from the crawl_hourly rollup
+  // the poller already writes once a tick, so the tick has to be recorded here
+  // for the same reason it is recorded in production.
+  await q.recordCrawlHour(db, { fetched: 2, succeeded: 1, failed: 1, items: 1 });
+
   const stats = await q.crawlStats(db);
 
   assert.equal(stats.total, 5);
@@ -101,12 +108,34 @@ test('crawlStats counts states, backlog and throughput', async () => {
   // 'gone' is dead, so it is not a backlog however overdue it looks.
   assert.equal(stats.due, 2, 'stale + broken are due; the dead feed is not');
 
-  assert.equal(stats.fetchedLastHour, 2, 'healthy and broken were fetched within the hour');
-  assert.equal(stats.succeededLastDay, 1, 'only healthy succeeded recently');
+  // A rate, not a bucket count: one recorded tick of 2 fetches, over a window
+  // that is at least an hour wide, is 2 an hour.
+  assert.equal(stats.fetchedLastHour, 2, 'the recorded tick sets the hourly rate');
+  assert.equal(stats.succeededLastDay, 1, 'only one crawl in the rollup succeeded');
   assert.equal(stats.staleActive, 1, 'the stale active feed is singled out');
   assert.equal(stats.itemsLastDay, 1);
   assert.ok(stats.lastSuccessAt, 'reports the most recent success across the directory');
   assert.ok(stats.nextFetchAt, 'reports when the next feed comes due');
+
+  // The liveness clock the health badge reads, and the reason it is not
+  // derived from the throughput figures: 'healthy' was crawled two minutes ago,
+  // so the crawler is plainly running whatever the rollup says.
+  assert.equal(stats.idleMinutes, 2, 'minutes since the last successful crawl anywhere');
+});
+
+test('the health clock survives a rollup the poller never managed to write', async () => {
+  // recordCrawlHour is called inside a try/catch in the poller and is allowed
+  // to fail without failing the crawl. When it does, every throughput figure
+  // reads zero -- and the page must still be able to tell that the crawler is
+  // alive, or it reports an outage every time a bookkeeping write is lost.
+  await db.execute('delete from crawl_hourly');
+
+  const stats = await q.crawlStats(db);
+
+  assert.equal(stats.fetchedLastHour, 0, 'no rollup, no throughput figure');
+  assert.equal(stats.itemsLastDay, 0);
+  assert.equal(stats.idleMinutes, 2, 'but liveness comes off feeds and is unaffected');
+  assert.equal(stats.active, 2, 'as do the state counts');
 });
 
 test('failingFeeds surfaces the worst offenders with their error', async () => {
