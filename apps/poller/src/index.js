@@ -90,14 +90,43 @@ const clusterBatch = Number(env['CLUSTER_BACKFILL_BATCH']) || 500;
 // eight hours, and the walk is a bounded indexed read either way.
 const clusterIntervalMs = (Number(env['CLUSTER_BACKFILL_SECONDS']) || 10) * 1000;
 
-// Feeds looked at for authorship per pass, and how often a pass runs.
+// Feeds looked at for authorship per pass, how many publishers are asked at
+// once, and how often a pass runs.
 //
-// Deliberately the smallest batch in this file. Each feed costs three to five
-// fetches of somebody's blog, and unlike a crawl those pages are not a machine
-// interface — they are the site itself. Five a minute walks the whole
-// directory in about a week, which is far faster than people change where they
-// can be found, and slow enough that no publisher notices us doing it.
-const authorBatch = Number(env['AUTHOR_BATCH_SIZE']) || 5;
+// Still the gentlest work in this file per publisher: each feed costs three to
+// five fetches of somebody's blog, and unlike a crawl those pages are not a
+// machine interface — they are the site itself. What changed is the arithmetic
+// around that. "Five a minute walks the directory in about a week" was true of
+// the 52,691 feeds there were when this was written; there are now 369,054, so
+// the same setting needs about ten months. And it never actually ran at five a
+// minute: the pass was serial, a slow site can hold a 15-second timeout three
+// times over, and `enrichTick` skips a tick while the last one is still going
+// — so a batch of five regularly outlasted its own interval. Measured over the
+// first two days in production: 1,536 feeds, an eighth of the configured rate.
+//
+// None of which is why the directory has no authors today. `AUTHOR_ENRICH=0`
+// and `CRAWL_AUXILIARY_WRITES=0` are both set in production, and switching them
+// off took the crawl from ~300 feeds an hour to ~5,000. That is the real
+// constraint and it is a write constraint; the settings below only start
+// mattering once those are switched back on.
+//
+// Raised, but nowhere near as far as the fetch budget alone would allow, and
+// the reason is writes rather than politeness. Each enriched feed opens a write
+// transaction, an empty one against this database currently costs ~2.5s, and
+// they serialize — so enrichment competes directly with the crawl for the one
+// resource the crawl is already short of. Forty a minute would spend more write
+// time than the crawler has to give. Ten across four publishers is roughly
+// eight times the wall-clock throughput of the serial pass at a write rate the
+// crawl can absorb, and walks the directory in about five weeks.
+//
+// Both numbers are env-tunable because the right value moves with the write
+// budget: when the backlog is clear and an empty transaction is fast again,
+// this can go up a long way before the fetching becomes the limit.
+//
+// No publisher is asked for more than one page at a time at any setting — that
+// guarantee lives in `enrichDue` and was never what cost the throughput.
+const authorBatch = Number(env['AUTHOR_BATCH_SIZE']) || 10;
+const authorConcurrency = Number(env['AUTHOR_CONCURRENCY']) || 4;
 const authorIntervalMs = (Number(env['AUTHOR_INTERVAL_SECONDS']) || 60) * 1000;
 // How long before a feed is looked at again. Long, because the answer changes
 // when somebody redesigns their blog or joins a new network, not weekly.
@@ -540,6 +569,7 @@ async function enrichTick() {
     const result = await enrichDue(db, authorBatch, {
       verify: authorVerify,
       recheckDays: authorRecheckDays,
+      concurrency: authorConcurrency,
       onEvent: publishLog ? recorder.record : null,
     });
     // Silent when nothing was due, which is the steady state once the

@@ -245,7 +245,17 @@ export async function crawlFeed(db, feed, opts = {}) {
   let creditStatements = [];
   if (AUXILIARY_WRITES && (publishedSomethingNew || !hasAuthors)) {
     try {
-      const prepared = await prepareCredits(db, { id, feed_url: String(feed.feed_url) }, resolved.feed.credits ?? []);
+      // The contacts are the feed's own, and they are passed here rather than
+      // left to the enrichment pass because they cost nothing: the document is
+      // already parsed, so a publisher who names no usable person but prints a
+      // mailbox is reachable from the first crawl instead of from whenever the
+      // week-long site walk gets to them.
+      const prepared = await prepareCredits(
+        db,
+        { id, feed_url: String(feed.feed_url) },
+        resolved.feed.credits ?? [],
+        resolved.feed.contacts ?? [],
+      );
       creditStatements = prepared.statements;
       people = prepared.people;
     } catch {

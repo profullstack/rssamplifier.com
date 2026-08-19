@@ -604,6 +604,186 @@ function absorb(into, from) {
 }
 
 /**
+ * Every channel-level statement about who publishes a feed, before any of them
+ * has been judged.
+ *
+ * Split out of `feedCredits` so that the judging can happen twice, on the same
+ * list, for two different questions. `feedCredits` asks "is this a person?" and
+ * keeps the ones that are. `feedContacts` asks "is there a way to reach this
+ * publisher?" -- which has a useful answer even when the first question's is
+ * no.
+ *
+ * Item bylines are deliberately not here. They are statements about one post,
+ * and a contact harvested from one is not the feed's.
+ *
+ * @param {any} channel the raw parsed channel/feed object
+ * @param {'rss'|'atom'|'rdf'|'json'} format
+ * @param {string} [base]
+ * @returns {object[]} inputs for `credit`, unjudged
+ */
+export function channelCreditInputs(channel, format, base = '') {
+  const ch = channel ?? {};
+  const out = [];
+
+  if (format === 'json') {
+    // JSON Feed 1.1 replaced the single `author` with `authors`, and
+    // publishers emit both; reading each in turn costs nothing.
+    for (const author of [...arr(ch.authors), ch.author]) {
+      if (!author) continue;
+      out.push({
+        name: author.name,
+        url: author.url,
+        avatar: author.avatar,
+        role: 'owner',
+        source: 'json-feed-author',
+        confidence: 0.8,
+        base,
+      });
+    }
+  }
+
+  if (format === 'atom') {
+    for (const author of arr(ch.author)) {
+      out.push({
+        name: author?.name ?? author,
+        email: author?.email,
+        url: author?.uri,
+        role: 'owner',
+        source: 'atom-feed-author',
+        confidence: 0.85,
+        base,
+      });
+    }
+    for (const contributor of arr(ch.contributor)) {
+      out.push({
+        name: contributor?.name ?? contributor,
+        email: contributor?.email,
+        url: contributor?.uri,
+        source: 'atom-contributor',
+        confidence: 0.5,
+        base,
+      });
+    }
+  }
+
+  if (format === 'rss' || format === 'rdf') {
+    // managingEditor is defined as an address and conventionally written
+    // "jane@example.com (Jane Doe)", which cleanName already understands.
+    out.push({
+      name: ch.managingEditor,
+      email: ch.managingEditor,
+      role: 'owner',
+      source: 'managing-editor',
+      confidence: 0.8,
+    });
+    // webMaster is the person who runs the server, which on the small web is
+    // usually the same person and in a newsroom never is. Believed, but at a
+    // confidence that says so.
+    out.push({
+      name: ch.webMaster,
+      email: ch.webMaster,
+      role: 'owner',
+      source: 'web-master',
+      confidence: 0.4,
+    });
+    out.push({
+      name: ch['itunes:author'],
+      role: 'owner',
+      source: 'itunes-author',
+      confidence: 0.7,
+    });
+    const owner = ch['itunes:owner'];
+    if (owner) {
+      out.push({
+        name: owner['itunes:name'] ?? owner.name,
+        email: owner['itunes:email'] ?? owner.email,
+        role: 'owner',
+        source: 'itunes-owner',
+        confidence: 0.85,
+      });
+    }
+    out.push({
+      name: ch['dc:creator'],
+      role: 'owner',
+      source: 'channel-dc-creator',
+      confidence: 0.75,
+    });
+
+    // Podcasting 2.0. `role` distinguishes a host from a guest, and a guest is
+    // not an author of the feed — they appeared on one episode of it.
+    for (const person of arr(ch['podcast:person'])) {
+      const personRole = String(person?.['@role'] ?? '').toLowerCase();
+      if (personRole && !/host|owner|author|creator|producer/.test(personRole)) continue;
+      out.push({
+        name: person?.['#text'] ?? person,
+        url: person?.['@href'],
+        avatar: person?.['@img'],
+        role: 'owner',
+        source: 'podcast-person',
+        confidence: 0.9,
+        base,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * How to reach a feed's publisher when nobody publishable was named.
+ *
+ * The gap this closes: `credit` returns null the moment a name fails the person
+ * test, and it takes the whole statement with it -- including a perfectly good
+ * address. The Daily Breadcast publishes an `itunes:owner` named "Someone Who
+ * Wants to Help" alongside a real personal mailbox. The name is correctly
+ * rejected; a directory that then also discards the mailbox has thrown away the
+ * only contact the publisher offered.
+ *
+ * These go to `feed_links`, never to an author row, for the reason `feed_links`
+ * exists: the feed published a way to reach whoever makes it, and we do not
+ * know their name. Inventing a person to hang it on would put a fiction on a
+ * page the directory presents as real people.
+ *
+ * Only statements whose name was rejected are harvested. When a name *did*
+ * survive, its address belongs to that person and `feedCredits` has already
+ * routed it there -- collecting it again here would file one address in two
+ * places and count it twice.
+ *
+ * @param {any} channel the raw parsed channel/feed object
+ * @param {'rss'|'atom'|'rdf'|'json'} format
+ * @param {string} [base]
+ * @returns {Array<{ url: string, network: string }>}
+ */
+export function feedContacts(channel, format, base = '') {
+  const out = [];
+  const seen = new Set();
+
+  for (const input of channelCreditInputs(channel, format, base)) {
+    // A name that survives is a person, and their address is theirs.
+    if (credit(input)) continue;
+
+    // `personalEmail` first, because the address is often written into the name
+    // field -- managingEditor is defined as "jane@example.com (Jane Doe)" -- and
+    // because it is what keeps a role mailbox out. info@, editor@ and support@
+    // are dropped at extraction here exactly as they are on the author side, so
+    // what reaches `feed_links` is a person's mailbox rather than a ticket
+    // queue.
+    const email = personalEmail(input.email ?? input.name);
+
+    // `classifyLink` decides both of these: it rejects anything that is not a
+    // personal profile, which is most of what a channel element points at.
+    for (const candidate of [email ? `mailto:${email}` : null, input.url]) {
+      const link = candidate ? classifyLink(candidate, base) : null;
+      if (!link || seen.has(link.url)) continue;
+      seen.add(link.url);
+      out.push({ url: link.url, network: link.network });
+    }
+  }
+
+  return out;
+}
+
+/**
  * Build one credit, or null when the name does not survive the person test.
  *
  * @param {object} input
@@ -661,127 +841,8 @@ export function credit({ name, email, url, avatar, bio, role = 'author', source,
  * @returns {Credit[]}
  */
 export function feedCredits(channel, items, format, base = '') {
-  const found = [];
   const ch = channel ?? {};
-
-  if (format === 'json') {
-    // JSON Feed 1.1 replaced the single `author` with `authors`, and
-    // publishers emit both; reading each in turn costs nothing.
-    for (const author of [...arr(ch.authors), ch.author]) {
-      if (!author) continue;
-      found.push(
-        credit({
-          name: author.name,
-          url: author.url,
-          avatar: author.avatar,
-          role: 'owner',
-          source: 'json-feed-author',
-          confidence: 0.8,
-          base,
-        }),
-      );
-    }
-  }
-
-  if (format === 'atom') {
-    for (const author of arr(ch.author)) {
-      found.push(
-        credit({
-          name: author?.name ?? author,
-          email: author?.email,
-          url: author?.uri,
-          role: 'owner',
-          source: 'atom-feed-author',
-          confidence: 0.85,
-          base,
-        }),
-      );
-    }
-    for (const contributor of arr(ch.contributor)) {
-      found.push(
-        credit({
-          name: contributor?.name ?? contributor,
-          email: contributor?.email,
-          url: contributor?.uri,
-          source: 'atom-contributor',
-          confidence: 0.5,
-          base,
-        }),
-      );
-    }
-  }
-
-  if (format === 'rss' || format === 'rdf') {
-    // managingEditor is defined as an address and conventionally written
-    // "jane@example.com (Jane Doe)", which cleanName already understands.
-    found.push(
-      credit({
-        name: ch.managingEditor,
-        email: ch.managingEditor,
-        role: 'owner',
-        source: 'managing-editor',
-        confidence: 0.8,
-      }),
-    );
-    // webMaster is the person who runs the server, which on the small web is
-    // usually the same person and in a newsroom never is. Believed, but at a
-    // confidence that says so.
-    found.push(
-      credit({
-        name: ch.webMaster,
-        email: ch.webMaster,
-        role: 'owner',
-        source: 'web-master',
-        confidence: 0.4,
-      }),
-    );
-    found.push(
-      credit({
-        name: ch['itunes:author'],
-        role: 'owner',
-        source: 'itunes-author',
-        confidence: 0.7,
-      }),
-    );
-    const owner = ch['itunes:owner'];
-    if (owner) {
-      found.push(
-        credit({
-          name: owner['itunes:name'] ?? owner.name,
-          email: owner['itunes:email'] ?? owner.email,
-          role: 'owner',
-          source: 'itunes-owner',
-          confidence: 0.85,
-        }),
-      );
-    }
-    found.push(
-      credit({
-        name: ch['dc:creator'],
-        role: 'owner',
-        source: 'channel-dc-creator',
-        confidence: 0.75,
-      }),
-    );
-
-    // Podcasting 2.0. `role` distinguishes a host from a guest, and a guest is
-    // not an author of the feed — they appeared on one episode of it.
-    for (const person of arr(ch['podcast:person'])) {
-      const personRole = String(person?.['@role'] ?? '').toLowerCase();
-      if (personRole && !/host|owner|author|creator|producer/.test(personRole)) continue;
-      found.push(
-        credit({
-          name: person?.['#text'] ?? person,
-          url: person?.['@href'],
-          avatar: person?.['@img'],
-          role: 'owner',
-          source: 'podcast-person',
-          confidence: 0.9,
-          base,
-        }),
-      );
-    }
-  }
+  const found = channelCreditInputs(ch, format, base).map(credit);
 
   // Item bylines. Capped at a sample rather than the whole window: a feed
   // carries up to forty items and reading every one of them to find the same

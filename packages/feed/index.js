@@ -62,6 +62,7 @@ export {
   classifyLink,
   cleanName,
   credit,
+  feedContacts,
   feedCredits,
   identityFromHtml,
   identityKey,
