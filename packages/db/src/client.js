@@ -50,11 +50,54 @@ export function connect(opts = {}) {
   // A file: URL is a local SQLite file — the tests and local development. It has
   // no remote transaction to protect and no second process contending for it,
   // and routing it through Redis would make the suite depend on a broker.
-  const wanted = opts.queue !== false && enabled && !url.startsWith('file:');
+  const chosen = writePath({ url, redis, enabled, queue: opts.queue });
+  announceWritePath(chosen);
 
-  if (wanted && redis) return queueWrites(client, { url: redis });
+  if (chosen.path === 'redis') return queueWrites(client, { url: String(redis) });
 
   return serializeWrites(client);
+}
+
+/**
+ * Which write path these settings select, and why.
+ *
+ * Separated from `connect` so it can be asserted without opening a database.
+ * The decision is the part worth testing; the client it returns is not.
+ *
+ * @param {{ url: string, redis?: string, enabled: boolean, queue?: boolean }} settings
+ * @returns {{ path: 'redis'|'in-process', why: string }}
+ */
+export function writePath({ url, redis, enabled, queue }) {
+  if (queue === false) return { path: 'in-process', why: 'this caller drains the queue' };
+  if (String(url).startsWith('file:')) return { path: 'in-process', why: 'local file database' };
+  if (!enabled) return { path: 'in-process', why: 'WRITE_QUEUE is off' };
+  if (!redis) return { path: 'in-process', why: 'REDIS_URL is not set' };
+  return { path: 'redis', why: 'one writer per cluster' };
+}
+
+/** Paths already announced by this process, so a per-request `connect()` says it once. */
+const announced = new Set();
+
+/**
+ * Say which write path this process took, once.
+ *
+ * The fallback to `serializeWrites` is deliberate and it is also silent, and
+ * the two together are a trap. `REDIS_URL` was never set on either production
+ * service, so every write went through the in-process queue while the Redis
+ * queue and the folding built for it sat dormant. Nothing was broken and
+ * nothing was logged, so "we have a write queue" and "the write queue is
+ * running" looked identical from outside until somebody read the environment.
+ *
+ * A line at boot is the whole fix. It names the reason rather than only the
+ * outcome, which is the difference between a degradation that was chosen and
+ * one that was inherited.
+ *
+ * @param {{ path: string, why: string }} chosen
+ */
+function announceWritePath(chosen) {
+  if (announced.has(chosen.path)) return;
+  announced.add(chosen.path);
+  console.log(`[db] write path: ${chosen.path} (${chosen.why})`);
 }
 
 /**
