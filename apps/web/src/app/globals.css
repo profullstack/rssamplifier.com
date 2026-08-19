@@ -3746,3 +3746,45 @@ html:not([data-dock]) .playlist-hint {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------- list filter
+ *
+ * The type-to-narrow box above a long list (<ListFilter>). It sits between the
+ * heading and the list itself, so it reads as belonging to the list rather than
+ * to the page, and it is absent entirely without JavaScript — everything below
+ * it still works, and the pager remains the way through.
+ */
+
+.list-filter {
+  margin: 0 0 1.25rem;
+}
+
+.list-filter input[type='search'] {
+  /* Narrower than a form field on purpose: this one filters what is already on
+     screen rather than asking a question of the server, and a full-width box
+     promises a search it cannot do. */
+  max-width: 26rem;
+}
+
+.list-filter .filter-count {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin: 0.45rem 0 0;
+}
+
+.list-filter .empty {
+  padding: 1.5rem 0 0;
+  text-align: left;
+}
+
+/* Hidden rather than removed: the filter puts every row back the moment the box
+   is cleared, so the rows never leave the document. !important because the rows
+   it hides carry their own display — a topic chip is inline-flex, a feed row is
+   a grid — and either would win over a plain display:none here. */
+.filtered-out {
+  display: none !important;
+}

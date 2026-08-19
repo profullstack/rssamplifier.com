@@ -5,6 +5,8 @@ import { AD_TEXT } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import { pageNumber } from '../CategoryIndex.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,6 +63,13 @@ export default async function TopicsPage({ searchParams }) {
           {total} {total === 1 ? 'topic' : 'topics'}
         </span>
       </h2>
+
+      {/* Above the cloud, not beside the heading: three hundred chips is more
+          than anyone scans, and someone here for one word in particular should
+          meet the box before the wall. */}
+      {topics.length >= FILTER_FROM && (
+        <ListFilter target=".topic-cloud a" noun="topic" searchHref="/search?q=" />
+      )}
 
       {topics.length === 0 ? (
         <p className="empty">

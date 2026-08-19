@@ -11,6 +11,8 @@ import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import AuthorLinks from '../AuthorLinks.jsx';
 import FollowControls from '../FollowControls.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
 import Freshness from '../Freshness.jsx';
 import PlayButton from '../PlayButton.jsx';
 import QueueButton from '../QueueButton.jsx';
@@ -321,6 +323,17 @@ export default async function FeedPage({ params }) {
       )}
 
       <h2>Latest {category.item}</h2>
+
+      {/* An archive page can carry a hundred entries, and looking for one you
+          half-remember the title of is the commonest thing to do with it. */}
+      {posts.length >= FILTER_FROM && (
+        <ListFilter
+          target="article.entry"
+          noun={category.item.replace(/s$/, '')}
+          plural={category.item}
+          searchHref="/search?q="
+        />
+      )}
 
       {posts.length === 0 ? (
         <p className="empty">
