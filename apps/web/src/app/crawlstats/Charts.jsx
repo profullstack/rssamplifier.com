@@ -1,3 +1,5 @@
+import { etaLabel } from '../../lib/jobs.js';
+
 /**
  * The charts on /crawlstats.
  *
@@ -500,4 +502,230 @@ function dayLabel(day) {
     month: 'short',
     timeZone: 'UTC',
   });
+}
+
+/**
+ * When this queue reaches zero at the rate it has actually been moving.
+ *
+ * Measured across the whole window rather than from the last two points, which
+ * on a queue that refills every hour is mostly noise. Deliberately refuses to
+ * answer rather than guessing: a queue that is flat or growing has no date, and
+ * printing one from a slope of nearly zero would produce "clears in 4,000 days"
+ * — a number that is arithmetically true and reads as a measurement.
+ *
+ * @param {Array<number|null>} values one per hour, null where unsampled
+ * @returns {string}
+ */
+function clearing(values) {
+  const points = values
+    .map((v, i) => (v == null ? null : { i, v: Number(v) }))
+    .filter((p) => p != null);
+  if (points.length < 2) return 'not enough history yet';
+
+  const first = points[0];
+  const last = points.at(-1);
+  if (last.v === 0) return 'clear';
+
+  // Per hour, using the sampled span rather than the array length, so a gap in
+  // the middle does not inflate the rate.
+  const perHour = (first.v - last.v) / (last.i - first.i);
+  if (perHour <= 0) return last.v === first.v ? 'not moving' : 'growing';
+
+  const hours = last.v / perHour;
+  // Past a couple of months the estimate is a straight-line extrapolation of
+  // something that will not stay straight, and saying so beats a fake date.
+  if (hours > 24 * 60) return 'clears: months out';
+
+  return `clears in ~${etaLabel(hours)}`;
+}
+
+/*
+ * Burndown geometry. Shorter than the bar charts because these sit two or three
+ * to a row: a panel is read for its slope, and a slope survives being small far
+ * better than a bar chart does.
+ */
+const BURN_W = 320;
+const BURN_H = 120;
+
+/*
+ * Breathing room inside the plot, in viewBox units.
+ *
+ * Without it the curve starts and ends exactly on the panel's edges and the
+ * marker on the newest point — the one thing a reader looks for — is half
+ * outside the box. `.chart-svg` sets `overflow: visible`, so it does not clip;
+ * it spills into the neighbouring panel instead, which is worse.
+ */
+const BURN_PAD = 8;
+
+/**
+ * How deep each queue is, hour by hour.
+ *
+ * Small multiples rather than four lines on one axis, and that is the whole
+ * design. The queues differ by two orders of magnitude — the author walk is
+ * ~367,000 where the update queue is ~12,000 — so a shared y axis draws three
+ * flat lines on the floor and one real one. This is the argument `Sparkline`
+ * already makes for the category curves, applied where it matters more: each
+ * panel gets its own scale, so what is compared across them is *shape*, and the
+ * count beside each title carries the magnitude.
+ *
+ * One series per panel, so there is no legend and no categorical palette to get
+ * wrong — the title names the queue, which is what keeps identity off colour
+ * alone.
+ *
+ * Zeroed rather than zoomed, like the growth curve. A burndown read off a
+ * truncated axis turns a 2% dent into a cliff, and the question these answer is
+ * "is this going to zero, and roughly when", which only a zeroed axis can show.
+ *
+ * @param {{ hours: string[], queues: Array<{ key: string, label: string, what: string,
+ *   values: Array<number|null> }> }} props
+ */
+export function QueueBurndown({ hours, queues }) {
+  const drawable = queues.filter((queue) => queue.values.some((v) => v != null));
+  if (hours.length < 2 || drawable.length === 0) return <Unavailable title="Queue burndown" />;
+
+  return (
+    <section className="burndown">
+      <h3 className="burndown-title">
+        Queue burndown
+        <span className="chart-note">
+          depth every hour for {hours.length} hours · each panel at its own scale
+        </span>
+      </h3>
+
+      <div className="burndown-grid">
+        {drawable.map((queue) => (
+          <QueuePanel key={queue.key} hours={hours} queue={queue} />
+        ))}
+      </div>
+
+      <details className="chart-data">
+        <summary>Queue depths as a table</summary>
+        <table className="data-table">
+          <caption>Depth of each queue at the end of every recorded hour.</caption>
+          <thead>
+            <tr>
+              <th scope="col">Hour</th>
+              {drawable.map((queue) => (
+                <th key={queue.key} scope="col">
+                  {queue.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {hours.map((hour, i) => (
+              <tr key={hour}>
+                <th scope="row">{hourLabel(hour)}</th>
+                {drawable.map((queue) => (
+                  <td key={queue.key}>
+                    {queue.values[i] == null ? '—' : fmt(Number(queue.values[i]))}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </section>
+  );
+}
+
+/**
+ * One queue's curve, at its own scale.
+ *
+ * @param {{ hours: string[], queue: { key: string, label: string, what: string,
+ *   values: Array<number|null> } }} props
+ */
+function QueuePanel({ hours, queue }) {
+  const { values } = queue;
+  const seen = values.filter((v) => v != null).map(Number);
+  const first = seen[0] ?? 0;
+  const last = seen.at(-1) ?? 0;
+  const change = last - first;
+
+  const top = niceMax(Math.max(...seen, 1));
+  const plotW = BURN_W - BURN_PAD * 2;
+  const x = (i) =>
+    values.length === 1 ? BURN_W / 2 : BURN_PAD + (i / (values.length - 1)) * plotW;
+  const y = (v) => BURN_H - (v / top) * (BURN_H - BURN_PAD * 2) - BURN_PAD;
+
+  // Broken into runs at every gap, so an hour nobody sampled is a break in the
+  // line rather than a straight descent across it. Bridging its own outages is
+  // the one lie this chart could tell that would actually mislead: it would
+  // draw a stalled poller as steady progress.
+  const runs = [];
+  let run = [];
+  for (const [i, value] of values.entries()) {
+    if (value == null) {
+      if (run.length) runs.push(run);
+      run = [];
+      continue;
+    }
+    run.push(`${run.length === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(Number(value)).toFixed(1)}`);
+  }
+  if (run.length) runs.push(run);
+
+  const lastIndex = values.findLastIndex((v) => v != null);
+
+  return (
+    <figure className="burndown-panel">
+      <figcaption>
+        <span className="burndown-label">{queue.label}</span>
+        <span className="burndown-now">{fmt(last)}</span>
+        <span className={`burndown-change${change <= 0 ? ' is-down' : ' is-up'}`}>
+          {change === 0 ? 'level' : `${change > 0 ? '+' : ''}${fmt(change)}`}
+        </span>
+      </figcaption>
+
+      {/* What the picture cannot say on a zeroed axis.
+
+          The author walk sits at ~366,000 and moved 1,880 in two days, so its
+          curve is a flat line near the top — which is the honest drawing, and
+          useless on its own. Zooming the axis to make that dramatic is exactly
+          the lie the growth chart's comment warns about: it would render a 0.5%
+          drift as a collapse. So the axis stays zeroed and the arithmetic goes
+          in text beside it, where "38 days" says what a flat line cannot. */}
+      <p className="burndown-eta">{clearing(values)}</p>
+
+      <svg
+        className="chart-svg"
+        viewBox={`0 0 ${BURN_W} ${BURN_H}`}
+        role="img"
+        aria-label={`${queue.label}: ${fmt(first)} waiting at the start of the window, ${fmt(last)} now.`}
+      >
+        <Grid height={BURN_H} />
+        {runs.map((d) => (
+          // Keyed by where the run starts, which stays stable across renders in
+          // a way an array index does not once a gap appears.
+          <path key={d[0]} className="chart-line-1" d={d.join(' ')} />
+        ))}
+        {lastIndex >= 0 && (
+          <circle
+            className="chart-dot-1"
+            cx={x(lastIndex)}
+            cy={y(Number(values[lastIndex]))}
+            r="3"
+          />
+        )}
+        {values.map((value, i) => (
+          <rect
+            key={hours[i]}
+            x={x(i) - BURN_W / values.length / 2}
+            y="0"
+            width={BURN_W / values.length}
+            height={BURN_H}
+            fill="transparent"
+          >
+            <title>
+              {value == null
+                ? `${hourLabel(hours[i])} · not sampled`
+                : `${hourLabel(hours[i])} · ${fmt(Number(value))} waiting`}
+            </title>
+          </rect>
+        ))}
+      </svg>
+
+      <p className="burndown-what">{queue.what}</p>
+    </figure>
+  );
 }

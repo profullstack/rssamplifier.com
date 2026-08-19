@@ -2904,6 +2904,80 @@ select {
   background: var(--chart-2);
 }
 
+/* Queue burndown: small multiples, each panel at its own scale. */
+.burndown {
+  margin: 1.5rem 0 0;
+}
+
+.burndown-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.6rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+}
+
+.burndown-grid {
+  display: grid;
+  /* Two or three to a row on a desktop, one on a phone. A panel narrower than
+     this stops being readable as a slope, which is the only thing it is for. */
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.25rem;
+}
+
+.burndown-panel {
+  margin: 0;
+}
+
+.burndown-panel figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.burndown-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.burndown-now {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+/* The direction over the window. Never colour alone — the sign and the word
+   "level" carry it — and deliberately not a red/green pair, which this palette
+   does not have and which would read as good/bad when a deep update queue is
+   neither. A growing queue simply gets full-strength ink so the eye lands on
+   it; everything else recedes. */
+.burndown-change {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.burndown-change.is-up {
+  color: var(--ink);
+}
+
+/* The arithmetic a zeroed axis cannot draw: a queue moving 0.5% a day is a flat
+   line and a real date. */
+.burndown-eta {
+  margin: 0.25rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink);
+}
+
+.burndown-what {
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 .chart-data {
   margin-top: 0.6rem;
   font-size: 0.8rem;

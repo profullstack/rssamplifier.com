@@ -128,6 +128,12 @@ const clusterIntervalMs = (Number(env['CLUSTER_BACKFILL_SECONDS']) || 10) * 1000
 const authorBatch = Number(env['AUTHOR_BATCH_SIZE']) || 10;
 const authorConcurrency = Number(env['AUTHOR_CONCURRENCY']) || 4;
 const authorIntervalMs = (Number(env['AUTHOR_INTERVAL_SECONDS']) || 60) * 1000;
+// How often each queue's depth is written down for the burndown chart. Ten
+// minutes is six samples an hour where only the last is kept, which sounds
+// wasteful and is not: it means the current hour's point is never more than ten
+// minutes stale on a page that refreshes every fifteen seconds.
+const queueSampleMs = (Number(env['QUEUE_SAMPLE_SECONDS']) || 600) * 1000;
+
 // How long before a feed is looked at again. Long, because the answer changes
 // when somebody redesigns their blog or joins a new network, not weekly.
 const authorRecheckDays = Number(env['AUTHOR_RECHECK_DAYS']) || 90;
@@ -187,6 +193,10 @@ let enriching = false;
 // overlapping passes read the same watermark and would send the same digest
 // twice.
 let alerting = false;
+
+// And for the queue sample, where an overlap would be pure waste: both passes
+// would read the same counts and write the same row.
+let sampling = false;
 let lastPurge = 0;
 let lastSources = 0;
 let lastTopicSearch = 0;
@@ -363,6 +373,10 @@ async function tick() {
       // chart on the site looks back further than a month.
       const hours = await q.pruneCrawlHours(db);
       if (hours) log('purged-rollup', { rows: hours });
+
+      // The queue samples, on the same terms and for the same reason.
+      const queueHours = await q.pruneQueueHours(db);
+      if (queueHours) log('purged-queue-rollup', { rows: queueHours });
 
       // The live log takes a row per feed crawled, so it is the one table here
       // that would grow by six figures a week if nobody swept it.
@@ -582,16 +596,57 @@ async function enrichTick() {
   }
 }
 
+/**
+ * Write down how deep each queue is, so /crawlstats can draw the slope.
+ *
+ * A backlog on its own says almost nothing. Twelve thousand feeds overdue is a
+ * crawler falling behind or a crawler halfway through catching up, and those
+ * are opposite emergencies that look identical in a count. The difference is
+ * the direction it is moving, and nothing was writing that down.
+ *
+ * Its own timer rather than a line in `tick()`, on the same reasoning as the
+ * enrichment pass: a sample missed because the crawl above it was slow leaves a
+ * hole in the one series whose job is to show holes.
+ *
+ * Ten minutes by default. The sample is four counts over `feeds`, all of them
+ * on covering indexes, and only the last one in each hour is kept — so this is
+ * six cheap reads and one small write an hour, against a chart that is read in
+ * hours.
+ */
+async function queueTick() {
+  if (stopping || sampling) return;
+  sampling = true;
+
+  try {
+    const [backlogs, authors] = await Promise.all([q.jobBacklogs(db), q.countAuthorQueue(db)]);
+
+    await q.recordQueueHour(db, {
+      due: backlogs.due,
+      firstCrawl: backlogs.pendingFirstCrawl,
+      cards: backlogs.cardsPending,
+      authors,
+    });
+  } catch (err) {
+    // A missed sample is a gap in a chart, which the chart draws as a gap. It
+    // is not a reason to make noise in a log that is read for crawl failures.
+    log('queue-sample-error', { message: String(err?.message ?? err) });
+  } finally {
+    sampling = false;
+  }
+}
+
 const timer = setInterval(tick, intervalMs);
 const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
 const cardTimer = setInterval(cardTick, cardIntervalMs);
 const alertTimer = setInterval(alertTick, alertIntervalMs);
 const enrichTimer = setInterval(enrichTick, authorIntervalMs);
+const queueTimer = setInterval(queueTick, queueSampleMs);
 void tick();
 void backfillTick();
 void cardTick();
 void alertTick();
 void enrichTick();
+void queueTick();
 
 log('started', {
   intervalSeconds: intervalMs / 1000,
@@ -622,6 +677,7 @@ function shutdown(signal) {
   clearInterval(cardTimer);
   clearInterval(enrichTimer);
   clearInterval(alertTimer);
+  clearInterval(queueTimer);
 
   // Recorded before the buffer is closed, so the live log's last line is the
   // daemon saying it stopped rather than the log simply going quiet — which is

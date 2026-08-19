@@ -33,11 +33,24 @@ const CATEGORY_TTL_MS = 5 * 60 * 1000;
 export const HISTORY_HOURS = 24;
 export const GROWTH_DAYS = 30;
 
+/**
+ * How far back the burndown looks.
+ *
+ * Wider than the throughput charts on purpose. Throughput is read for "is it
+ * running right now", which a day answers; a queue is read for "is this going
+ * to zero, and when", and two days is the shortest window where the slope of
+ * something that takes weeks to drain is visible at all.
+ */
+export const QUEUE_HOURS = 48;
+
 /** @type {{ at: number, value: Awaited<ReturnType<typeof q.indexingHistory>> }|null} */
 let historyCache = null;
 
 /** @type {{ at: number, value: Awaited<ReturnType<typeof q.categoryStats>> }|null} */
 let categoryCache = null;
+
+/** @type {{ at: number, value: { hours: string[], series: Record<string, Array<number|null>> } }|null} */
+let queueCache = null;
 
 /**
  * Crawler throughput, hour by hour.
@@ -59,6 +72,54 @@ export async function indexingHistory() {
     return value;
   } catch {
     return [];
+  }
+}
+
+/**
+ * Every queue's depth hour by hour, dense across the window.
+ *
+ * The rows come back sparse — one per hour actually sampled — and the chart
+ * needs a slot per hour either way, because the gaps are the point. A poller
+ * that stopped for six hours must appear as six missing points rather than as a
+ * line drawn straight through them, which is what a chart fed only the rows it
+ * has would show.
+ *
+ * So this fills the window and leaves `null` where nothing was written down.
+ * Empty rather than throwing, on the same reasoning as `indexingHistory`: the
+ * poller owns migration, so there is a deploy window where `queue_hourly` does
+ * not exist yet and losing a chart must not take the page with it.
+ *
+ * @returns {Promise<{ hours: string[], series: Record<string, Array<number|null>> }>}
+ */
+export async function queueHistory() {
+  if (queueCache && Date.now() - queueCache.at < HISTORY_TTL_MS) return queueCache.value;
+
+  try {
+    const rows = await q.queueHistory(db(), QUEUE_HOURS);
+    const byHour = new Map(rows.map((r) => [r.hour, r]));
+
+    const hours = [];
+    const now = Date.now();
+    for (let i = QUEUE_HOURS - 1; i >= 0; i--) {
+      hours.push(new Date(now - i * 3_600_000).toISOString().slice(0, 13));
+    }
+
+    const pick = (key) => hours.map((h) => (byHour.has(h) ? Number(byHour.get(h)[key]) : null));
+
+    const value = {
+      hours,
+      series: {
+        due: pick('due'),
+        firstCrawl: pick('firstCrawl'),
+        cards: pick('cards'),
+        authors: pick('authors'),
+      },
+    };
+
+    queueCache = { at: Date.now(), value };
+    return value;
+  } catch {
+    return { hours: [], series: {} };
   }
 }
 
