@@ -291,6 +291,16 @@ export async function enrichFeedAuthors(db, feed, opts = {}) {
   let pages = 0;
   let verified = 0;
 
+  // Did we ever get an answer out of this publisher at all?
+  //
+  // The distinction this records is the one the stamp used to lose. Every fetch
+  // in here fails softly -- a dead host, a timeout and a 503 all come back as
+  // "no page" rather than as an exception -- so a site that was simply down
+  // looked exactly like a site that named nobody, and both were stamped as
+  // checked. That cost the publisher their enrichment for the full ninety-day
+  // recheck cycle on the strength of one bad afternoon.
+  let reached = false;
+
   const collect = (found) => {
     for (const link of found) {
       const existing = links.get(link.url);
@@ -305,6 +315,7 @@ export async function enrichFeedAuthors(db, feed, opts = {}) {
   // the page fetches below.
   const resolved = await resolve(String(feed.feed_url)).catch(() => null);
   if (resolved?.ok) {
+    reached = true;
     credits.push(...(resolved.feed.credits ?? []));
     // A feed that declares its site is a better base for relative links than
     // whatever the row was stored with.
@@ -326,6 +337,7 @@ export async function enrichFeedAuthors(db, feed, opts = {}) {
       }
 
       const page = await fetchPage(target).catch(() => null);
+      if (page?.ok) reached = true;
       if (!page?.ok || !/html/i.test(page.contentType)) continue;
       pages += 1;
 
@@ -514,9 +526,17 @@ export async function enrichFeedAuthors(db, feed, opts = {}) {
   }
 
   const stored = await storeCredits(db, feed, merged, [...links.values()]);
-  await a.markAuthorsChecked(db, String(feed.id));
 
-  return { ...stored, pages, verified };
+  // Looked and found nobody: stamped, and left alone until the recheck. Could
+  // not look at all: stamped so it comes back in a few days, because nothing
+  // was learned about this publisher and the next attempt may well succeed.
+  if (reached) {
+    await a.markAuthorsChecked(db, String(feed.id));
+  } else {
+    await a.markAuthorsFailed(db, String(feed.id), { recheckDays: opts.recheckDays });
+  }
+
+  return { ...stored, pages, verified, reached };
 }
 
 /**
@@ -612,6 +632,7 @@ export async function enrichDue(db, batchSize = 10, opts = {}) {
         try {
           const result = await enrichFeedAuthors(db, feed, {
             verify: opts.verify,
+            recheckDays,
             fetch: opts.fetch,
             resolve: opts.resolve,
             githubToken: opts.githubToken,
@@ -622,7 +643,15 @@ export async function enrichDue(db, batchSize = 10, opts = {}) {
           feedLinks += result.feedLinks ?? 0;
           report(opts.onEvent, feed, started, { ok: true, amount: result.people, detail: null });
         } catch (err) {
-          await a.markAuthorsChecked(db, String(feed.id)).catch(() => {});
+          // A failure is not a miss. Stamping this the same way as "looked, and
+          // there was nobody" would cost a publisher on a flaky host their
+          // enrichment for the whole recheck cycle over one timeout, so it is
+          // stamped to come back in a few days instead. The feed is still
+          // stamped, which is what keeps a permanently broken one from sitting
+          // at the head of the queue forever.
+          await a
+            .markAuthorsFailed(db, String(feed.id), { recheckDays })
+            .catch(() => {});
           report(opts.onEvent, feed, started, {
             ok: false,
             amount: null,

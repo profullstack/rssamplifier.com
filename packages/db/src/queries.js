@@ -1382,7 +1382,7 @@ export async function jobBacklogs(db) {
   // The fix is not "stop using conditional aggregates" — two of them survive
   // below. It is to make sure the scan they force is over a *covering index*
   // rather than over the table, at which point the same CASE is cheap.
-  const [byStatus, backlog, submitted, cards] = await Promise.all([
+  const [byStatus, backlog, submitted, cards, enriched] = await Promise.all([
     // One covering scan of feeds_status_success_idx (0028) answering three
     // questions at once: the status breakdown, and how many feeds in each state
     // have never once been read successfully.
@@ -1408,6 +1408,20 @@ export async function jobBacklogs(db) {
       sql: `select card_state, count(*) as n,
                    sum(case when card_checked_at >= ? then 1 else 0 end) as hour
             from feeds group by card_state`,
+      args: [hourAgo],
+    }),
+
+    // How far the author enrichment has walked, read off the partial index
+    // 0024 already built for it (`feeds (authors_checked_at) where status =
+    // 'active'`). Counted as the *stamped* set rather than the unstamped one
+    // for the reason this whole function exists: 3,275 of 369,056 feeds carry a
+    // stamp, so this touches a few thousand index entries, while asking for the
+    // complement would visit every row. The backlog is arithmetic afterwards.
+    db.execute({
+      sql: `select count(*) as n,
+                   sum(case when authors_checked_at >= ? then 1 else 0 end) as hour
+            from feeds
+           where status = 'active' and authors_checked_at is not null`,
       args: [hourAgo],
     }),
   ]);
@@ -1443,6 +1457,9 @@ export async function jobBacklogs(db) {
     cardsNone: card('none'),
     cardsError: card('error'),
     cardsLastHour: cards.rows.reduce((a, r) => a + Number(r.hour ?? 0), 0),
+    authorsDone: Number(enriched.rows[0]?.n ?? 0),
+    authorsPending: Math.max(0, n('active') - Number(enriched.rows[0]?.n ?? 0)),
+    authorsLastHour: Number(enriched.rows[0]?.hour ?? 0),
   };
 }
 

@@ -44,6 +44,46 @@ export async function dueForAuthors(db, limit = 25, recheckBefore = '') {
 }
 
 /**
+ * Record that a feed's enrichment *failed*, so it is tried again sooner.
+ *
+ * `markAuthorsChecked` is right for a miss — a site that genuinely names nobody
+ * should not be re-read tomorrow — and wrong for a failure. They were the same
+ * call, which meant a DNS hiccup, a timeout or a 503 cost that publisher its
+ * enrichment for the **full recheck cycle**, ninety days, on the strength of one
+ * bad afternoon. On a pass that has so far reached 3,275 of 369,056 feeds, that
+ * is a quiet way to lose the ones on flaky hosts permanently.
+ *
+ * Done by back-dating the stamp rather than by adding an attempts column, and
+ * that is a deliberate trade. Writes on this database serialize and the crawl
+ * is already write-bound (see the notes in `crawl.js`), so the cheap fix that
+ * costs one UPDATE beats the tidy one that costs a migration and a second
+ * column to read. The feed still counts as "looked at" for the backlog, and
+ * still comes due again in `retryDays`.
+ *
+ * It must never back-date past *now*: a stamp in the future would hide the feed
+ * from a pass whose recheck window is shorter than this one's.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @param {{ retryDays?: number, recheckDays?: number }} [opts]
+ * @returns {Promise<void>}
+ */
+export async function markAuthorsFailed(db, feedId, opts = {}) {
+  const retryDays = Math.max(0, Number(opts.retryDays ?? 3));
+  const recheckDays = Math.max(retryDays, Number(opts.recheckDays ?? 90));
+
+  // Stamped as though it were checked (recheckDays - retryDays) ago, so the
+  // ordinary due test brings it back in retryDays without knowing why.
+  const backdated = (recheckDays - retryDays) * 86_400_000;
+  const at = new Date(Date.now() - backdated).toISOString();
+
+  await db.execute({
+    sql: 'update feeds set authors_checked_at = ? where id = ?',
+    args: [at, feedId],
+  });
+}
+
+/**
  * Record that a feed has been looked at, whether or not anyone was found.
  *
  * Stamped even on a miss, and that is the point: without it every pass would
