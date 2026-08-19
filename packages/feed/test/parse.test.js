@@ -217,6 +217,62 @@ test('a feed carrying the podcast namespaces is a podcast', () => {
   assert.equal(feed.imageUrl, 'https://linuxmatters.sh/cover.png');
 });
 
+const SUBSTACK_RSS = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Newsletter Nem Toda Mulher</title>
+    <link>https://nemtodamulher.substack.com</link>
+    <description>Por Vera Iaconelli e Carol Pires</description>
+    <generator>Substack</generator>
+    <webMaster>nemtodamulher@substack.com</webMaster>
+    <itunes:owner>
+      <itunes:name>Newsletter Nem Toda Mulher</itunes:name>
+      <itunes:email>nemtodamulher@substack.com</itunes:email>
+    </itunes:owner>
+    <item>
+      <title>Nunca soube a escalação de um time de futebol</title>
+      <guid>https://nemtodamulher.substack.com/p/nunca-soube</guid>
+      <description>Uma conversa sobre futebol e meninos</description>
+      <enclosure url="https://substack.example/cover.gif" length="0" type="image/jpeg"/>
+    </item>
+  </channel>
+</rss>`;
+
+test('a newsletter whose host fills in the iTunes block is not a podcast', () => {
+  // Substack emits <itunes:owner> on every publication it hosts, podcast or
+  // not, and nothing else that looks like a show: no itunes:type, no podcast:
+  // namespace, and image enclosures rather than audio ones. On the strength of
+  // that one tag the whole platform -- thousands of feeds here -- was filed
+  // under /podcasts.
+  //
+  // The same correction the video branch already makes: an attachment is not a
+  // genre, and the tag has to be corroborated by what the feed actually ships.
+  assert.equal(parseFeed(SUBSTACK_RSS).kind, 'blog');
+});
+
+test('a show still reads as a podcast on its tags and its audio', () => {
+  // The other side of the guard above: everything that genuinely is a podcast
+  // must stay one. Linux Matters declares itunes:type and podcast:guid *and*
+  // attaches an mp3, so it passes on either half of the test.
+  assert.equal(parseFeed(PODCAST_RSS).kind, 'podcast');
+});
+
+test('a podcast that has not released an episode yet is still a podcast', () => {
+  // A declaration stands on its own. itunes:type and the podcast: namespace are
+  // written by podcast hosting for podcast directories, so there is nothing to
+  // corroborate -- and a show with no episodes has nothing to corroborate with.
+  const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
+  <title>A new show</title>
+  <link>https://new.example/</link>
+  <description>Coming soon</description>
+  <itunes:type>episodic</itunes:type>
+</channel></rss>`;
+
+  assert.equal(parseFeed(rss).kind, 'podcast');
+});
+
 test('audio without the podcast namespaces is a blog, not music', () => {
   // Attaching an mp3 to a post says nothing about what the feed is: a narrated
   // article, a conference talk and a cross-posted episode all look like this,

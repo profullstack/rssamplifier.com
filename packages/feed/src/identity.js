@@ -749,10 +749,16 @@ export function channelCreditInputs(channel, format, base = '') {
  * routed it there -- collecting it again here would file one address in two
  * places and count it twice.
  *
+ * Each contact carries the channel element it was read from, the same way a
+ * credit does. `feed_links.source` is `not null` and is what the page means by
+ * "where we found this" -- a mailbox harvested from `webMaster` is a weaker
+ * claim than one from `itunes:owner`, and dropping the provenance here lost
+ * that distinction *and* left the column with nothing to store.
+ *
  * @param {any} channel the raw parsed channel/feed object
  * @param {'rss'|'atom'|'rdf'|'json'} format
  * @param {string} [base]
- * @returns {Array<{ url: string, network: string }>}
+ * @returns {Array<{ url: string, network: string, source: string }>}
  */
 export function feedContacts(channel, format, base = '') {
   const out = [];
@@ -776,7 +782,7 @@ export function feedContacts(channel, format, base = '') {
       const link = candidate ? classifyLink(candidate, base) : null;
       if (!link || seen.has(link.url)) continue;
       seen.add(link.url);
-      out.push({ url: link.url, network: link.network });
+      out.push({ url: link.url, network: link.network, source: input.source });
     }
   }
 

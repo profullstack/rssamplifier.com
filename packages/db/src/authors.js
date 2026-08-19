@@ -240,7 +240,7 @@ export async function addAuthorLinks(db, authorId, links) {
         link.network,
         link.url,
         link.handle || null,
-        link.source,
+        linkSource(link),
         link.verified ? 1 : 0,
         nowIso(),
       ],
@@ -301,7 +301,7 @@ export async function addFeedLinks(db, feedId, links) {
         link.network,
         link.url,
         link.handle || null,
-        link.source,
+        linkSource(link),
         link.verified ? 1 : 0,
         nowIso(),
       ],
@@ -685,6 +685,31 @@ export async function feedHasAuthors(db, feedId) {
  * @param {Array<object>} [input.feedLinks] accounts to file under the feed
  * @returns {Array<{ sql: string, args: unknown[] }>} in dependency order
  */
+/**
+ * Where a link was found, as a string the database will accept.
+ *
+ * `author_links.source` and `feed_links.source` are both `not null`, and this is
+ * the last place before the wire that can say so. It matters more than a
+ * defensive default usually does, because of *how* the remote client fails:
+ * `undefined` is not a bindable libSQL value, so hrana throws `Unsupported type
+ * of value` while the statement is being serialized -- before any SQL runs, with
+ * no column named and no row to point at. That error surfaced as
+ * `could not be crawled`, which reads like a publisher who is down.
+ *
+ * It cost the directory a day. Every Substack newsletter emits `<itunes:owner>`
+ * and no other byline, so `feedContacts` harvested the mailbox, dropped the
+ * provenance, and every one of those feeds failed its crawl at the write --
+ * 985 of 1,385 crawls in the hour this was found. Local SQLite binds `undefined`
+ * as null without complaint, so the tests and every local run passed.
+ *
+ * @param {{ source?: unknown }} link
+ * @returns {string}
+ */
+function linkSource(link) {
+  const source = link?.source;
+  return typeof source === 'string' && source !== '' ? source : 'feed-document';
+}
+
 export function creditStatements({ feedId, identityKey, slug, person, authorLinks = [], feedLinks = [] }) {
   const now = nowIso();
   const statements = [];
@@ -765,7 +790,7 @@ export function creditStatements({ feedId, identityKey, slug, person, authorLink
         link.network,
         link.url,
         link.handle || null,
-        link.source,
+        linkSource(link),
         link.verified ? 1 : 0,
         now,
         identityKey,
@@ -802,7 +827,7 @@ export function feedLinkStatements(feedId, links) {
         link.network,
         link.url,
         link.handle || null,
-        link.source,
+        linkSource(link),
         link.verified ? 1 : 0,
         nowIso(),
       ],

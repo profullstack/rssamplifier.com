@@ -119,6 +119,31 @@ function hasVideoEnclosure(item) {
 }
 
 /**
+ * Does this element carry audio?
+ *
+ * @param {any} item
+ * @returns {boolean}
+ */
+function hasAudioEnclosure(item) {
+  if (arr(item?.enclosure).some((e) => AUDIO_TYPE.test(String(e?.['@type'] ?? '')))) return true;
+  return arr(item?.link).some(
+    (l) => l?.['@rel'] === 'enclosure' && AUDIO_TYPE.test(String(l?.['@type'] ?? '')),
+  );
+}
+
+/**
+ * Tags no platform sets unless it is publishing a show.
+ *
+ * The rest of `PODCAST_CHANNEL_TAGS` is weaker than it looks. Substack emits
+ * `<itunes:owner>` on every publication it hosts, podcast or not, so on its own
+ * that tag files a text newsletter under podcasts -- and Substack is thousands
+ * of feeds here. `itunes:type` and the `podcast:` namespace are different: they
+ * are written by podcast hosting, for podcast directories, and nothing else has
+ * a reason to emit them.
+ */
+const PODCAST_DECLARED_TAGS = ['itunes:type', 'podcast:guid', 'podcast:medium'];
+
+/**
  * How much prose an item carries of its own, in characters of text.
  *
  * The one measurement that separates an attachment from an episode. A show
@@ -406,8 +431,9 @@ function isNewsroom(channel, items) {
  * guessing. Then YouTube, because a channel feed says so in its own namespace
  * and nothing else needs weighing. Then video, which is an enclosure *and*
  * corroboration that the enclosure is the point. Then podcast, which is a
- * publisher who filled in the podcast namespaces. Everything else is a blog,
- * which is what the overwhelming majority of the directory is.
+ * publisher who filled in the podcast namespaces *and* ships audio, or who
+ * declared a show outright. Everything else is a blog, which is what the
+ * overwhelming majority of the directory is.
  *
  * One correction, arrived at twice from opposite ends of the directory: an
  * attachment is not a genre. A post with a file on it is still a post, and
@@ -455,7 +481,23 @@ function kindOfChannel(channel, items) {
   const withVideo = sample.filter(hasVideoEnclosure);
   if (withVideo.length > 0 && (podcastTags || isShowShaped(sample, withVideo))) return KIND_VIDEO;
 
-  if (podcastTags) return KIND_PODCAST;
+  // A podcast publishes audio, and the same correction applies here as to video
+  // above: the tag has to be corroborated. A show attaches an episode to every
+  // entry, so one audio enclosure anywhere in the sample is enough -- and a feed
+  // with podcast tags and not a single audio file in five items is a newsletter
+  // whose host fills in the iTunes block. Substack does that for every
+  // publication it serves, which put thousands of text newsletters under
+  // /podcasts.
+  //
+  // A declaration still stands on its own: `itunes:type` and the `podcast:`
+  // namespace are the publisher stating what they made, and a show that has not
+  // released its first episode yet is still a podcast. So is a feed we have no
+  // items for -- with nothing sampled there is no evidence to corroborate, and
+  // the tags are the only thing said.
+  const declaredPodcast = PODCAST_DECLARED_TAGS.some((tag) => channel?.[tag] !== undefined);
+  if (podcastTags && (declaredPodcast || sample.length === 0 || sample.some(hasAudioEnclosure))) {
+    return KIND_PODCAST;
+  }
 
   // No audio branch, deliberately. Audio without a declared medium is a blog
   // that narrated itself, and `declaredMedium` above is the only way to music.

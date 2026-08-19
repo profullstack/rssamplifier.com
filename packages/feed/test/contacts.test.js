@@ -15,7 +15,7 @@ test('a feed whose only byline is a role keeps the mailbox that role published',
 
   assert.deepEqual(feedCredits(channel, [], 'rss'), []);
   assert.deepEqual(feedContacts(channel, 'rss'), [
-    { url: 'mailto:marta@example.com', network: 'email' },
+    { url: 'mailto:marta@example.com', network: 'email', source: 'itunes-owner' },
   ]);
 });
 
@@ -54,7 +54,7 @@ test('a profile published beside a rejected name is kept as the feed’s', () =>
 
   assert.deepEqual(feedCredits(channel, [], 'atom'), []);
   assert.deepEqual(feedContacts(channel, 'atom'), [
-    { url: 'https://github.com/wirecutter', network: 'github' },
+    { url: 'https://github.com/wirecutter', network: 'github', source: 'atom-feed-author' },
   ]);
 });
 
@@ -77,12 +77,49 @@ test('the same address published twice is one contact', () => {
     'itunes:owner': { 'itunes:name': 'Editorial Team', 'itunes:email': 'marta@example.com' },
   };
 
+  // The first element to publish it is the one credited with finding it, so a
+  // deduplicated address keeps the stronger provenance rather than the last.
   assert.deepEqual(feedContacts(channel, 'rss'), [
-    { url: 'mailto:marta@example.com', network: 'email' },
+    { url: 'mailto:marta@example.com', network: 'email', source: 'managing-editor' },
   ]);
 });
 
 test('a feed that credits nobody at all offers no contacts', () => {
   assert.deepEqual(feedContacts({ title: 'A Blog' }, 'rss'), []);
   assert.deepEqual(feedContacts(null, 'rss'), []);
+});
+
+test('every contact says where it was found, because the column demands it', () => {
+  // The bug this pins, and it stopped the crawler for a day.
+  //
+  // `feed_links.source` and `author_links.source` are both `not null`, and a
+  // contact used to be built as `{ url, network }` with the provenance dropped.
+  // The remote libSQL client cannot bind `undefined` at all -- it throws
+  // `Unsupported type of value` while serializing the statement, before any SQL
+  // runs -- so the whole crawl failed at the write and the feed was recorded as
+  // uncrawlable. Local SQLite binds it as null without complaining, which is
+  // why every test and every local run passed.
+  //
+  // Substack is the population that found it: it emits `<itunes:owner>` on
+  // every publication it hosts and no other byline, so every Substack
+  // newsletter in the directory took this path.
+  // Copied from https://nemtodamulher.substack.com/feed, which is the shape
+  // every publication on that platform ships: a webMaster address, and an
+  // iTunes block naming the publication rather than a person.
+  const channel = {
+    title: 'Newsletter Nem Toda Mulher',
+    webMaster: 'nemtodamulher@substack.com',
+    'itunes:author': 'Newsletter Nem Toda Mulher',
+    'itunes:owner': {
+      'itunes:name': 'Newsletter Nem Toda Mulher',
+      'itunes:email': 'nemtodamulher@substack.com',
+    },
+  };
+
+  const contacts = feedContacts(channel, 'rss');
+  assert.equal(contacts.length, 1);
+  for (const contact of contacts) {
+    assert.equal(typeof contact.source, 'string');
+    assert.notEqual(contact.source, '');
+  }
 });
