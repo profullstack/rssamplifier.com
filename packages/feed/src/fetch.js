@@ -78,10 +78,27 @@ export async function isPublicHost(hostname) {
  * Fetch a URL with the guards this service needs: SSRF check, timeout, and a
  * response size cap so a hostile endpoint can't stream us out of memory.
  *
+ * Optionally conditional. Given the validators a previous fetch returned, this
+ * sends them back and a well-behaved server answers `304 Not Modified` with no
+ * body at all. That is worth having twice over. It is the polite thing to do
+ * when reading two thousand other people's documents an hour, and — the larger
+ * reason here — a 304 is the *publisher* stating that nothing has changed, which
+ * is better evidence for scheduling than anything we can infer from a document,
+ * and it arrives without one being parsed.
+ *
+ * A 304 comes back as `ok: false, notModified: true` rather than as an error:
+ * the request succeeded and the answer is a fact, but the body is empty and no
+ * caller expecting `body` should treat it as a document.
+ *
+ * The validators are echoed back on every answer, including on a 304 — servers
+ * are permitted to send a fresh `ETag` there and a caller that dropped it would
+ * keep revalidating against a stale one for ever.
+ *
  * @param {string} url
- * @returns {Promise<{ ok: boolean, status: number, contentType: string, body: string, url: string, error?: string }>}
+ * @param {{ etag?: string|null, lastModified?: string|null }} [conditional]
+ * @returns {Promise<{ ok: boolean, status: number, contentType: string, body: string, url: string, notModified?: boolean, etag?: string|null, lastModified?: string|null, error?: string }>}
  */
-export async function safeFetch(url) {
+export async function safeFetch(url, conditional = {}) {
   const normalized = normalizeUrl(url);
   if (!normalized) {
     return { ok: false, status: 0, contentType: '', body: '', url, error: 'invalid-url' };
@@ -103,8 +120,13 @@ export async function safeFetch(url) {
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
+    /** @type {Record<string, string>} */
+    const headers = { 'user-agent': USER_AGENT, accept: '*/*' };
+    if (conditional?.etag) headers['if-none-match'] = String(conditional.etag);
+    if (conditional?.lastModified) headers['if-modified-since'] = String(conditional.lastModified);
+
     const res = await fetch(normalized, {
-      headers: { 'user-agent': USER_AGENT, accept: '*/*' },
+      headers,
       redirect: 'follow',
       signal: controller.signal,
     });
@@ -122,6 +144,30 @@ export async function safeFetch(url) {
       };
     }
 
+    // Kept from the previous fetch when this answer omits them, which is the
+    // common case on a 304: RFC 9110 lets a server send the validators again
+    // but does not require it, and forgetting the ones we hold would turn every
+    // subsequent request back into an unconditional one.
+    const etag = res.headers.get('etag') ?? conditional?.etag ?? null;
+    const lastModified = res.headers.get('last-modified') ?? conditional?.lastModified ?? null;
+
+    // Before the body is read, because there is not one. Returning early also
+    // keeps `ok` honest: a 304 is a successful request whose answer is "no
+    // document", and every caller reading `body` must fall through to
+    // `notModified` rather than parse an empty string.
+    if (res.status === 304) {
+      return {
+        ok: false,
+        notModified: true,
+        status: 304,
+        contentType: '',
+        body: '',
+        url: res.url,
+        etag,
+        lastModified,
+      };
+    }
+
     const body = await readCapped(res);
 
     return {
@@ -130,6 +176,8 @@ export async function safeFetch(url) {
       contentType: res.headers.get('content-type') ?? '',
       body,
       url: res.url,
+      etag,
+      lastModified,
     };
   } catch (err) {
     return {
@@ -317,19 +365,43 @@ function concat(chunks, size) {
  * <link rel="alternate"> tags, then a short list of conventional paths. Stops at
  * the first thing that parses.
  *
+ * Given the validators from a previous crawl it asks conditionally, and a `304`
+ * short-circuits everything below: the answer is `notModified`, with no feed and
+ * no discovery. The short-circuit is the whole point rather than a detail — a
+ * 304 arriving here would otherwise carry an empty body, fail `looksLikeFeed`,
+ * and send the resolver off to spend nine speculative requests hunting for a
+ * feed at a URL that had just told us it still had one.
+ *
+ * Validators are only ever sent for `input` itself, never for a discovered
+ * candidate, since they describe one document and a candidate is a different
+ * one. In practice a re-crawl passes the feed URL it already resolved, so the
+ * conditional request is the one that matters and discovery does not run at all.
+ *
  * @param {string} input a site URL or a feed URL
- * @returns {Promise<{ ok: true, feedUrl: string, feed: object } | { ok: false, error: string }>}
+ * @param {{ etag?: string|null, lastModified?: string|null }} [conditional]
+ * @returns {Promise<{ ok: true, feedUrl: string, feed: object, etag?: string|null, lastModified?: string|null } | { ok: false, notModified?: boolean, error?: string }>}
  */
-export async function resolveFeed(input) {
+export async function resolveFeed(input, conditional = {}) {
   const start = normalizeUrl(input);
   if (!start) return { ok: false, error: 'invalid-url' };
 
-  const first = await safeFetch(start);
+  const first = await safeFetch(start, conditional);
+  if (first.notModified) {
+    return { ok: false, notModified: true, etag: first.etag, lastModified: first.lastModified };
+  }
   if (!first.ok) return { ok: false, error: first.error ?? `http-${first.status}` };
 
   if (looksLikeFeed(first.contentType, first.body, first.url)) {
     const feed = parseFeed(first.body, first.url);
-    if (feed) return { ok: true, feedUrl: first.url, feed };
+    if (feed) {
+      return {
+        ok: true,
+        feedUrl: first.url,
+        feed,
+        etag: first.etag ?? null,
+        lastModified: first.lastModified ?? null,
+      };
+    }
   }
 
   // Playlists come last, after every feed candidate has failed. A site with
@@ -352,7 +424,15 @@ export async function resolveFeed(input) {
     if (!looksLikeFeed(res.contentType, res.body, res.url)) continue;
 
     const feed = parseFeed(res.body, res.url);
-    if (feed && feed.items.length > 0) return { ok: true, feedUrl: res.url, feed };
+    if (feed && feed.items.length > 0) {
+      return {
+        ok: true,
+        feedUrl: res.url,
+        feed,
+        etag: res.etag ?? null,
+        lastModified: res.lastModified ?? null,
+      };
+    }
   }
 
   return { ok: false, error: 'no-feed-found' };

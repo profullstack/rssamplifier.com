@@ -2,7 +2,15 @@ import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
 
 import { prepareCredits } from './enrich.js';
-import { intervalFromDates, nextInterval, newestPublished } from './cadence.js';
+import {
+  intervalFromDates,
+  intervalFromChanges,
+  nextInterval,
+  newestPublished,
+  contentSignature,
+  recordChange,
+  neverSooner,
+} from './cadence.js';
 
 /** Backoff ladder in minutes, indexed by consecutive error count. */
 const BACKOFF = [60, 180, 360, 720, 1440];
@@ -150,9 +158,41 @@ export function topicsFrom(feed = {}, storedItems = []) {
 export async function crawlFeed(db, feed, opts = {}) {
   const id = String(feed.id);
   const scraped = feed.source_kind === 'scraped';
+
+  // What the server told us last time, sent back so it can answer "still the
+  // same" without sending the document again. Scraped sources are excluded: what
+  // is fetched there is a page of prose whose validators describe the page, and
+  // a marketing site that has not changed its header is not evidence that the
+  // posts extracted from it have not.
+  const conditional = scraped
+    ? {}
+    : { etag: feed.http_etag ?? null, lastModified: feed.http_last_modified ?? null };
+
   const resolved = scraped
     ? await (opts.scrape ?? scrapeFeed)(String(feed.feed_url))
-    : await (opts.resolve ?? resolveFeed)(String(feed.feed_url));
+    : await (opts.resolve ?? resolveFeed)(String(feed.feed_url), conditional);
+
+  // The publisher says nothing has changed. This is the cheapest and the most
+  // trustworthy answer the crawler can get: no body was sent, nothing is parsed,
+  // and the claim comes from the only party in a position to make it.
+  //
+  // The interval is recomputed from the change log, because a 304 is itself an
+  // observation -- "we looked and it was still the same" -- and that is exactly
+  // what the log is for. `neverSooner` is what makes it safe: evidence of *no*
+  // change may only push the next read further out, never pull it closer, so a
+  // feed resting at the ceiling is not dragged back by being checked.
+  if (resolved.notModified) {
+    const minutes =
+      neverSooner(intervalFromChanges(feed.change_log), feed.fetch_interval_minutes) ??
+      Number(feed.fetch_interval_minutes) ??
+      MIN_INTERVAL;
+    await q.markUnchanged(db, id, minutes, {
+      etag: resolved.etag ?? null,
+      lastModified: resolved.lastModified ?? null,
+      changeLog: recordChange(feed.change_log, false),
+    });
+    return { ok: true, newItems: 0, notModified: true };
+  }
 
   if (!resolved.ok) {
     const errorCount = Number(feed.error_count ?? 0) + 1;
@@ -175,7 +215,40 @@ export async function crawlFeed(db, feed, opts = {}) {
   // The ordering below is what makes one transaction possible. Everything that
   // has to be *read* is read first, in parallel, and everything to be written
   // is assembled in memory before a single statement is sent.
-  const interval = intervalFromDates(resolved.feed.items);
+  // Did the contents change since last time, judged by a fingerprint of what
+  // the document identifies rather than of the bytes it arrived in? This is the
+  // fallback for the majority of servers that send no validators at all, and it
+  // answers the same question a 304 would, one parse later.
+  //
+  // A first crawl has nothing to compare against and counts as a change, which
+  // is right: everything in the document is new to us. That is the *only* way to
+  // be undecided here -- an empty document has a fingerprint like any other, so
+  // a feed that consistently lists nothing reads as unchanged and decays,
+  // instead of reading as changed and being fetched hourly for ever.
+  const signature = contentSignature(resolved.feed.items);
+  const knownSignature = feed.content_hash ? String(feed.content_hash) : null;
+  const contentsChanged = knownSignature === null || signature !== knownSignature;
+  const changeLog = recordChange(feed.change_log, contentsChanged);
+
+  // How long to wait, in order of how good the evidence is.
+  //
+  // The document's own dates are best and cost nothing, since they were parsed
+  // anyway. Failing those -- and about two percent of the directory states no
+  // dates at all, while accounting for forty-four percent of the crawl demand --
+  // the times we watched the contents change say the same thing about the same
+  // publisher, measured on our clock instead of theirs. Only a feed with neither
+  // falls to the old doubling ladder, which `storeCrawl` evaluates in SQL
+  // because it needs a number this crawl cannot know until it has written.
+  //
+  // The asymmetry in the second branch is the important part. A crawl that saw
+  // no change is evidence in one direction only, so it may lengthen the interval
+  // and never shorten it; a crawl that saw one recomputes freely, which is what
+  // lets an abandoned feed that starts publishing again accelerate on its first
+  // new post.
+  const dated = intervalFromDates(resolved.feed.items);
+  const observed = intervalFromChanges(changeLog);
+  const interval =
+    dated ?? (contentsChanged ? observed : neverSooner(observed, feed.fetch_interval_minutes));
 
   // When this publisher last published, as distinct from when we last read
   // them. Stored on the feed row so a page can say "current, and dormant since
@@ -191,12 +264,16 @@ export async function crawlFeed(db, feed, opts = {}) {
   // question of the document instead, from two values already in hand, so it can
   // be answered before anything is written.
   //
-  // A feed with no usable dates answers null and falls through to the "have we
-  // ever done this" checks below, which is the same conclusion the old guard
-  // reached by a slower route.
+  // A feed with no usable dates cannot answer by date, and used to fall through
+  // to the "have we ever done this" checks below -- which meant its topics and
+  // credits were derived once, on its first crawl, and never revised however
+  // much it went on to publish. The signature answers for it: no dates, but the
+  // contents demonstrably changed, is the same fact arrived at differently.
   const knownPublished = feed.last_published_at ? String(feed.last_published_at) : null;
   const publishedSomethingNew =
-    published !== null && (knownPublished === null || published > knownPublished);
+    published !== null
+      ? knownPublished === null || published > knownPublished
+      : contentsChanged && knownSignature !== null;
 
   // Every read the crawl needs, at once, before any of it is written.
   //
@@ -276,6 +353,12 @@ export async function crawlFeed(db, feed, opts = {}) {
     interval,
     published,
     [...topicStatements, ...creditStatements],
+    {
+      etag: resolved.etag ?? null,
+      lastModified: resolved.lastModified ?? null,
+      contentHash: signature,
+      changeLog,
+    },
   );
 
   return { ok: true, newItems: sent, topics, people };
@@ -452,6 +535,12 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
   // reports what it added, and the alternative is counting feed_items rows by
   // hour, which is a scan of the largest table in the database.
   let items = 0;
+  // Crawls the publisher answered with a 304, which cost a header exchange and
+  // one small write instead of a document, a parse and an upsert. This is the
+  // number that says whether conditional requests are actually being honoured
+  // out there -- it is entirely up to other people's servers, so it cannot be
+  // predicted and has to be measured.
+  let unchanged = 0;
   let next = 0;
 
   const worker = async () => {
@@ -471,6 +560,7 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
           if (res.ok) {
             crawled += 1;
             items += Number(res.newItems ?? 0);
+            if (res.notModified) unchanged += 1;
           } else failed += 1;
 
           report(onEvent, feed, started, {
@@ -496,7 +586,7 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
   // `hosts` is what says whether the spread is working: a batch of 300 feeds
   // across 4 hosts cannot go faster than its biggest queue however many workers
   // are pointed at it, and the number is otherwise invisible from outside.
-  return { crawled, failed, items, hosts: queues.length };
+  return { crawled, failed, items, unchanged, hosts: queues.length };
 }
 
 /**
