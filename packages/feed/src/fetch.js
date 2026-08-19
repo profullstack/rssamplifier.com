@@ -5,8 +5,15 @@ import { looksLikeFeed, normalizeUrl, findFeedLinks, guessFeedUrls } from './dis
 import { parseFeed } from './parse.js';
 import { findPlaylistLinks } from './playlist.js';
 
-const USER_AGENT =
-  'RSSAmplifierBot/1.0 (+https://rssamplifier.com/about; feed directory indexer)';
+// The short domain, which 302s to the same page with the path kept
+// (rssamp.com/about -> rssamplifier.com/about). A user-agent string is read in
+// a server log, on a narrow line, next to a hundred others, so the shorter it
+// is the likelier somebody actually follows it.
+//
+// The product token stays `RSSAmplifierBot`. That is the half webmasters write
+// into robots.txt, and renaming it would silently void every rule anybody has
+// already written against us -- the URL is the part that is safe to change.
+const USER_AGENT = 'RSSAmplifierBot/1.0 (+https://rssamp.com/about; feed directory indexer)';
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB — generous for a feed, bounded for us
 const TIMEOUT_MS = 15_000;

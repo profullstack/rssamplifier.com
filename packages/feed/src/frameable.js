@@ -37,7 +37,7 @@ const BODY_TIMEOUT_MS = 10_000;
  */
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 
-const USER_AGENT = 'rssamplifier.com reader (+https://rssamplifier.com)';
+const USER_AGENT = 'rssamplifier.com reader (+https://rssamp.com/about)';
 
 /**
  * Decide framing from the two headers that govern it.
