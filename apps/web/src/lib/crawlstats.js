@@ -121,3 +121,65 @@ async function refreshCategories() {
     return null;
   }
 }
+
+/** How long a job-board read is trusted. */
+const JOBS_TTL_MS = 60 * 1000;
+
+/** @type {{ at: number, value: Awaited<ReturnType<typeof q.jobBacklogs>> }|null} */
+let jobsCache = null;
+
+/** Guards against a slow refresh being started once per concurrent request. */
+let jobsRefreshing = false;
+
+/**
+ * The job board's backlogs, cached and served stale while it refreshes.
+ *
+ * This was the last uncached scan of `feeds` on the page, and it is a scan
+ * however well it is written: counting the directory by status, by card state
+ * and by never-crawled means visiting every row, and there are 369,030 of them.
+ * On an idle database that is 398ms, which is why it shipped uncached. Under
+ * the crawler's write load the same statement measured **16.9 seconds** -- and
+ * the page pays it on every request, because /crawlstats is deliberately
+ * `force-dynamic`.
+ *
+ * A minute of staleness costs nothing here. These are backlogs of hundreds of
+ * thousands of feeds draining at a few hundred an hour; they do not
+ * meaningfully move between two views of a page that refreshes itself every
+ * fifteen seconds. The health badge and the live figures beside it are read
+ * separately and stay current to the second -- see `crawlStats`, which is the
+ * one thing on this page that must never be served from a cache, because a
+ * stalled crawler reading "healthy" is the failure the page exists to catch.
+ *
+ * @returns {Promise<Awaited<ReturnType<typeof q.jobBacklogs>>|null>}
+ */
+export async function jobBacklogs() {
+  if (jobsCache && Date.now() - jobsCache.at < JOBS_TTL_MS) return jobsCache.value;
+
+  if (jobsCache) {
+    if (!jobsRefreshing) {
+      jobsRefreshing = true;
+      refreshJobs().finally(() => {
+        jobsRefreshing = false;
+      });
+    }
+    return jobsCache.value;
+  }
+
+  return refreshJobs();
+}
+
+/**
+ * @returns {Promise<Awaited<ReturnType<typeof q.jobBacklogs>>|null>}
+ */
+async function refreshJobs() {
+  try {
+    const value = await q.jobBacklogs(db());
+    jobsCache = { at: Date.now(), value };
+    return value;
+  } catch {
+    // The previous answer if there is one, null if there is not. Zeroes would
+    // be a lie: a job board showing "0 waiting" because the read failed reads
+    // as "all caught up", where a missing board is merely missing.
+    return jobsCache?.value ?? null;
+  }
+}
