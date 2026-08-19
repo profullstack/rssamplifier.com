@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { connect, migrate, newId, accounts, alerts, q } from '@rssamplifier/db';
+import { connect, migrate, newId, accounts, alerts, authors, q } from '@rssamplifier/db';
 
 import { deliverAlerts } from '../src/deliver.js';
 
@@ -127,6 +127,26 @@ async function topic(feedId, slug) {
   });
 }
 
+/**
+ * Credit a feed to a person, which is what makes an author follow deliver.
+ *
+ * @param {string} feedId
+ * @param {string} slug
+ * @param {string} name
+ * @returns {Promise<string>}
+ */
+async function credit(feedId, slug, name) {
+  const { id } = await authors.upsertAuthor(db, {
+    identityKey: `mailto:${slug}@example.com`,
+    slug,
+    name,
+    normName: name.toLowerCase(),
+    confidence: 0.9,
+  });
+  await authors.linkFeedAuthor(db, feedId, String(id), { role: 'owner', confidence: 0.9 });
+  return String(id);
+}
+
 const run = (opts = {}) => deliverAlerts(db, { transport: recorder(), origin: 'https://x.test', ...opts });
 
 test('the first pass sends nothing and starts the clock', async () => {
@@ -210,6 +230,46 @@ test('alerting on a topic catches a blog that is not followed', async () => {
   // The follow that pulled it in is named, so the reader is not left working
   // out which of their follows produced a blog they have never heard of.
   assert.match(sent.email[0].text, /via gardening/);
+});
+
+test('alerting on a person catches every publication they write for', async () => {
+  const userId = await reader();
+  // Two publications, neither of them followed. The follow is on the human.
+  const blog = await feed({ slug: 'her-blog', title: 'Her Blog' });
+  const guest = await feed({ slug: 'someone-elses', title: "Someone Else's Newsletter" });
+  const ada = await credit(blog, 'ada-lovelace', 'Ada Lovelace');
+  await authors.linkFeedAuthor(db, guest, ada, { role: 'author', confidence: 0.9 });
+
+  await accounts.followAuthor(db, userId, ada);
+  await alerts.setAuthorAlerts(db, userId, ada, true);
+
+  await run();
+  await post(blog, { guid: 'at-home', title: 'Written at home', createdAt: future(1) });
+  await post(guest, { guid: 'away', title: 'Written as a guest', createdAt: future(2) });
+
+  const result = await run();
+
+  // The whole point of following a person: the guest post arrives even though
+  // nothing about that newsletter was ever followed.
+  assert.equal(result.items, 2);
+  assert.match(sent.email[0].text, /Written at home/);
+  assert.match(sent.email[0].text, /Written as a guest/);
+  // Attributed to her rather than to a publication the reader does not know.
+  assert.match(sent.email[0].text, /via Ada Lovelace/);
+});
+
+test('an author follow with the bell off stays quiet', async () => {
+  const userId = await reader();
+  const blog = await feed({ slug: 'quiet-blog' });
+  const grace = await credit(blog, 'grace-hopper', 'Grace Hopper');
+
+  // Followed, deliberately not alerting. Collecting is not being interrupted.
+  await accounts.followAuthor(db, userId, grace);
+
+  await run();
+  await post(blog, { guid: 'unheard', title: 'Not worth waking you', createdAt: future(1) });
+
+  assert.equal((await run()).items, 0);
 });
 
 test('a topic follow narrowed to a category ignores the others', async () => {

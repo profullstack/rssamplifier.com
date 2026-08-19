@@ -179,12 +179,15 @@ async function deliverForUser(db, user, opts) {
  * @returns {Promise<Array<{ via: object, rows: object[], capped: boolean }>>}
  */
 async function readSources(db, userId, cursor, opts) {
-  const alerting = await alerts.alertedTopics(db, userId, opts.topics);
+  const [alertingTopics, alertingAuthors] = await Promise.all([
+    alerts.alertedTopics(db, userId, opts.topics),
+    alerts.alertedAuthors(db, userId, opts.topics),
+  ]);
 
-  const [feedRows, topicSources] = await Promise.all([
+  const [feedRows, topicSources, authorSources] = await Promise.all([
     alerts.newItemsFromAlertedFeeds(db, userId, cursor, opts.perSource),
     Promise.all(
-      alerting.map(async (follow) => {
+      alertingTopics.map(async (follow) => {
         const slug = String(follow.slug);
         const segment = String(follow.segment ?? '');
         const rows = await alerts.newItemsForTopic(db, slug, cursor, {
@@ -195,6 +198,19 @@ async function readSources(db, userId, cursor, opts) {
         return { via: topicVia(follow), rows, capped: rows.length >= opts.perSource };
       }),
     ),
+    // A person is its own source rather than being folded into the blogs,
+    // because the attribution differs: a post that arrives because you follow
+    // Ada is "Ada published this", wherever she published it, and the feed the
+    // row carries is the publication rather than the reason it was sent.
+    Promise.all(
+      alertingAuthors.map(async (follow) => {
+        const rows = await alerts.newItemsForAuthor(db, String(follow.id), cursor, {
+          limit: opts.perSource,
+        });
+
+        return { via: authorVia(follow), rows, capped: rows.length >= opts.perSource };
+      }),
+    ),
   ]);
 
   return [
@@ -202,6 +218,7 @@ async function readSources(db, userId, cursor, opts) {
     // blog is attributed to the blog, which every row already carries.
     { via: { kind: 'feed', title: '', href: '' }, rows: feedRows, capped: feedRows.length >= opts.perSource },
     ...topicSources,
+    ...authorSources,
   ];
 }
 
@@ -227,6 +244,20 @@ export function topicVia(follow) {
   }
 
   return { kind: 'topic', title: `${keyword}: ${segment}`, href: `${path}/${segment}` };
+}
+
+/**
+ * What one author follow is called in an alert, and where it points.
+ *
+ * @param {{ slug: unknown, name?: unknown }} follow
+ * @returns {{ kind: string, title: string, href: string }}
+ */
+export function authorVia(follow) {
+  const slug = String(follow.slug ?? '');
+  // The slug is a serviceable fallback for a row whose name went missing, the
+  // same way the topic label falls back to its own slug.
+  const name = String(follow.name || slug);
+  return { kind: 'author', title: name, href: `/authors/${encodeURIComponent(slug)}` };
 }
 
 /**

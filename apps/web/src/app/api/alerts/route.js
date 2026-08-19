@@ -1,4 +1,4 @@
-import { alerts, q } from '@rssamplifier/db';
+import { alerts, authors, q } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
@@ -52,7 +52,9 @@ export async function POST(req) {
     return json({ error: 'bad-request' }, 400);
   }
 
-  if (kind !== 'feed' && kind !== 'topic') return json({ error: 'bad-kind' }, 400);
+  if (kind !== 'feed' && kind !== 'topic' && kind !== 'author') {
+    return json({ error: 'bad-kind' }, 400);
+  }
 
   // Only ever back to somewhere on this site. `next` arrives in a form field, so
   // an absolute URL in it would make this endpoint an open redirect.
@@ -69,7 +71,9 @@ export async function POST(req) {
   const changed =
     kind === 'feed'
       ? await setForFeed(client, userId, slug, on)
-      : await alerts.setTopicAlerts(client, userId, slugFromUrl(slug), segment, on);
+      : kind === 'author'
+        ? await setForAuthor(client, userId, slug, on)
+        : await alerts.setTopicAlerts(client, userId, slugFromUrl(slug), segment, on);
 
   // Not following it — or, for a blog, no such blog. Either way there is nothing
   // to flag, and saying so is more useful than reporting a success that did not
@@ -99,6 +103,24 @@ async function setForFeed(client, userId, slug, on) {
 }
 
 /**
+ * Resolve a person's slug to their id, then flag the follow.
+ *
+ * The same indirection as the blog above and for the same reason: the table is
+ * keyed on an id the reader never sees, and the slug is what a page can send.
+ *
+ * @param {import('@libsql/client').Client} client
+ * @param {string} userId
+ * @param {string} slug
+ * @param {boolean} on
+ * @returns {Promise<boolean>}
+ */
+async function setForAuthor(client, userId, slug, on) {
+  const person = await authors.authorBySlug(client, String(slug).trim().toLowerCase());
+  if (!person) return false;
+  return alerts.setAuthorAlerts(client, userId, String(person.id), on);
+}
+
+/**
  * Where a no-JavaScript submit lands when the form did not say.
  *
  * @param {string} kind
@@ -107,6 +129,7 @@ async function setForFeed(client, userId, slug, on) {
  * @returns {string}
  */
 function fallbackPath(kind, slug, segment) {
+  if (kind === 'author') return `/authors/${encodeURIComponent(String(slug).toLowerCase())}`;
   if (kind !== 'topic') return `/${slug}`;
   const base = `/topics/${encodeURIComponent(slugFromUrl(slug))}`;
   return segment ? `${base}/${encodeURIComponent(segment)}` : base;

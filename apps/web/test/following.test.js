@@ -19,6 +19,7 @@ function item(title, publishedAt, extra = {}) {
 
 const VIA_TOPIC = { kind: 'topic', title: 'ai', href: '/topics/ai' };
 const VIA_FEED = { kind: 'feed', title: '', href: '' };
+const VIA_AUTHOR = { kind: 'author', title: 'Ada Lovelace', href: '/authors/ada-lovelace' };
 
 test('the river is newest first across every source', () => {
   const merged = mergeRiver([
@@ -110,4 +111,37 @@ test('a topic with no stored spelling falls back to its slug', () => {
 test('the feed URL carries the token in the query, where a rewrite cannot lose it', () => {
   const url = followingFeedUrl('https://rssamplifier.com', 'tok+en/1', 'atom');
   assert.equal(url, 'https://rssamplifier.com/following.atom?t=tok%2Ben%2F1');
+});
+
+test('a post pulled in by a followed person is attributed to the person', () => {
+  // The reason an author is its own source rather than folded into the blogs:
+  // the row still carries whichever publication it appeared in, and the reader
+  // needs to be told it arrived because they follow Ada, not because they
+  // follow a newsletter they may never have heard of.
+  const merged = mergeRiver([
+    { via: VIA_AUTHOR, rows: [item('On someone else\'s newsletter', '2026-06-01T00:00:00Z')] },
+  ]);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].via.kind, 'author');
+  assert.equal(merged[0].via.title, 'Ada Lovelace');
+  assert.equal(merged[0].via.href, '/authors/ada-lovelace');
+});
+
+test('the same post reached by a person and a topic is one row', () => {
+  // A reader who follows Ada and also follows the topic she writes about gets
+  // told once. Whichever telling is newer wins, and its `via` is what survives.
+  const merged = mergeRiver([
+    {
+      via: VIA_AUTHOR,
+      rows: [item('one story', '2026-06-01T00:00:00Z', { cluster_key: 'dup' })],
+    },
+    {
+      via: VIA_TOPIC,
+      rows: [item('one story again', '2026-05-01T00:00:00Z', { cluster_key: 'dup' })],
+    },
+  ]);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].via.kind, 'author');
 });
