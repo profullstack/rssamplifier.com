@@ -13,6 +13,14 @@ const MIN_INTERVAL = 60;
 /** Longest gap for a feed that is merely quiet rather than broken. */
 const MAX_QUIET_INTERVAL = 1440; // one day
 
+// Topics and bylines are useful projections, not part of deciding whether a
+// feed is healthy. A large first-crawl catch-up can pause them so its scarce
+// database writes are spent on feeds and posts; feeds with no projection are
+// picked up once this is switched back on.
+const AUXILIARY_WRITES = !['0', 'false'].includes(
+  String(process.env['CRAWL_AUXILIARY_WRITES'] ?? '').toLowerCase(),
+);
+
 /**
  * How long to wait before the next attempt on a feed.
  *
@@ -152,8 +160,9 @@ export async function crawlFeed(db, feed, opts = {}) {
     return { ok: false, newItems: 0, error: resolved.error };
   }
 
-  // ONE write transaction for the whole crawl: the items, the feed row, the
-  // feed's topics and its credits.
+  // The ordinary path writes the whole crawl in one transaction. Production
+  // catch-up mode instead uses serialized autocommits in `storeCrawl`, because
+  // its remote explicit transactions are currently the slow path.
   //
   // This is the number that decides the crawler's throughput and nothing else
   // does. SQLite permits a single writer, so writes serialize -- a crawl costs
@@ -198,17 +207,22 @@ export async function crawlFeed(db, feed, opts = {}) {
   // *before* the upsert and adding the document's items in memory gives the
   // same set without the read-after-write that used to force a second
   // transaction.
-  const [storedItems, existingTopics, hasAuthors] = await Promise.all([
-    q.itemsForKeywords(db, id).catch(() => []),
-    q.countFeedKeywords(db, id).catch(() => 0),
-    authors.feedHasAuthors(db, id).catch(() => true),
-  ]);
+  let storedItems = [];
+  let existingTopics = 1;
+  let hasAuthors = true;
+  if (AUXILIARY_WRITES) {
+    [storedItems, existingTopics, hasAuthors] = await Promise.all([
+      q.itemsForKeywords(db, id).catch(() => []),
+      q.countFeedKeywords(db, id).catch(() => 0),
+      authors.feedHasAuthors(db, id).catch(() => true),
+    ]);
+  }
 
   // Topics, when the feed has published something or has none yet.
   let topics = 0;
   /** @type {Array<{ sql: string, args: unknown[] }>} */
   let topicStatements = [];
-  if (publishedSomethingNew || existingTopics === 0) {
+  if (AUXILIARY_WRITES && (publishedSomethingNew || existingTopics === 0)) {
     try {
       const extracted = topicsFrom(resolved.feed, storedItems);
       topicStatements = q.keywordStatements(id, extracted);
@@ -229,7 +243,7 @@ export async function crawlFeed(db, feed, opts = {}) {
   let people = 0;
   /** @type {Array<{ sql: string, args: unknown[] }>} */
   let creditStatements = [];
-  if (publishedSomethingNew || !hasAuthors) {
+  if (AUXILIARY_WRITES && (publishedSomethingNew || !hasAuthors)) {
     try {
       const prepared = await prepareCredits(db, { id, feed_url: String(feed.feed_url) }, resolved.feed.credits ?? []);
       creditStatements = prepared.statements;

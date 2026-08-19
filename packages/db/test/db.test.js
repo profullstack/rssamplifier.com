@@ -85,6 +85,31 @@ test('items insert, dedupe by guid, and count', async () => {
   assert.equal(rows[0].title, 'Beta post', 'newest first');
 });
 
+test('a feed document is one multi-row autocommit write', async () => {
+  const calls = [];
+  const offered = await q.upsertItems(
+    {
+      execute: async (statement) => {
+        calls.push(statement);
+        return { rows: [] };
+      },
+      batch: async () => {
+        throw new Error('item storage must not open an explicit transaction');
+      },
+    },
+    'feed-1',
+    [
+      { guid: 'one', title: 'One' },
+      { guid: 'two', title: 'Two' },
+    ],
+  );
+
+  assert.equal(offered, 2);
+  assert.equal(calls.length, 1, 'both items share one request');
+  assert.match(calls[0].sql, /values \([^)]*\),\s*\([^)]*\)\s+on conflict/s);
+  assert.equal(calls[0].args.length, 34, 'seventeen bindings per item');
+});
+
 test('a re-crawl fills in the thumbnail a post was stored without', async () => {
   // The whole backfill for four fifths of the directory. The parser learned to
   // find pictures the feeds were already carrying, and a post already stored

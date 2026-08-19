@@ -305,40 +305,42 @@ export async function insertFeed(db, feed) {
 /**
  * Insert items, ignoring ones already stored for this feed.
  *
- * Uses a single batch so one round trip covers the whole feed rather than one
- * per item — Turso is a network database and per-statement latency dominates.
+ * Uses one multi-row statement so one round trip covers the whole feed rather
+ * than one per item — Turso is a network database and request latency dominates.
  *
  * @param {Client} db
  * @param {string} feedId
  * @param {Array<object>} items
- * @returns {Promise<number>} statements sent
+ * @returns {Promise<number>} items offered
  */
 export async function upsertItems(db, feedId, items) {
-  const statements = itemStatements(feedId, items, nowIso());
-  if (statements.length === 0) return 0;
+  const statement = itemStatement(feedId, items, nowIso());
+  if (!statement) return 0;
 
-  await db.batch(statements, 'write');
+  await db.execute(statement);
   // How many items were **offered**, not how many were new. Every crawl re-sends
   // the whole document and the conflict clause updates the rows already there,
   // so there is no cheap way to tell the two apart here — and reading this as
   // "new items" silently disables the crawler's backoff. `crawlFeed` derives the
   // real figure from the change in the stored total.
-  return statements.length;
+  return statement.rows;
 }
 
 /**
- * One insert-or-update statement per item, ready to go into any batch.
+ * One multi-row insert-or-update for the items in a feed document.
  *
- * Split out of `upsertItems` so that `storeCrawl` can put these and the feed
- * row into a **single** write transaction. They are the same statements either
- * way; only who commits them changes.
+ * A multi-row statement is important on the remote database: ten individual
+ * autocommit requests are ten network round trips and ten turns through the
+ * writer, while this is one of each. It also gives catch-up mode a bounded
+ * critical path without opening the explicit transaction lane that is
+ * currently taking tens of seconds even for `select 1`.
  *
  * @param {string} feedId
  * @param {object[]} items
  * @param {string} now
- * @returns {Array<{ sql: string, args: unknown[] }>}
+ * @returns {{ sql: string, args: unknown[], rows: number }|null}
  */
-function itemStatements(feedId, items, now) {
+function itemStatement(feedId, items, now) {
   // Newest first, then capped. A feed that ships its entire archive -- and they
   // exist, up to 1,494 entries in a production sample -- otherwise costs a
   // single first crawl one row-write per entry, and there are 302k feeds in the
@@ -356,11 +358,14 @@ function itemStatements(feedId, items, now) {
     .sort((a, b) => published(b) - published(a))
     .slice(0, ITEMS_PER_CRAWL);
 
-  return rows.map((i) => ({
+  if (rows.length === 0) return null;
+
+  const placeholders = rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',\n        ');
+  return {
     sql: `insert into feed_items
       (id, feed_id, guid, url, title, summary, content_chars, author, image_url, published_at,
        categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at, cluster_key)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      values ${placeholders}
       on conflict (feed_id, guid) do update set
         -- An episode already stored keeps its row, but a re-crawl fills in the
         -- audio it was stored without. Items imported before the media columns
@@ -407,47 +412,60 @@ function itemStatements(feedId, items, now) {
          or (feed_items.audio_bytes is null and excluded.audio_bytes is not null)
          or (feed_items.audio_seconds is null and excluded.audio_seconds is not null)
          or (feed_items.content_chars is null and excluded.content_chars is not null)`,
-    args: [
-      newId(),
-      feedId,
-      i.guid,
-      i.url || null,
-      i.title || '(untitled)',
-      i.summary || null,
-      // The length, not the body -- see 0031. Payload size genuinely does not
-      // decide how long a single write takes here (a 1.1 MB batch beat a 12 KB
-      // one), but it decides how big the database gets, and size is what makes
-      // write slots scarce. This column was 10 GB of 14. The body a reader
-      // actually opens is fetched then and cached in `item_extracts`; the only
-      // question ever asked of the stored copy was how long it was.
-      textLength(i.contentHtml),
-      i.author || null,
-      i.imageUrl || null,
-      i.publishedAt ?? null,
-      JSON.stringify(Array.isArray(i.categories) ? i.categories : []),
-      i.audio?.url ?? null,
-      i.audio?.type ?? null,
-      i.audio?.bytes ?? null,
-      i.audio?.seconds ?? null,
-      now,
-      // Computed on the way in, so the river never pays for it. An empty string
-      // means "looked at, deliberately not groupable"; NULL is reserved for
-      // rows the backfill worker has not reached yet, and writing NULL here
-      // would put every new item back into its queue forever.
-      clusterKey(i.title || '') ?? '',
-    ],
-  }));
+    args: rows.flatMap((i) => [
+        newId(),
+        feedId,
+        i.guid,
+        i.url || null,
+        i.title || '(untitled)',
+        i.summary || null,
+        // The length, not the body -- see 0031. Payload size genuinely does not
+        // decide how long a single write takes here (a 1.1 MB batch beat a 12 KB
+        // one), but it decides how big the database gets, and size is what makes
+        // write slots scarce. This column was 10 GB of 14. The body a reader
+        // actually opens is fetched then and cached in `item_extracts`; the only
+        // question ever asked of the stored copy was how long it was.
+        textLength(i.contentHtml),
+        i.author || null,
+        i.imageUrl || null,
+        i.publishedAt ?? null,
+        JSON.stringify(Array.isArray(i.categories) ? i.categories : []),
+        i.audio?.url ?? null,
+        i.audio?.type ?? null,
+        i.audio?.bytes ?? null,
+        i.audio?.seconds ?? null,
+        now,
+        // Computed on the way in, so the river never pays for it. An empty string
+        // means "looked at, deliberately not groupable"; NULL is reserved for
+        // rows the backfill worker has not reached yet, and writing NULL here
+        // would put every new item back into its queue forever.
+        clusterKey(i.title || '') ?? '',
+      ]),
+    rows: rows.length,
+  };
 }
 
 /**
  * How many items one crawl may write.
  *
- * Not how many a feed may have. See `itemStatements`: a crawl stores the newest
+ * Not how many a feed may have. See `itemStatement`: a crawl stores the newest
  * this many, and the next crawl stores whatever has appeared since, so a feed's
  * archive still grows -- it just stops arriving in one 1,500-row transaction on
  * a database whose write path is the scarce resource.
  */
 const ITEMS_PER_CRAWL = Number(process.env['ITEMS_PER_CRAWL']) || 50;
+
+/**
+ * Catch-up mode avoids Turso's pathologically slow explicit transaction lane.
+ * This is opt-in because a local SQLite file has no network lock queue and is
+ * better served by the atomic transaction below.
+ */
+const CRAWL_AUTOCOMMIT = ['1', 'true'].includes(
+  String(process.env['TURSO_CRAWL_AUTOCOMMIT'] ?? '').toLowerCase(),
+);
+
+/** @type {WeakMap<Client, Promise<unknown>>} */
+const crawlWriteTails = new WeakMap();
 
 /**
  * An item's publication time as a number, for sorting. Undated sorts last.
@@ -482,7 +500,7 @@ function textLength(html) {
 
 
 /**
- * Store a crawl's items and settle the feed row, in **one** write transaction.
+ * Store a crawl's items and settle the feed row.
  *
  * This is `upsertItems` + `countItems` + `markCrawlSuccess` fused, and the
  * reason to fuse them is that against this database a write transaction costs
@@ -493,11 +511,13 @@ function textLength(html) {
  * no-op all landed within noise of each other. The cost is acquiring the write
  * path at all, not the work done once it is held.
  *
- * So the number that governs the crawler is **write transactions per feed**,
- * and nothing else. It was six: items, the feed row, the keywords, and three in
- * the author path. This removes one of them outright and removes the `count(*)`
- * read that sat between the other two, by doing the counting and the interval
- * arithmetic in SQL where they are free.
+ * Ordinarily these statements use one atomic transaction. During a large
+ * first-crawl catch-up, production can set `TURSO_CRAWL_AUTOCOMMIT=1`: items
+ * become one multi-row autocommit and the feed row becomes a second. Those two
+ * writes are serialized in-process, because SQLite still has one writer and
+ * making six workers race merely moves the queue back to the database. If the
+ * first statement lands and the second fails, the feed remains due and the
+ * idempotent item upsert is retried; partial progress is therefore safe.
  *
  * The interval ladder is duplicated across two SET expressions rather than
  * computed once, which looks like a mistake and is not: SQLite evaluates every
@@ -594,12 +614,31 @@ export async function storeCrawl(
     ],
   };
 
+  const item = itemStatement(id, items, now);
+
+  if (CRAWL_AUTOCOMMIT) {
+    return serializeCrawlWrite(db, async () => {
+      if (item) await db.execute(item);
+      const result = await db.execute(settle);
+
+      // Auxiliary writes are disabled in production catch-up mode. Keeping
+      // this path complete makes the switch safe if it is enabled elsewhere;
+      // they run only after the critical feed row has settled, so a missing
+      // topic or credit cannot leave a healthy feed permanently due.
+      for (const statement of extra) await db.execute(statement);
+
+      const total = Number(result.rows?.[0]?.item_count ?? before);
+      return { total, stored: Math.max(0, total - before) };
+    });
+  }
+
   // `extra` is everything else this crawl decided to write -- the feed's topics
   // and its credits -- carried into the same transaction rather than opening
   // two more of their own. It goes *after* the feed row so that a failure
   // anywhere rolls back a crawl that had not been recorded yet, rather than one
   // that had.
-  const results = await db.batch([...itemStatements(id, items, now), settle, ...extra], 'write');
+  const statements = [...(item ? [item] : []), settle, ...extra];
+  const results = await db.batch(statements, 'write');
 
   // Indexed rather than taken from the end: `extra` now sits behind the feed
   // row, so "the last result" stopped being the one carrying RETURNING. Reading
@@ -609,6 +648,28 @@ export async function storeCrawl(
   const settleIndex = results.length - extra.length - 1;
   const total = Number(results[settleIndex]?.rows?.[0]?.item_count ?? before);
   return { total, stored: Math.max(0, total - before) };
+}
+
+/**
+ * Run one feed's autocommit writes after the previous feed has released the
+ * writer. Fetching remains concurrent; only the database's single-writer
+ * section queues here.
+ *
+ * @template T
+ * @param {Client} db
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+async function serializeCrawlWrite(db, task) {
+  const previous = crawlWriteTails.get(db) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(task);
+  crawlWriteTails.set(db, current);
+
+  try {
+    return await current;
+  } finally {
+    if (crawlWriteTails.get(db) === current) crawlWriteTails.delete(db);
+  }
 }
 
 /**
