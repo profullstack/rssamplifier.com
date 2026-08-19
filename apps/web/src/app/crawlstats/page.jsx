@@ -1,7 +1,7 @@
 import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
-import { categoryStats, indexingHistory, GROWTH_DAYS } from '../../lib/crawlstats.js';
+import { categoryStats, indexingHistory, jobBacklogs, GROWTH_DAYS } from '../../lib/crawlstats.js';
 import { toLine } from '../../lib/crawlLog.js';
 import { etaLabel, jobRows } from '../../lib/jobs.js';
 import AutoRefresh from '../AutoRefresh.jsx';
@@ -59,10 +59,18 @@ export default async function CrawlStatsPage() {
     // reader with JavaScript off.
     q.crawlLogTail(client, 40),
     // The two halves of the jobs board: what each kind of work has waiting, and
-    // what each has been doing. Both are one query, and both are asked here
-    // rather than cached — a stale answer about whether a worker is alive is the
-    // one thing this page must never give.
-    q.jobBacklogs(client),
+    // what each has been doing.
+    //
+    // The backlogs are cached for a minute; the activity beside them is not.
+    // That split is the point. Counting the directory by status and card state
+    // visits all 369,030 rows, which is 398ms on an idle database and **16.9
+    // seconds** under the crawler's write load — on a page that is
+    // `force-dynamic` and refreshes every fifteen seconds. Meanwhile a backlog
+    // of three hundred thousand feeds draining at a few hundred an hour does
+    // not meaningfully move in sixty seconds. What must never be stale is
+    // whether a worker is *alive*, and that comes from `logActivity` and
+    // `crawlStats`, both of which are still read fresh on every request.
+    jobBacklogs(),
     q.logActivity(client, 1),
     // Only to tell a sender with nothing to do from one that has stopped: the
     // alert pass writes no log line at all when nobody is subscribed, and a
@@ -71,7 +79,11 @@ export default async function CrawlStatsPage() {
   ]);
 
   const jobs = jobRows({
-    backlogs,
+    // Null when the read failed and nothing was cached — see `jobBacklogs`,
+    // which returns null rather than zeroes because "0 waiting" reads as "all
+    // caught up" and would be a lie. An empty object leaves each row's backlog
+    // undefined, which the board already renders as unknown.
+    backlogs: backlogs ?? {},
     activity,
     fetchedLastHour: stats.fetchedLastHour,
     keywordQueue,
