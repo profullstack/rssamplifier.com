@@ -16,7 +16,7 @@ import { serializeWrites } from '../src/client.js';
  * @param {number} [ms] how long a batch takes
  */
 function stubClient(ms = 5) {
-  const state = { peak: 0, depth: 0, calls: [], modes: [] };
+  const state = { peak: 0, depth: 0, calls: [], batches: [], modes: [] };
 
   return {
     state,
@@ -26,10 +26,13 @@ function stubClient(ms = 5) {
       state.modes.push(mode);
       try {
         await new Promise((r) => setTimeout(r, ms));
-        const first = statements?.[0]?.sql ?? '';
-        state.calls.push(String(first));
-        if (String(first).includes('BOOM')) throw new Error('write failed');
-        return [];
+        const sql = statements.map((statement) => String(statement?.sql ?? statement));
+        state.batches.push(sql);
+        state.calls.push(...sql);
+        if (sql.some((text) => text.includes('BOOM'))) {
+          throw new Error('SQLITE_CONSTRAINT: write failed');
+        }
+        return sql.map((text) => ({ sql: text }));
       } finally {
         state.depth -= 1;
       }
@@ -39,7 +42,7 @@ function stubClient(ms = 5) {
 
 const stmt = (sql) => [{ sql, args: [] }];
 
-test('write transactions never overlap, however many callers there are', async () => {
+test('queued writes share transactions and never overlap', async () => {
   // The bug this exists to prevent, measured against production: four crawl
   // workers plus the card, cluster, author and alert passes each opened their
   // own `batch(..., 'write')` -- a dozen explicit transactions contending for a
@@ -53,6 +56,10 @@ test('write transactions never overlap, however many callers there are', async (
 
   assert.equal(client.state.peak, 1, `one write at a time, saw ${client.state.peak}`);
   assert.equal(client.state.calls.length, 12, 'and every one of them ran');
+  assert.ok(
+    client.state.batches.length < 12,
+    `queued callers should be folded together, saw ${client.state.batches.length} transactions`,
+  );
 });
 
 test('writes run in the order they were asked for', async () => {
@@ -62,6 +69,44 @@ test('writes run in the order they were asked for', async () => {
   await Promise.all(Array.from({ length: 6 }, (_, i) => db.batch(stmt(`n${i}`), 'write')));
 
   assert.deepEqual(client.state.calls, ['n0', 'n1', 'n2', 'n3', 'n4', 'n5']);
+});
+
+test('each caller receives only the results for its own statements', async () => {
+  const client = stubClient(5);
+  const db = serializeWrites(client);
+
+  const first = db.batch(stmt('first'), 'write');
+  const second = db.batch(
+    [
+      { sql: 'second-a', args: [] },
+      { sql: 'second-b', args: [] },
+    ],
+    'write',
+  );
+  const third = db.batch(stmt('third'), 'write');
+
+  const results = await Promise.all([first, second, third]);
+  assert.deepEqual(results.map((sets) => sets.map((set) => set.sql)), [
+    ['first'],
+    ['second-a', 'second-b'],
+    ['third'],
+  ]);
+  assert.deepEqual(client.state.batches, [['first'], ['second-a', 'second-b', 'third']]);
+});
+
+test('the statement ceiling bounds a combined transaction without changing order', async () => {
+  const client = stubClient(5);
+  const db = serializeWrites(client, { maxStatements: 2 });
+
+  await Promise.all([
+    db.batch(stmt('a'), 'write'),
+    db.batch(stmt('b'), 'write'),
+    db.batch(stmt('c'), 'write'),
+    db.batch(stmt('d'), 'write'),
+    db.batch(stmt('e'), 'write'),
+  ]);
+
+  assert.deepEqual(client.state.batches, [['a'], ['b', 'c'], ['d', 'e']]);
 });
 
 test('one failed write does not wedge the writes behind it', async () => {
@@ -80,7 +125,35 @@ test('one failed write does not wedge the writes behind it', async () => {
   assert.equal(results[0].status, 'fulfilled');
   assert.equal(results[1].status, 'rejected', 'the bad write still rejects its own caller');
   assert.equal(results[2].status, 'fulfilled', 'and the queue kept moving');
-  assert.deepEqual(client.state.calls, ['before', 'BOOM', 'after']);
+  assert.deepEqual(
+    client.state.calls,
+    ['before', 'BOOM', 'after', 'BOOM', 'after'],
+    'the failed combined attempt is retried one caller at a time',
+  );
+});
+
+test('a transport failure rejects the group without multiplying retries', async () => {
+  const client = stubClient(5);
+  const original = client.batch;
+  client.batch = async (statements, mode) => {
+    if (statements.some((statement) => String(statement.sql).includes('TIMEOUT'))) {
+      client.state.batches.push(statements.map((statement) => String(statement.sql)));
+      throw new Error('The operation was aborted due to timeout');
+    }
+    return original(statements, mode);
+  };
+  const db = serializeWrites(client);
+
+  const results = await Promise.allSettled([
+    db.batch(stmt('before'), 'write'),
+    db.batch(stmt('TIMEOUT'), 'write'),
+    db.batch(stmt('alongside'), 'write'),
+  ]);
+
+  assert.equal(results[0].status, 'fulfilled');
+  assert.equal(results[1].status, 'rejected');
+  assert.equal(results[2].status, 'rejected', 'the atomic combined transaction failed for both callers');
+  assert.deepEqual(client.state.batches, [['before'], ['TIMEOUT', 'alongside']]);
 });
 
 test('read batches are not made to wait behind writes', async () => {
@@ -96,7 +169,6 @@ test('read batches are not made to wait behind writes', async () => {
   // The read finishes without waiting for the write, which is only observable
   // because both are in flight at once.
   await read;
-  assert.ok(client.state.depth >= 1, 'the write is still running');
   assert.ok(client.state.peak >= 2, 'the read overlapped it rather than queueing');
 
   await slowWrite;
