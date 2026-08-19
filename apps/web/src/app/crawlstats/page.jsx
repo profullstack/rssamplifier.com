@@ -139,7 +139,12 @@ export default async function CrawlStatsPage() {
         <Stat label="Fetched (24h)" value={fmt(stats.fetchedLastDay)} note={`${fmt(stats.succeededLastDay)} succeeded`} />
         <Stat label="New posts (24h)" value={fmt(stats.itemsLastDay)} note="items ingested" />
         <Stat label="Stale" value={fmt(stats.staleActive)} note="active, no success in 24h" />
-        <Stat label="Erroring" value={fmt(stats.errored)} note={`${fmt(stats.dead)} given up`} />
+        <Stat
+          label="Erroring"
+          value={fmt(stats.errored)}
+          note={`${fmt(stats.dead)} given up`}
+          href="#failing-feeds"
+        />
         <Stat label="Pending" value={fmt(stats.pending)} note="accepted, not yet crawled" />
         {/*
          * Discovery shares this poller, so it belongs on this board: a keyword
@@ -190,9 +195,12 @@ export default async function CrawlStatsPage() {
               <td>
                 <span className={`job-state job-state-${job.state}`}>{job.state}</span>
                 {job.errors > 0 && (
-                  <span className="job-errors">
+                  <a
+                    className="job-errors"
+                    href={['update', 'first-crawl'].includes(job.key) ? '#failing-feeds' : '#daemon-errors'}
+                  >
                     {fmt(job.errors)} {job.errors === 1 ? 'error' : 'errors'}
-                  </span>
+                  </a>
                 )}
               </td>
               <td className="num">
@@ -218,7 +226,7 @@ export default async function CrawlStatsPage() {
         </tbody>
       </table>
 
-      <h2>Daemon errors (24h)</h2>
+      <h2 id="daemon-errors">Daemon errors (24h)</h2>
       <p>
         Failures in the crawler itself and its background jobs. Feed-specific failures are listed
         separately below; these lines remain visible even after the busy live log has rolled past
@@ -244,7 +252,9 @@ export default async function CrawlStatsPage() {
                     <time dateTime={line.at}>{new Date(line.at).toISOString()}</time>
                   </td>
                   <td><code>{line.event}</code></td>
-                  <td className="crawl-error">{describe(line, { name: false })}</td>
+                  <td className="crawl-error">
+                    <ErrorMessage message={describe(line, { name: false })} />
+                  </td>
                 </tr>
               );
             })}
@@ -318,7 +328,9 @@ export default async function CrawlStatsPage() {
                 <td className="num">{row.addedLastDay ? `+${fmt(row.addedLastDay)}` : '—'}</td>
                 <td className="num">{row.addedLastMonth ? `+${fmt(row.addedLastMonth)}` : '—'}</td>
                 <td className="num">{fmt(row.items)}</td>
-                <td className="num">{row.errored ? fmt(row.errored) : '—'}</td>
+                <td className="num">
+                  {row.errored ? <a href="#failing-feeds">{fmt(row.errored)}</a> : '—'}
+                </td>
                 <td className="spark-cell">
                   <Sparkline
                     values={row.growth}
@@ -345,7 +357,9 @@ export default async function CrawlStatsPage() {
                 : '—'}
             </td>
             <td className="num">{fmt(sum(categories.categories, 'items'))}</td>
-            <td className="num">{fmt(sum(categories.categories, 'errored'))}</td>
+            <td className="num">
+              <a href="#failing-feeds">{fmt(sum(categories.categories, 'errored'))}</a>
+            </td>
             <td />
           </tr>
         </tfoot>
@@ -379,7 +393,7 @@ export default async function CrawlStatsPage() {
         </table>
       )}
 
-      <h2>Failing feeds</h2>
+      <h2 id="failing-feeds">Failing feeds</h2>
       {failing.length === 0 ? (
         <p>No feed is currently failing.</p>
       ) : (
@@ -399,7 +413,9 @@ export default async function CrawlStatsPage() {
                   <a href={`/${String(row.slug)}`}>{String(row.title)}</a>
                 </td>
                 <td>{fmt(Number(row.error_count ?? 0))}</td>
-                <td className="crawl-error">{row.last_error ? String(row.last_error) : '—'}</td>
+                <td className="crawl-error">
+                  {row.last_error ? <ErrorMessage message={String(row.last_error)} /> : '—'}
+                </td>
                 <td>{ago(row.last_success_at ? String(row.last_success_at) : null)}</td>
               </tr>
             ))}
@@ -445,15 +461,37 @@ function sum(rows, key) {
 }
 
 /**
- * @param {{ label: string, value: string, note?: string }} props
+ * @param {{ label: string, value: string, note?: string, href?: string }} props
  */
-function Stat({ label, value, note }) {
-  return (
-    <div className="stat">
+function Stat({ label, value, note, href }) {
+  const content = (
+    <>
       <span className="stat-value">{value}</span>
       <span className="stat-label">{label}</span>
       {note && <span className="stat-note">{note}</span>}
-    </div>
+    </>
+  );
+
+  return href ? (
+    <a className="stat stat-link" href={href} aria-label={`${label}: ${value}. View details`}>
+      {content}
+    </a>
+  ) : (
+    <div className="stat">{content}</div>
+  );
+}
+
+/**
+ * A table-friendly error preview that opens to the untruncated message.
+ *
+ * @param {{ message: string }} props
+ */
+function ErrorMessage({ message }) {
+  return (
+    <details className="crawl-error-details">
+      <summary title={message}>{message}</summary>
+      <div>{message}</div>
+    </details>
   );
 }
 
