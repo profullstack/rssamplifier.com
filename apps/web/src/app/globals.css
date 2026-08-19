@@ -2326,6 +2326,123 @@ select {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
+.stat-button {
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crawl-error-browser {
+  grid-column: 1 / -1;
+  background: var(--surface);
+  padding: 1rem 1.1rem 1.2rem;
+  min-width: 0;
+}
+
+.crawl-error-browser:focus {
+  outline: none;
+}
+
+.crawl-error-browser-head,
+.crawl-error-browser-meta,
+.crawl-error-browser-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.crawl-error-browser-head {
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.9rem;
+}
+
+.crawl-error-browser-head h2,
+.crawl-error-browser-head p {
+  margin: 0;
+}
+
+.crawl-error-browser-head p {
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.crawl-error-browser-actions button,
+.crawl-error-browser-meta button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0.3rem 0.55rem;
+  cursor: pointer;
+}
+
+.crawl-error-browser-actions button:hover,
+.crawl-error-browser-actions button:focus-visible,
+.crawl-error-browser-meta button:hover,
+.crawl-error-browser-meta button:focus-visible {
+  border-color: var(--accent);
+}
+
+.crawl-error-browser-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 32rem;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.crawl-error-browser-list li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.crawl-error-browser-meta {
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+}
+
+.crawl-error-browser-meta time {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.crawl-error-browser-meta button {
+  margin-left: auto;
+}
+
+.crawl-error-browser-list pre {
+  margin: 0.5rem 0 0;
+  padding: 0.65rem 0.75rem;
+  background: var(--surface-2, var(--accent-soft));
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.crawl-error-copy-failed {
+  color: var(--accent);
+}
+
+@media (max-width: 40rem) {
+  .crawl-error-browser-head {
+    display: block;
+  }
+
+  .crawl-error-browser-actions {
+    margin-top: 0.75rem;
+  }
+}
+
 .stat-value {
   font-family: var(--serif);
   font-size: 1.6rem;
