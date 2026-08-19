@@ -190,7 +190,10 @@ export async function upsertAuthor(db, author) {
             (id, slug, identity_key, name, norm_name, bio, avatar_url, site_url,
              email, confidence, created_at, updated_at)
           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          on conflict (identity_key) do nothing`,
+          on conflict (identity_key) do nothing
+          -- Same race as creditStatements: the slug was chosen by an earlier
+          -- read, and another writer can take it in between. See there.
+          on conflict (slug) do nothing`,
     args: [
       id,
       author.slug,
@@ -738,7 +741,24 @@ export function creditStatements({ feedId, identityKey, slug, person, authorLink
              or (authors.avatar_url is null and excluded.avatar_url is not null)
              or (authors.site_url is null and excluded.site_url is not null)
              or (authors.email is null and excluded.email is not null)
-             or authors.confidence < excluded.confidence`,
+             or authors.confidence < excluded.confidence
+          -- A different person who happens to have claimed the same slug.
+          --
+          -- claimAuthorSlug reads the slugs already taken and then this insert
+          -- runs later, so two crawls naming the same author can both pick
+          -- jane-doe before either has committed. The second violated the unique
+          -- constraint on authors.slug and, because this statement rides in the
+          -- crawl's own transaction, took the entire crawl down with it -- the
+          -- feed was recorded as uncrawlable and walked up the backoff ladder
+          -- toward dead, for a byline. Two Substack feeds were failing every
+          -- crawl this way for hours.
+          --
+          -- Doing nothing is the right answer rather than merely the safe one.
+          -- The loser of the race is not lost: its slug is taken by the time the
+          -- feed is crawled again, so claimAuthorSlug picks the next free one
+          -- and the credit lands then. A missing byline for one cycle is a far
+          -- smaller thing than a feed marked dead.
+          on conflict (slug) do nothing`,
     args: [
       newId(),
       slug,
