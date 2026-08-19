@@ -43,6 +43,29 @@ export function backoffMinutes(errorCount) {
   return Math.min(BACKOFF[Math.min(errorCount - 1, BACKOFF.length - 1)], MAX_INTERVAL);
 }
 
+/** How long to wait after a throttle that named no interval of its own. */
+const THROTTLE_DEFAULT = 30;
+
+/**
+ * How long to wait after being throttled.
+ *
+ * The server's own `Retry-After` wins, because it is the only party that knows
+ * when its limit resets. Floored at a minute so a `Retry-After: 0` cannot spin,
+ * and capped at a day so a misread date cannot mothball the feed.
+ *
+ * Deliberately much shorter than the error ladder: this feed is healthy and we
+ * want it back soon. It is the *rate* that has to come down, and lengthening one
+ * feed's interval is the wrong instrument for that -- see POLL_CONCURRENCY.
+ *
+ * @param {number|null|undefined} retryAfter seconds the server asked for
+ * @returns {number} minutes
+ */
+export function throttleMinutes(retryAfter) {
+  const seconds = Number(retryAfter);
+  if (!Number.isFinite(seconds) || seconds <= 0) return THROTTLE_DEFAULT;
+  return Math.min(Math.max(1, Math.ceil(seconds / 60)), 1440);
+}
+
 /**
  * How long to wait before re-crawling a feed whose document carried no dates.
  *
@@ -192,6 +215,20 @@ export async function crawlFeed(db, feed, opts = {}) {
       changeLog: recordChange(feed.change_log, false),
     });
     return { ok: true, newItems: 0, notModified: true };
+  }
+
+  // Throttled, which is a different fact from failed and must not be recorded as
+  // one. `markCrawlFailure` sets status='error', increments error_count and walks
+  // the backoff ladder -- and at ten consecutive failures it marks the feed dead.
+  // A publisher answering 429 is telling us we are asking too often; recording
+  // that against *their* health would retire a working feed for our own
+  // impatience, and it would do it to a whole platform at once, since one
+  // backend's rate limit is hit by every feed hosted on it in the same minute.
+  //
+  // So: come back when asked, leave every health column exactly as it was.
+  if (resolved.throttled) {
+    await q.markThrottled(db, id, throttleMinutes(resolved.retryAfter));
+    return { ok: false, newItems: 0, throttled: true, error: resolved.error };
   }
 
   if (!resolved.ok) {
