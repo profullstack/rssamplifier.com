@@ -50,7 +50,7 @@ test('queued writes share transactions and never overlap', async () => {
   // seconds and retried, so nothing committed and crawl throughput was exactly
   // zero while single-statement writes went through in 389ms.
   const client = stubClient();
-  const db = serializeWrites(client);
+  const db = serializeWrites(client, { maxStatements: 1000 });
 
   await Promise.all(Array.from({ length: 12 }, (_, i) => db.batch(stmt(`write ${i}`), 'write')));
 
@@ -64,7 +64,7 @@ test('queued writes share transactions and never overlap', async () => {
 
 test('writes run in the order they were asked for', async () => {
   const client = stubClient(1);
-  const db = serializeWrites(client);
+  const db = serializeWrites(client, { maxStatements: 1000 });
 
   await Promise.all(Array.from({ length: 6 }, (_, i) => db.batch(stmt(`n${i}`), 'write')));
 
@@ -73,7 +73,7 @@ test('writes run in the order they were asked for', async () => {
 
 test('each caller receives only the results for its own statements', async () => {
   const client = stubClient(5);
-  const db = serializeWrites(client);
+  const db = serializeWrites(client, { maxStatements: 1000 });
 
   const first = db.batch(stmt('first'), 'write');
   const second = db.batch(
@@ -114,7 +114,7 @@ test('one failed write does not wedge the writes behind it', async () => {
   // the value would mean the first transient failure stopped every later write
   // for the life of the process, turning a blip into the outage this prevents.
   const client = stubClient(1);
-  const db = serializeWrites(client);
+  const db = serializeWrites(client, { maxStatements: 1000 });
 
   const results = await Promise.allSettled([
     db.batch(stmt('before'), 'write'),
@@ -142,7 +142,7 @@ test('a transport failure rejects the group without multiplying retries', async 
     }
     return original(statements, mode);
   };
-  const db = serializeWrites(client);
+  const db = serializeWrites(client, { maxStatements: 1000 });
 
   const results = await Promise.allSettled([
     db.batch(stmt('before'), 'write'),
