@@ -1,4 +1,4 @@
-import { submitCatalogue, hashIp } from '@rssamplifier/ingest';
+import { submitCatalogue, hashIp, EXPRESS_MAX } from '@rssamplifier/ingest';
 import { parseOpml } from '@rssamplifier/feed';
 import { q, newId } from '@rssamplifier/db';
 
@@ -41,12 +41,12 @@ const SNIFF_CHARS = 4096;
 /**
  * Entries above which a submission is handed over rather than imported here.
  *
- * Importing means `importFeeds`: one read of every feed URL and slug in the
- * directory, then a round trip per five hundred rows. That is seconds for a
- * paste and minutes for a subscription export — a hundred and ten thousand
- * entries is over two hundred sequential round trips inside a single request
- * with a five-minute ceiling on it, which is a coin toss at best and loses the
- * whole upload when it comes up wrong.
+ * Below this a submission is queued entry by entry: a slug is claimed for each
+ * one and the rows are written in chunks. That is milliseconds for a paste and
+ * minutes for a subscription export — a hundred and ten thousand entries is
+ * hundreds of sequential round trips inside a single request with a five-minute
+ * ceiling on it, which is a coin toss at best and loses the whole upload when
+ * it comes up wrong.
  *
  * Past this the entries are staged instead, exactly as the batched uploader
  * stages them: one bulk insert per couple of thousand, no lookups, no slugs,
@@ -69,6 +69,25 @@ const STAGE_ABOVE = 5_000;
  * same slice the uploader and the drainer both work in.
  */
 const STAGE_CHUNK = 2_000;
+
+/**
+ * How long a single-URL submission is resolved for before the submitter is sent
+ * to the status page instead.
+ *
+ * One URL is still resolved while its submitter waits, because landing on the
+ * blog you just added is the nicest thing this page does. What it must not do
+ * is wait without a bound: a site that publishes no feed costs up to eleven
+ * sequential candidate fetches at a fifteen-second timeout, and the submitter
+ * has no way to tell that from a page that has simply hung.
+ *
+ * Past this the request answers with the status page and the resolve carries on
+ * in the background — the same promise, so the feed is still inserted exactly
+ * once and there is no queued duplicate racing it.
+ */
+const INLINE_WAIT_MS = Number(process.env['SUBMIT_INLINE_WAIT_MS'] ?? 8_000) || 8_000;
+
+/** Returned by the race below when the inline resolve outlived its budget. */
+const TOO_SLOW = Symbol('too-slow');
 
 /**
  * Split a paste into candidate URLs.
@@ -268,7 +287,14 @@ export async function POST(req) {
     resolveQueued = resolve;
   });
 
-  const opts = { submissionId, onQueued: (n) => resolveQueued(n) };
+  const opts = {
+    submissionId,
+    // Small enough to have been typed rather than exported, so it goes in the
+    // express lane and is crawled within a tick or two instead of behind the
+    // backlog. See EXPRESS_MAX.
+    priority: catalogue.length <= EXPRESS_MAX ? 1 : 0,
+    onQueued: (n) => resolveQueued(n),
+  };
   const work = submitCatalogue(client, catalogue, opts).then(async (result) => {
     await q.completeSubmission(client, submissionId, {
       accepted_count: result.accepted.length,
@@ -285,9 +311,9 @@ export async function POST(req) {
   const statusUrl = `${siteUrl()}/submissions/${submissionId}`;
 
   if (browser) {
-    // An upload with a queue behind it is answered the moment that queue is
-    // durable: the status page streams the rest, so waiting for a hundred
-    // sequential fetches would buy the submitter nothing but a blank tab.
+    // Anything with a queue behind it is answered the moment that queue is
+    // durable, which since submitCatalogue stopped resolving lists inline is
+    // every submission of more than one URL. The status page streams the rest.
     const settled = work.catch(() => null);
     const queued = await Promise.race([queuedCount, settled.then(() => 0)]);
 
@@ -295,13 +321,32 @@ export async function POST(req) {
       return new Response(null, { status: 303, headers: { location: `/submissions/${submissionId}` } });
     }
 
-    // A handful of URLs resolves in seconds and has somewhere better to land:
-    // the blog itself. Nothing is gained by bouncing that through a status page.
-    const result = await settled;
-    const first = result?.accepted?.[0];
-    const location = first ? `/${first.slug}` : '/submit?error=1';
+    // One URL, and it has somewhere better to land than a status page: the blog
+    // itself. Bounded, because the resolve behind it is not — see INLINE_WAIT_MS.
+    let timer;
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(TOO_SLOW), INLINE_WAIT_MS);
+    });
 
-    return new Response(null, { status: 303, headers: { location } });
+    try {
+      const result = await Promise.race([settled, deadline]);
+
+      // Still resolving. It carries on in the background and completes the
+      // submission when it lands, so the status page is the honest answer now.
+      if (result === TOO_SLOW) {
+        return new Response(null, {
+          status: 303,
+          headers: { location: `/submissions/${submissionId}` },
+        });
+      }
+
+      const first = result?.accepted?.[0];
+      const location = first ? `/${first.slug}` : '/submit?error=1';
+
+      return new Response(null, { status: 303, headers: { location } });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   const result = await work;

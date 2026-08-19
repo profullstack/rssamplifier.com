@@ -1,7 +1,7 @@
 import { resolveFeed, scrapeFeed, normalizeUrl, parseOpml, uniqueSlug } from '@rssamplifier/feed';
 import { q } from '@rssamplifier/db';
 
-import { importFeeds } from './import.js';
+import { queueFeeds } from './queue.js';
 import { refreshFeedKeywords } from './crawl.js';
 
 /** Cap on a single bulk submission, so one paste can't queue thousands of fetches. */
@@ -10,10 +10,40 @@ const MAX_BATCH = 200;
 /**
  * How many entries of a catalogue are resolved while the submitter waits.
  *
- * Each one is an outbound fetch, so this is the request's time budget. The
- * rest is queued for the poller rather than dropped.
+ * One, and only when the whole submission is that one entry — see the default
+ * in `submitCatalogue` for why the two conditions are not the same thing.
+ *
+ * This was a hundred, which read as a generous allowance and was in fact the
+ * reason the submit page felt broken. Every one of those hundred is an outbound
+ * resolve — up to eleven sequential candidate fetches at a fifteen-second
+ * timeout, then the feed insert, the items and the topics — and the route only
+ * answers early when something was *queued*, which below a hundred entries
+ * nothing ever was. Measured against production: eight URLs that were already
+ * in the directory took **65 seconds** and inserted nothing at all.
+ *
+ * So a list is queued now rather than crawled, and the queue is what the
+ * submitter is sent to watch. The single URL keeps its inline resolve because
+ * that is what redirects the submitter to the blog they just added, which is
+ * the nicest thing that happens on the page and costs one fetch.
  */
-const INLINE_LIMIT = 100;
+const INLINE_LIMIT = 1;
+
+/**
+ * Submissions at or below this many entries are crawled ahead of the backlog.
+ *
+ * The cut-in-line lane. Queueing a submission instantly is only half an answer
+ * if the queue never reaches it, and it did not: `dueFeeds` orders by
+ * `next_fetch_at asc`, a new feed is stamped `now`, and there are ~307,000
+ * feeds from the bulk uploads whose next_fetch_at was already in the past. A
+ * blog somebody submitted today sorted behind every one of them.
+ *
+ * A hundred is the line between a person and an export. Nobody types more than
+ * that, and every catalogue is far larger — so this expedites submissions made
+ * by hand without letting an upload buy its way past the queue it belongs in.
+ * `expressFeeds` bounds the other end: the lane can never take more than half a
+ * tick, and a feed leaves it after one crawl attempt.
+ */
+export const EXPRESS_MAX = 100;
 
 /**
  * Claim a free slug, consulting the database for collisions.
@@ -51,6 +81,20 @@ export async function claimSlug(db, title, feedUrl) {
 export async function submitOne(db, input) {
   const url = normalizeUrl(input);
   if (!url) return { ok: false, url: String(input), error: 'invalid-url' };
+
+  // Asked before anything is fetched, because most of what people submit is
+  // already here. The lookup below is the same question asked of the *resolved*
+  // feed URL, which is the only form that catches "myblog.com" for a blog
+  // stored as "myblog.com/feed.xml" — but it cannot be reached without paying
+  // for the resolve first, and a resolve is up to eleven sequential requests at
+  // a fifteen-second timeout. Eight already-indexed feeds cost 65 seconds in
+  // production for exactly this reason, and every one of those fetches was of
+  // a document the directory already had.
+  //
+  // Someone pasting a feed URL they got from this site is the common case, and
+  // it is settled here for one ~90ms indexed read.
+  const alreadyKnown = await q.feedByUrl(db, url);
+  if (alreadyKnown) return { ok: true, slug: String(alreadyKnown.slug), existing: true };
 
   // A site that publishes no feed used to end here, which quietly put most of
   // the web permanently outside the directory. Now the page itself is read: if
@@ -160,22 +204,36 @@ export async function submitMany(db, urls) {
  *
  * @param {import('@libsql/client').Client} db
  * @param {Array<{ url: string, title?: string, siteUrl?: string|null }>} entries
- * @param {{ inlineLimit?: number, submissionId?: string|null, spreadMinutes?: number, onQueued?: (queued: number) => void }} [opts]
+ * @param {{ inlineLimit?: number, submissionId?: string|null, priority?: number, onQueued?: (queued: number) => void }} [opts]
  * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}
  */
 export async function submitCatalogue(db, entries, opts = {}) {
-  const inlineLimit = opts.inlineLimit ?? INLINE_LIMIT;
+  // A lone URL is resolved while the submitter waits, so that it can redirect
+  // to the blog it added. Anything longer is a list, and a list is queued.
+  //
+  // Deliberately not `min(entries.length, INLINE_LIMIT)`: that would resolve the
+  // first entry of a fifty-URL paste too, and the submitter is going to the
+  // status page either way, so the fetch would buy them nothing but a wait.
+  const inlineLimit = opts.inlineLimit ?? (entries.length === 1 ? INLINE_LIMIT : 0);
 
   const head = entries.slice(0, inlineLimit);
   const tail = entries.slice(inlineLimit);
 
   let queued = 0;
   if (tail.length > 0) {
-    const imported = await importFeeds(db, tail, {
+    // `queueFeeds`, not `importFeeds`. The difference is the opening read:
+    // `importFeeds` reads every feed_url and slug in the directory first, which
+    // is right for one process holding one whole file and catastrophic here.
+    // It pages the feeds table with `limit 5000 offset ?`, and offset paging is
+    // O(offset) — measured against production at 416,000 feeds it was **still
+    // running after 550 seconds**, inside a route capped at 300. Every paste of
+    // 101 to 2,000 URLs therefore timed out and queued nothing. `queueFeeds`
+    // asks only about the URLs in front of it.
+    const imported = await queueFeeds(db, tail, {
       submissionId: opts.submissionId ?? null,
-      spreadMinutes: opts.spreadMinutes,
+      priority: opts.priority,
     });
-    queued = imported.inserted;
+    queued = imported.queued;
   }
 
   opts.onQueued?.(queued);
