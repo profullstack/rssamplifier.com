@@ -70,6 +70,7 @@ const topicSearchIntervalMs = (Number(env['DISCOVERY_TOPIC_INTERVAL_SECONDS']) |
 // fetch plus up to two image probes against a cold host — and unlike a crawl,
 // nobody is waiting on it.
 const cardBatch = Number(env['CARD_BACKFILL_BATCH']) || 8;
+const cardEnabled = env['CARD_BACKFILL'] !== '0' && env['CARD_BACKFILL'] !== 'false';
 // How often that pass runs. Its own timer for the same reason the cluster walk
 // below has one: a tick spends minutes inside the crawl, and work queued after
 // that only happens if the process lives long enough to reach it.
@@ -132,7 +133,7 @@ let stopping = false;
 // Whether any item still lacks a grouping key. Latches off for good once the
 // walk reaches the end of the table, so a finished backfill costs nothing on
 // every later tick.
-let clusterBackfill = true;
+let clusterBackfill = env['CLUSTER_BACKFILL'] !== '0' && env['CLUSTER_BACKFILL'] !== 'false';
 // There is no cursor any more. There used to be, and holding it in memory was
 // the whole problem: the walk restarted at the beginning of a 1.75M-row table
 // on every deploy, so it re-read the same already-keyed rows for a day and
@@ -414,7 +415,7 @@ async function backfillTick() {
  * no picture is recorded as such rather than being asked again tomorrow.
  */
 async function cardTick() {
-  if (stopping || carding) return;
+  if (!cardEnabled || stopping || carding) return;
   carding = true;
 
   try {
@@ -557,6 +558,8 @@ log('started', {
   batchSize,
   concurrency,
   discoveryBatch,
+  clusterBackfill,
+  cardBatch: cardEnabled ? cardBatch : 0,
   authorBatch: authorEnabled ? authorBatch : 0,
   // Said out loud on boot, because a deployment missing the VAPID pair looks
   // exactly like one where nobody has switched browser alerts on — and the two
