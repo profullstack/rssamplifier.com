@@ -179,3 +179,14 @@ test('an outline with no feed URL is not an entry', () => {
   assert.equal(input.total, 1);
   assert.equal(input.entries[0].url, 'https://qz.com/feed');
 });
+
+test('a real subscription list is kept whole rather than reported as truncated', () => {
+  // The size that prompted the cap moving: a hundred and ten thousand feeds is
+  // an ordinary export, and the status page telling its submitter that only
+  // part of it was kept read as a cap on the submission itself.
+  const input = describeSubmittedInput({ kind: 'list', raw_input: clampRawInput(lines(110_000)) });
+
+  assert.equal(input.total, 110_000);
+  assert.equal(input.truncated, false);
+  assert.ok(RAW_INPUT_LINE_LIMIT >= 200_000, 'the cap covers the lists people actually bring');
+});

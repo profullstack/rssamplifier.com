@@ -3046,7 +3046,7 @@ export async function insertSubmission(db, row) {
 export async function submissionById(db, id) {
   const { rows } = await db.execute({
     sql: `select id, kind, raw_input, accepted_count, rejected_count, queued_count, errors,
-                 notify_email, notified_at, created_at
+                 entries_total, entries_ready_at, notify_email, notified_at, created_at
           from submissions where id = ? limit 1`,
     args: [id],
   });
