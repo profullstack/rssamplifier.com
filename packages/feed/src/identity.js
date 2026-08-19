@@ -1036,6 +1036,223 @@ export function identityFromHtml(html, baseUrl = '') {
 }
 
 /**
+ * `humans.txt`, the file whose entire purpose is to name the people.
+ *
+ * Worth a request precisely because of what it is. Every other source here is
+ * markup that happens to carry identity as a side effect — a link with a `rel`
+ * attribute, a microformat class, a byline in a feed. `humans.txt` is a
+ * convention with one job: the author writing it was answering the question
+ * "who made this", which is the question being asked.
+ *
+ * The format is loose and its shape is inverted from everything else. The
+ * *key* is the role and the *value* is the person:
+ *
+ *     /* TEAM *\/
+ *     Chef: Jane Doe
+ *     Site: https://jane.example
+ *     Mastodon: @jane@example.social
+ *
+ * So a person is a block: a naming line, then the contact lines that follow it
+ * until the next person or the next section. Attaching links to the nearest
+ * preceding name is the whole parsing job, and getting it wrong on a two-person
+ * file would give one of them the other's accounts.
+ *
+ * Only `/* TEAM *\/` and its unlabelled equivalent are read. `/* THANKS *\/`
+ * exists to credit other people's work — libraries, inspirations, a designer at
+ * another company — and treating those as this feed's authors would attribute a
+ * blog to whoever its author admires.
+ *
+ * @param {string} text the file, as served
+ * @param {string} baseUrl for resolving relative links
+ * @returns {{ credits: Credit[], profiles: Array<{ network: string, url: string, handle: string, source: string }> }}
+ */
+export function identityFromHumansTxt(text, baseUrl = '') {
+  const empty = { credits: [], profiles: [] };
+  if (typeof text !== 'string' || !text.trim()) return empty;
+
+  // A server that answers every path with its 404 page is common enough that
+  // this has to be checked: HTML here is not a humans.txt, it is a miss.
+  if (/^\s*<(?:!doctype|html)/i.test(text)) return empty;
+
+  /** Keys whose value is a person's name. */
+  const NAMES = new Set([
+    'name',
+    'chef',
+    'developer',
+    'developers',
+    'designer',
+    'author',
+    'owner',
+    'maintainer',
+    'engineer',
+    'writer',
+    'creator',
+    'programmer',
+  ]);
+
+  /** Keys whose value is somewhere to reach that person. */
+  const LINKS = new Set([
+    'site',
+    'website',
+    'url',
+    'homepage',
+    'blog',
+    'twitter',
+    'x',
+    'mastodon',
+    'fediverse',
+    'github',
+    'gitlab',
+    'codeberg',
+    'linkedin',
+    'instagram',
+    'bluesky',
+    'contact',
+    'email',
+    'e-mail',
+    'mail',
+  ]);
+
+  const credits = [];
+  const profiles = [];
+  /** @type {Credit|null} the person the following contact lines belong to */
+  let current = null;
+  let inTeam = true;
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+
+    // A section header both switches context and ends the current person.
+    const section = line.match(/^\/\*+\s*(.+?)\s*\*+\//);
+    if (section) {
+      inTeam = /team|staff|people|author|owner/i.test(section[1]);
+      current = null;
+      continue;
+    }
+
+    if (!line) {
+      current = null;
+      continue;
+    }
+    if (!inTeam) continue;
+
+    const pair = line.match(/^([A-Za-z][\w -]{0,24})\s*:\s*(.+)$/);
+    if (!pair) continue;
+
+    const key = pair[1].trim().toLowerCase();
+    const value = pair[2].trim();
+
+    if (NAMES.has(key)) {
+      const name = cleanName(value);
+      // The role filters apply here exactly as they do to a byline: "Developer:
+      // the web team" names nobody, and a file that says so must not produce a
+      // person called "the web team".
+      current = looksLikePersonName(name)
+        ? credit({ name, role: 'author', source: 'humans-txt', confidence: 0.7, base: baseUrl })
+        : null;
+      if (current) credits.push(current);
+      continue;
+    }
+
+    if (!LINKS.has(key)) continue;
+
+    // A bare handle is not a URL, and which platform it belongs to is exactly
+    // what the key just said.
+    const expanded = expandHandle(key, value);
+
+    // `Site: https://jane.example` is the most useful line in the file and
+    // matches no profile shape, so classifyLink returns null for it — rightly,
+    // since it refuses to file arbitrary links as somebody's website. Here the
+    // key has already said that is what this is, so the fallback is safe and is
+    // limited to the keys that said it.
+    const link = classifyLink(expanded, baseUrl) ?? homepage(expanded, key);
+    if (!link) continue;
+
+    profiles.push({ ...link, source: 'humans-txt' });
+
+    // Attach to the person this block is about, so a two-person file does not
+    // hand one of them the other's accounts. A link before any name belongs to
+    // the site, which is what `feed_links` is for, and the caller stores it
+    // there.
+    if (!current) continue;
+    if (link.network === 'email' && !current.email) current.email = link.handle;
+    if (link.network === 'website' && !current.url) current.url = link.url;
+  }
+
+  return { credits, profiles };
+}
+
+/**
+ * A homepage line from a humans.txt, as a link row.
+ *
+ * Only for the keys that name a site. Everything else that fails to classify is
+ * genuinely unrecognised and is dropped, which is what keeps a `Standards:` or
+ * `Language:` line from becoming a link.
+ *
+ * @param {string} url already expanded to an absolute URL
+ * @param {string} key the humans.txt key it came from
+ * @returns {{ network: string, url: string, handle: string }|null}
+ */
+function homepage(url, key) {
+  if (!['site', 'website', 'url', 'homepage', 'blog'].includes(key)) return null;
+
+  const normalized = normalizeIdentityUrl(url);
+  if (!normalized) return null;
+
+  try {
+    return { network: 'website', url: normalized, handle: new URL(normalized).hostname };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A handle written the way people write them in a humans.txt, as a URL.
+ *
+ * `Twitter: @jane` is the common form and is not a link until it is made one.
+ * A value that is already a URL is left alone.
+ *
+ * @param {string} key the platform, which the key names
+ * @param {string} value
+ * @returns {string}
+ */
+function expandHandle(key, value) {
+  const raw = value.trim();
+  if (/^(?:https?:|mailto:|xmpp:|nostr:)/i.test(raw)) return raw;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) return `mailto:${raw}`;
+
+  const handle = raw.replace(/^@/, '');
+  if (!handle) return '';
+
+  switch (key) {
+    case 'twitter':
+    case 'x':
+      return `https://x.com/${handle}`;
+    case 'github':
+      return `https://github.com/${handle}`;
+    case 'gitlab':
+      return `https://gitlab.com/${handle}`;
+    case 'codeberg':
+      return `https://codeberg.org/${handle}`;
+    case 'linkedin':
+      return `https://www.linkedin.com/in/${handle}`;
+    case 'instagram':
+      return `https://instagram.com/${handle}`;
+    case 'bluesky':
+      return `https://bsky.app/profile/${handle}`;
+    case 'mastodon':
+    case 'fediverse': {
+      // `@jane@example.social` is the only form that names its own host.
+      const parts = handle.split('@');
+      return parts.length === 2 ? `https://${parts[1]}/@${parts[0]}` : '';
+    }
+    default:
+      // site/url/homepage/blog, written without a scheme.
+      return /^[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(handle) ? `https://${handle}` : '';
+  }
+}
+
+/**
  * The links on a bio page, which all belong to whoever owns the page.
  *
  * Linktree and its imitators render client-side, so the anchors are often not

@@ -103,6 +103,20 @@ export function jobRows({
       alarmAbove: 500,
     },
     {
+      key: 'authors',
+      label: 'Author enrichment',
+      what: 'Finds who writes each feed, and how to reach them',
+      backlog: backlogs.authorsPending ?? 0,
+      // Genuinely a queue rather than a fire: it walks the directory once and
+      // then rechecks on a 90-day cycle, so a large number here is the work
+      // remaining and not a stall.
+      expectFull: true,
+      rate: backlogs.authorsLastHour ?? 0,
+      rateNote: 'publishers looked at',
+      done: `${backlogs.authorsDone ?? 0} looked at so far`,
+      events: ['author', 'authors-error', 'author-search', 'author-search-error'],
+    },
+    {
       key: 'cards',
       label: 'Feed pictures',
       what: "Fetches each site's og:image and measures it, for listings and cards",

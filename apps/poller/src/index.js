@@ -2,6 +2,7 @@ import { connect, createWriteWorker, migrate, q, accounts, alerts } from '@rssam
 import {
   crawlDue,
   enrichDue,
+  searchDue,
   notifyFinishedSubmissions,
   notifyFinishedDiscoveries,
   drainDiscoveryQueue,
@@ -149,6 +150,32 @@ const authorVerify = env['AUTHOR_VERIFY'] === '1' || env['AUTHOR_VERIFY'] === 't
 // Enrichment can be turned off outright without redeploying the crawler, which
 // is the switch to reach for if a site ever objects to the extra fetches.
 const authorEnabled = env['AUTHOR_ENRICH'] !== '0' && env['AUTHOR_ENRICH'] !== 'false';
+
+// A GitHub credential, and the difference between the profile lookups working
+// and not working at all: unauthenticated, the API allows **60 requests an hour
+// per IP**, which a single batch spends. With a token it is 5,000, which is
+// more than this pass can use. Optional only in the sense that the rest of the
+// enrichment carries on without it -- profile resolution simply stops finding
+// anything once the hour's 60 are gone, and does so quietly, as a 403.
+const authorGithubToken = String(env['GITHUB_TOKEN'] ?? '').trim();
+
+// Buying searches for the people who left no trail.
+//
+// **Off unless every one of these is set**, and that is the design rather than
+// caution. The credits are metered, they come from an account shared with
+// another product, and there are 369,056 feeds here -- one query each would be
+// fifteen times the monthly allowance. So it takes a key, a non-zero budget,
+// and an explicit switch, and the budget is counted from the ledger in the
+// database rather than from a variable, because this process restarts on every
+// deploy and a budget that resets with it is not a budget.
+const searchEnabled = env['AUTHOR_SEARCH'] === '1' || env['AUTHOR_SEARCH'] === 'true';
+const searchApiKey = String(env['VALUESERP_API_KEY'] ?? '').trim();
+const searchMonthlyBudget = Number(env['AUTHOR_SEARCH_BUDGET']) || 0;
+const searchPerAuthor = Number(env['AUTHOR_SEARCH_PER_AUTHOR']) || 2;
+const searchBatch = Number(env['AUTHOR_SEARCH_BATCH']) || 5;
+// Slow on purpose: this is the one pass that costs money per unit of work, so
+// its default cadence spends at most a few credits an hour even misconfigured.
+const searchIntervalMs = (Number(env['AUTHOR_SEARCH_INTERVAL_SECONDS']) || 900) * 1000;
 
 // Accounts considered per alert pass, and how often a pass runs. Its own timer
 // for the same reason the card and cluster passes have one: a tick spends
@@ -595,6 +622,7 @@ async function enrichTick() {
       verify: authorVerify,
       recheckDays: authorRecheckDays,
       concurrency: authorConcurrency,
+      githubToken: authorGithubToken,
       onEvent: publishLog ? recorder.record : null,
     });
     // Silent when nothing was due, which is the steady state once the
@@ -604,6 +632,38 @@ async function enrichTick() {
     log('authors-error', { message: String(err?.message ?? err) });
   } finally {
     enriching = false;
+  }
+}
+
+/**
+ * Spend a little of the month's search allowance on the unreachable.
+ *
+ * Guarded twice over. It does nothing without a key, a budget and the switch;
+ * and `searchDue` re-reads the ledger every pass, so two pollers or a restarted
+ * one cannot between them spend more than the month allows.
+ */
+let searching = false;
+
+async function searchTick() {
+  if (!searchEnabled || !searchApiKey || searchMonthlyBudget <= 0) return;
+  if (searching) return;
+  searching = true;
+
+  try {
+    const result = await searchDue(db, {
+      apiKey: searchApiKey,
+      monthlyBudget: searchMonthlyBudget,
+      perAuthor: searchPerAuthor,
+      batchSize: searchBatch,
+    });
+    // Logged whenever anything was bought, even when it found nothing --
+    // especially then. A pass that spends credits and stores no links is the
+    // signal that the gate needs tightening, and it is invisible otherwise.
+    if (result.spent) log('author-search', result);
+  } catch (err) {
+    log('author-search-error', { message: String(err?.message ?? err) });
+  } finally {
+    searching = false;
   }
 }
 
@@ -694,6 +754,7 @@ const cardTimer = setInterval(cardTick, cardIntervalMs);
 const alertTimer = setInterval(alertTick, alertIntervalMs);
 const enrichTimer = setInterval(enrichTick, authorIntervalMs);
 const queueTimer = setInterval(queueTick, queueSampleMs);
+const searchTimer = setInterval(searchTick, searchIntervalMs);
 void tick();
 void backfillTick();
 void cardTick();
@@ -731,6 +792,7 @@ function shutdown(signal) {
   clearInterval(enrichTimer);
   clearInterval(alertTimer);
   clearInterval(queueTimer);
+  clearInterval(searchTimer);
 
   // Closed gracefully, which for BullMQ means "finish the job in hand, take no
   // more". A write half-applied because the container went away is the one

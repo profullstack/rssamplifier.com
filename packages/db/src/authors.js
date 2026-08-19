@@ -44,6 +44,46 @@ export async function dueForAuthors(db, limit = 25, recheckBefore = '') {
 }
 
 /**
+ * Record that a feed's enrichment *failed*, so it is tried again sooner.
+ *
+ * `markAuthorsChecked` is right for a miss — a site that genuinely names nobody
+ * should not be re-read tomorrow — and wrong for a failure. They were the same
+ * call, which meant a DNS hiccup, a timeout or a 503 cost that publisher its
+ * enrichment for the **full recheck cycle**, ninety days, on the strength of one
+ * bad afternoon. On a pass that has so far reached 3,275 of 369,056 feeds, that
+ * is a quiet way to lose the ones on flaky hosts permanently.
+ *
+ * Done by back-dating the stamp rather than by adding an attempts column, and
+ * that is a deliberate trade. Writes on this database serialize and the crawl
+ * is already write-bound (see the notes in `crawl.js`), so the cheap fix that
+ * costs one UPDATE beats the tidy one that costs a migration and a second
+ * column to read. The feed still counts as "looked at" for the backlog, and
+ * still comes due again in `retryDays`.
+ *
+ * It must never back-date past *now*: a stamp in the future would hide the feed
+ * from a pass whose recheck window is shorter than this one's.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @param {{ retryDays?: number, recheckDays?: number }} [opts]
+ * @returns {Promise<void>}
+ */
+export async function markAuthorsFailed(db, feedId, opts = {}) {
+  const retryDays = Math.max(0, Number(opts.retryDays ?? 3));
+  const recheckDays = Math.max(retryDays, Number(opts.recheckDays ?? 90));
+
+  // Stamped as though it were checked (recheckDays - retryDays) ago, so the
+  // ordinary due test brings it back in retryDays without knowing why.
+  const backdated = (recheckDays - retryDays) * 86_400_000;
+  const at = new Date(Date.now() - backdated).toISOString();
+
+  await db.execute({
+    sql: 'update feeds set authors_checked_at = ? where id = ?',
+    args: [at, feedId],
+  });
+}
+
+/**
  * Record that a feed has been looked at, whether or not anyone was found.
  *
  * Stamped even on a miss, and that is the point: without it every pass would
@@ -811,4 +851,109 @@ export async function postsByAuthor(db, feedIds, limit = 12) {
   });
 
   return rows;
+}
+
+/* ------------------------------------------------------------------ *
+ * Bought searches
+ * ------------------------------------------------------------------ */
+
+/**
+ * The people it would be worth buying a search for.
+ *
+ * The gate is mean because the budget is small. What it selects for is the
+ * person we are confident *is* a person, who writes here, and whom nobody can
+ * currently contact — which is the only case where a paid query buys something
+ * the free sources could not.
+ *
+ * Ordered by how much they publish, so a limited budget is spent on the
+ * publishers a reader is most likely to want to reach.
+ *
+ * Anyone searched for already is excluded outright rather than re-searched on a
+ * schedule: a second query for somebody the web did not know about the first
+ * time is the easiest way to spend a month's credits on nothing.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @param {number} [minConfidence] the floor the caller publishes at
+ * @returns {Promise<object[]>}
+ */
+export async function authorsWithoutContact(db, limit = 10, minConfidence = 0.8) {
+  const { rows } = await db.execute({
+    sql: `select a.id, a.slug, a.name, a.site_url as site, a.confidence,
+                 count(distinct fa.feed_id) as feed_count
+            from authors a
+            join feed_authors fa on fa.author_id = a.id
+           where a.confidence >= ?
+             and not exists (select 1 from author_links l where l.author_id = a.id)
+             and not exists (select 1 from author_searches s where s.author_id = a.id)
+             -- A single word is not a searchable name: it returns the world.
+             and instr(trim(a.name), ' ') > 0
+           group by a.id
+           order by feed_count desc, a.confidence desc
+           limit ?`,
+    args: [minConfidence, limit],
+  });
+
+  return rows;
+}
+
+/**
+ * Write down what a search cost, whether or not it found anything.
+ *
+ * @param {Client} db
+ * @param {{ authorId: string|null, queries: number, found: number }} spend
+ * @returns {Promise<void>}
+ */
+export async function recordAuthorSearch(db, spend) {
+  await db.execute({
+    sql: `insert into author_searches (id, author_id, at, queries, found)
+          values (?, ?, ?, ?, ?)`,
+    args: [
+      newId(),
+      spend.authorId ?? null,
+      nowIso(),
+      Math.max(0, Math.floor(Number(spend.queries) || 0)),
+      Math.max(0, Math.floor(Number(spend.found) || 0)),
+    ],
+  });
+}
+
+/**
+ * Credits spent since a moment, which is how much of the budget is gone.
+ *
+ * @param {Client} db
+ * @param {string} since ISO 8601
+ * @returns {Promise<number>}
+ */
+export async function searchSpendSince(db, since) {
+  const { rows } = await db.execute({
+    sql: 'select coalesce(sum(queries), 0) as spent from author_searches where at >= ?',
+    args: [String(since)],
+  });
+
+  return Number(rows[0]?.spent ?? 0);
+}
+
+/**
+ * The start of the current billing period.
+ *
+ * The provider's month does not begin on the first: ValueSERP resets this
+ * account's allowance on the **13th**, so a budget counted per calendar month
+ * would let the allowance be spent twice across a reset and refuse spending
+ * that is actually available just after one.
+ *
+ * @param {Date} [now]
+ * @param {number} [resetDay]
+ * @returns {string} ISO 8601
+ */
+export function billingPeriodStart(now = new Date(), resetDay = 13) {
+  const at = new Date(now.getTime());
+  const start = new Date(
+    Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), resetDay, 0, 0, 0, 0),
+  );
+
+  // Before this month's reset day, the period began last month.
+  if (at.getTime() < start.getTime()) start.setUTCMonth(start.getUTCMonth() - 1);
+
+  return start.toISOString();
 }

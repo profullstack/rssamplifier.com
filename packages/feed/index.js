@@ -67,6 +67,7 @@ export {
   feedContacts,
   feedCredits,
   identityFromHtml,
+  identityFromHumansTxt,
   identityKey,
   isRoleEmail,
   linksBackTo,
@@ -78,3 +79,4 @@ export {
   personalEmail,
   splitBylines,
 } from './src/identity.js';
+export { hostIdentity, identityFromProfile, profileRequest } from './src/platforms.js';
