@@ -1,5 +1,7 @@
 import { Queue, QueueEvents, Worker } from 'bullmq';
 
+import { createWriteFolder } from './writeFolder.js';
+
 /**
  * The write path, moved out of the process and into Redis.
  *
@@ -203,13 +205,11 @@ export function connectionFor(url) {
  * @returns {import('@libsql/client').Client & { closeWriteQueue: () => Promise<void> }}
  */
 export function queueWrites(client, opts) {
-  const connection = connectionFor(opts.url);
   // The Redis instance is shared with every other app in the Railway project,
   // so the keyspace is claimed explicitly rather than left on BullMQ's default.
   const prefix = opts.prefix ?? '{rssamplifier}';
 
-  const queue = new Queue(WRITE_QUEUE, { connection, prefix });
-  const events = new QueueEvents(WRITE_QUEUE, { connection, prefix });
+  const { queue, events } = sharedQueue(opts.url, prefix);
   const original = client.batch.bind(client);
 
   /**
@@ -236,18 +236,98 @@ export function queueWrites(client, opts) {
     return /** @type {object[]} */ (encoded).map(decodeResult);
   };
 
+  // Callers waiting at the same moment are folded into one job, which is one
+  // transaction. Without this every caller was its own job and the worker --
+  // correctly at concurrency 1, because SQLite has one writer -- could only
+  // retire them at one transaction's latency each. See writeFolder.js.
+  const fold = createWriteFolder({ run: enqueue, maxStatements: groupStatements(opts) });
+
   client.batch = (statements, mode) =>
-    mode === 'read' ? original(statements, mode) : enqueue(statements);
+    mode === 'read' ? original(statements, mode) : fold(statements);
 
   // `transaction()` is left alone for the reason serializeWrites leaves it
   // alone: it hands out a lock held across awaits, which no queue can bound.
 
   return Object.assign(client, {
-    closeWriteQueue: async () => {
-      await queue.close();
-      await events.close();
-    },
+    closeWriteQueue: () => releaseQueue(opts.url, prefix),
   });
+}
+
+/**
+ * How many statements one queued transaction may carry.
+ *
+ * Its own knob rather than `TURSO_WRITE_GROUP_STATEMENTS`, because that one is
+ * set to 1 in production -- folding off -- for the in-process path, where a
+ * five-crawl group was once measured to exceed the 30-second request deadline.
+ * On the queued path folding is not an optimisation, it is the difference
+ * between a working queue and a 2.7-writes-a-second ceiling, so it defaults on.
+ *
+ * Fifty is deliberately modest: one crawl's worth of statements, so a group is
+ * a handful of callers rather than a transaction big enough to hit the deadline
+ * the in-process canary hit.
+ *
+ * @param {{ maxStatements?: number }} opts
+ * @returns {number}
+ */
+function groupStatements(opts) {
+  const configured = Number(opts.maxStatements ?? process.env['TURSO_QUEUE_GROUP_STATEMENTS']);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 50;
+}
+
+/**
+ * One Queue and one QueueEvents per (url, prefix), shared by every caller.
+ *
+ * `connect()` is called freely -- once per request handler in the web app, more
+ * in the poller -- and each call used to build its own pair. Each pair opens
+ * Redis connections and registers listeners, so the poller logged
+ * `MaxListenersExceededWarning: 11 closing listeners added to [Queue]` within
+ * minutes and kept climbing. Refcounted rather than cached outright so that
+ * `closeWriteQueue` still means something to a caller that owns the last one.
+ *
+ * @type {Map<string, { queue: import('bullmq').Queue, events: import('bullmq').QueueEvents, refs: number }>}
+ */
+const shared = new Map();
+
+/**
+ * @param {string} url
+ * @param {string} prefix
+ */
+function sharedQueue(url, prefix) {
+  const key = `${prefix}\u0000${url}`;
+  const found = shared.get(key);
+
+  if (found) {
+    found.refs += 1;
+    return found;
+  }
+
+  const connection = connectionFor(url);
+  const entry = {
+    queue: new Queue(WRITE_QUEUE, { connection, prefix }),
+    events: new QueueEvents(WRITE_QUEUE, { connection, prefix }),
+    refs: 1,
+  };
+
+  shared.set(key, entry);
+  return entry;
+}
+
+/**
+ * @param {string} url
+ * @param {string} prefix
+ * @returns {Promise<void>}
+ */
+async function releaseQueue(url, prefix) {
+  const key = `${prefix}\u0000${url}`;
+  const found = shared.get(key);
+  if (!found) return;
+
+  found.refs -= 1;
+  if (found.refs > 0) return;
+
+  shared.delete(key);
+  await found.queue.close();
+  await found.events.close();
 }
 
 /**

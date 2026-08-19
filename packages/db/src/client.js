@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { createClient } from '@libsql/client';
 
+import { createWriteFolder } from './writeFolder.js';
 import { queueWrites } from './writeQueue.js';
 
 /**
@@ -164,126 +165,25 @@ export function serializeWrites(client, opts = {}) {
   const maxStatements = Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1;
   const original = client.batch.bind(client);
 
-  /** @type {Array<{ statements: unknown[], resolve: (value: unknown) => void, reject: (reason: unknown) => void }>} */
-  const waiting = [];
-  let draining = false;
+  // The folding itself lives in writeFolder.js, because the Redis queue needs
+  // exactly the same thing and having two copies of it is how they drift.
+  const enqueue = createWriteFolder({
+    run: (statements) => original(statements, 'write'),
+    maxStatements,
+  });
 
-  /**
-   * Put one caller behind the transaction currently in flight.
-   *
-   * The first caller starts immediately. Everyone arriving while it awaits the
-   * remote database accumulates in `waiting` and is folded together on the next
-   * turn, up to a statement ceiling that keeps one transaction bounded.
-   *
-   * @param {unknown[]} statements
-   * @returns {Promise<unknown>}
-   */
-  const enqueue = (statements) =>
-    new Promise((resolve, reject) => {
-      waiting.push({ statements: Array.from(statements ?? []), resolve, reject });
-      void drain();
-    });
-
-  async function drain() {
-    if (draining) return;
-    draining = true;
-
-    try {
-      while (waiting.length > 0) {
-        const group = [];
-        let statementCount = 0;
-
-        while (waiting.length > 0) {
-          const next = waiting[0];
-          const size = next.statements.length;
-          if (group.length > 0 && statementCount + size > maxStatements) break;
-          group.push(waiting.shift());
-          statementCount += size;
-        }
-
-        const statements = group.flatMap((entry) => entry.statements);
-
-        try {
-          const results = await original(statements, 'write');
-          settleGroup(group, Array.from(results ?? []));
-        } catch (err) {
-          if (group.length > 1 && isStatementError(err)) {
-            // The transaction was rejected because one statement is bad. Run
-            // each caller on its own to preserve failure isolation and ordering.
-            for (const entry of group) {
-              try {
-                entry.resolve(await original(entry.statements, 'write'));
-              } catch (singleErr) {
-                entry.reject(singleErr);
-              }
-            }
-          } else {
-            for (const entry of group) entry.reject(err);
-          }
-        }
-      }
-    } finally {
-      draining = false;
-      // A caller can arrive after the while condition and before the flag is
-      // cleared. Do not leave it asleep until an unrelated later write arrives.
-      if (waiting.length > 0) void drain();
-    }
-  }
-
-  // The one method replaced, on the instance, rather than the whole client
-  // wrapped in a Proxy. A Proxy was the first attempt and it broke 154 tests:
-  // libSQL's client keeps private class fields, and reading one through a
-  // Proxy receiver throws, so every call that was merely passing through died.
   // Overriding the single method that opens a transaction touches nothing else.
   client.batch = (statements, mode) =>
     // Only transactions that can take the write lock. A read batch is several
-    // selects and has no business waiting behind a crawl.
+    // selects and holds nothing.
     mode === 'read' ? original(statements, mode) : enqueue(statements);
 
   // `transaction()` is deliberately left alone. It hands the caller an open
   // transaction to hold across awaits, which this queue cannot bound -- a lock
-  // acquired here and released who-knows-when is worse than no lock. Nothing in
-  // this codebase calls it; if something starts to, it should be a deliberate
-  // decision rather than a silent hole in the serialisation.
+  // held while the caller does anything else is the problem, not the solution.
 
   return client;
 }
-
-/**
- * Hand each caller the result rows belonging to its own statements.
- *
- * libSQL returns one ResultSet per statement, in order. A caller above this
- * layer must never learn that its transaction shared a round trip.
- *
- * @param {Array<{ statements: unknown[], resolve: (value: unknown) => void }>} group
- * @param {unknown[]} results
- */
-function settleGroup(group, results) {
-  let offset = 0;
-  for (const entry of group) {
-    const end = offset + entry.statements.length;
-    entry.resolve(results.slice(offset, end));
-    offset = end;
-  }
-}
-
-/**
- * Whether retrying a failed combined transaction can isolate one bad caller.
- *
- * Network failures and deadlines affect the database as a whole and must not be
- * multiplied into N retries. SQLite statement/constraint errors are local to
- * the SQL or data and are worth splitting once so neighbouring feeds survive.
- *
- * @param {unknown} err
- * @returns {boolean}
- */
-function isStatementError(err) {
-  const text = String(err?.message ?? err);
-  return /SQLITE_(?:CONSTRAINT|ERROR|MISMATCH|RANGE)|constraint failed|syntax error|no such (?:table|column)/i.test(
-    text,
-  );
-}
-
 
 /**
  * Application-generated primary key.
