@@ -2796,6 +2796,31 @@ export async function markCrawlFailure(db, id, error, errorCount, minutes) {
   });
 }
 
+/**
+ * Come back later, and hold every judgement about this feed.
+ *
+ * The counterpart to `markCrawlFailure` for a server that answered 429 -- or 503
+ * with a Retry-After. Only the schedule moves: `status`, `error_count` and
+ * `last_error` are left exactly as they were, and `last_success_at` with them.
+ *
+ * `last_fetched_at` is *not* stamped either, and that is the subtle one. It
+ * means "when we last read this publisher", and a throttle is precisely the case
+ * where we did not read them. Stamping it would make a feed we have been bounced
+ * from for a day look freshly crawled on every page that reports staleness.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {number} minutes
+ * @returns {Promise<void>}
+ */
+export async function markThrottled(db, id, minutes) {
+  const wait = Math.max(1, Math.round(Number(minutes) || 30));
+  await db.execute({
+    sql: 'update feeds set next_fetch_at = ?, updated_at = ? where id = ?',
+    args: [nowIso(wait * 60_000), nowIso(), id],
+  });
+}
+
 /* ------------------------------------------------------------- feed cards */
 
 /**

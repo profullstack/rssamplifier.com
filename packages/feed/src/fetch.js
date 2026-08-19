@@ -104,7 +104,7 @@ export async function isPublicHost(hostname) {
  * @param {string} url
  * @param {{ etag?: string|null, lastModified?: string|null,
  *   headers?: Record<string, string> }} [conditional]
- * @returns {Promise<{ ok: boolean, status: number, contentType: string, body: string, url: string, notModified?: boolean, etag?: string|null, lastModified?: string|null, error?: string }>}
+ * @returns {Promise<{ ok: boolean, status: number, contentType: string, body: string, url: string, notModified?: boolean, etag?: string|null, lastModified?: string|null, retryAfter?: number|null, error?: string }>}
  */
 export async function safeFetch(url, conditional = {}) {
   const normalized = normalizeUrl(url);
@@ -196,6 +196,7 @@ export async function safeFetch(url, conditional = {}) {
       contentType: res.headers.get('content-type') ?? '',
       body,
       url: res.url,
+      retryAfter: retryAfterSeconds(res.headers.get('retry-after')),
       etag,
       lastModified,
     };
@@ -379,6 +380,31 @@ function concat(chunks, size) {
 }
 
 /**
+ * How long a server asked us to wait, in seconds.
+ *
+ * RFC 9110 allows either a delay in seconds or an HTTP date, and both are seen
+ * in the wild. Anything unparseable is null, which the caller reads as "throttled
+ * but unsaid" and answers with its own default rather than with zero.
+ *
+ * Clamped to a day. A server that asks for a month has almost certainly sent us
+ * a date we misread, and honouring it literally would retire the feed.
+ *
+ * @param {string|null} header
+ * @returns {number|null}
+ */
+export function retryAfterSeconds(header) {
+  if (!header) return null;
+
+  const seconds = Number(String(header).trim());
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(Math.round(seconds), 86_400);
+
+  const at = Date.parse(String(header));
+  if (!Number.isNaN(at)) return Math.min(Math.max(0, Math.round((at - Date.now()) / 1000)), 86_400);
+
+  return null;
+}
+
+/**
  * Resolve whatever a user submitted into a parsed feed.
  *
  * Tries, in order: the URL itself as a feed, any feed advertised by the page's
@@ -409,7 +435,19 @@ export async function resolveFeed(input, conditional = {}) {
   if (first.notModified) {
     return { ok: false, notModified: true, etag: first.etag, lastModified: first.lastModified };
   }
-  if (!first.ok) return { ok: false, error: first.error ?? `http-${first.status}` };
+  // A throttle is not a broken feed, and the difference has to survive this
+  // return or the crawler cannot tell them apart. 429 is the explicit form; 503
+  // with a Retry-After is the same statement from a server that is briefly
+  // unwilling rather than permanently unable. Both mean "come back later", which
+  // is a schedule instruction, not evidence about the publisher.
+  if (!first.ok) {
+    const throttled = first.status === 429 || (first.status === 503 && first.retryAfter != null);
+    return {
+      ok: false,
+      error: first.error ?? `http-${first.status}`,
+      ...(throttled ? { throttled: true, retryAfter: first.retryAfter ?? null } : {}),
+    };
+  }
 
   if (looksLikeFeed(first.contentType, first.body, first.url)) {
     const feed = parseFeed(first.body, first.url);
