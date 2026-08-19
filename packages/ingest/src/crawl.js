@@ -1,7 +1,7 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
 
-import { storeCredits } from './enrich.js';
+import { prepareCredits } from './enrich.js';
 import { intervalFromDates, nextInterval, newestPublished } from './cadence.js';
 
 /** Backoff ladder in minutes, indexed by consecutive error count. */
@@ -67,14 +67,36 @@ export function nextIntervalMinutes(newItems, currentMinutes = MIN_INTERVAL) {
  */
 export async function refreshFeedKeywords(db, feedId, feed = {}) {
   const items = await q.itemsForKeywords(db, feedId);
+  const topics = topicsFrom(feed, items);
+  await q.replaceFeedKeywords(db, feedId, topics);
+  return topics.length;
+}
 
+/**
+ * A feed's topics, from its own metadata and everything it has published.
+ *
+ * Pure, and separated from the read on purpose: `crawlFeed` reads the stored
+ * items *before* it writes the new ones so that the topics can go into the same
+ * transaction as everything else. Given the stored items and the document, this
+ * produces the same answer either way round.
+ *
+ * Both sources are used because neither is sufficient. The document alone would
+ * narrow a blog's topics to whatever it published this month, since a feed only
+ * carries its recent items; the stored items alone would miss the post that has
+ * just arrived and is the reason we are recomputing at all.
+ *
+ * @param {{ title?: string, description?: string, categories?: string[], items?: object[] }} feed
+ * @param {object[]} [storedItems] rows from `itemsForKeywords`
+ * @returns {Array<{ slug: string, keyword: string, words?: number, count?: number, source?: string }>}
+ */
+export function topicsFrom(feed = {}, storedItems = []) {
   const blocks = [];
   if (feed.title) blocks.push(String(feed.title));
   if (feed.description) blocks.push(String(feed.description));
 
   const categories = Array.isArray(feed.categories) ? [...feed.categories] : [];
 
-  for (const item of items) {
+  for (const item of storedItems ?? []) {
     if (item.title) blocks.push(String(item.title));
     if (item.summary) blocks.push(String(item.summary));
 
@@ -85,14 +107,20 @@ export async function refreshFeedKeywords(db, feedId, feed = {}) {
       const parsed = JSON.parse(String(item.categories ?? '[]'));
       if (Array.isArray(parsed)) categories.push(...parsed.map((c) => String(c)));
     } catch {
-      // Not JSON, so there are no categories on this item. Nothing to report:
-      // the topics of the other items are unaffected.
+      // Not JSON, so there are no categories on this item. The topics of the
+      // other items are unaffected.
     }
   }
 
-  const topics = feedTopics({ blocks, categories });
-  await q.replaceFeedKeywords(db, feedId, topics);
-  return topics.length;
+  // The document's own items, which are the ones not yet stored. Their
+  // categories are already arrays rather than JSON text.
+  for (const item of feed.items ?? []) {
+    if (item?.title) blocks.push(String(item.title));
+    if (item?.summary) blocks.push(String(item.summary));
+    if (Array.isArray(item?.categories)) categories.push(...item.categories.map((c) => String(c)));
+  }
+
+  return feedTopics({ blocks, categories });
 }
 
 /**
@@ -124,38 +152,96 @@ export async function crawlFeed(db, feed, opts = {}) {
     return { ok: false, newItems: 0, error: resolved.error };
   }
 
-  // One write transaction for the items *and* the feed row, with no `count(*)`
-  // round trip between them — see `storeCrawl`. Against this database an empty
-  // write transaction measured 29–118 seconds while a read measured 100ms, so
-  // the only number that moves the crawler is how many write transactions a
-  // feed costs. The interval ladder that used to be applied here by
-  // `nextIntervalMinutes` is applied inside that same statement instead.
+  // ONE write transaction for the whole crawl: the items, the feed row, the
+  // feed's topics and its credits.
   //
-  // `sent` is the change in the stored total, which is the only honest way to
-  // count what a crawl added: every crawl re-offers the publisher's whole
-  // document, so "items the document contained" is never zero. Reading it as
-  // "new items" is what once kept `nextIntervalMinutes` pinned to its floor and
-  // had **every feed in the directory re-crawled hourly for ever**, with the
-  // backoff ladder never once engaging.
-  // When to come back, decided from the feed's own publishing rhythm — see
-  // cadence.js. Null when the document carries no usable dates, which hands the
-  // decision to the old doubling ladder inside `storeCrawl` (it depends on what
-  // this write stores, so it cannot be known before the write happens).
+  // This is the number that decides the crawler's throughput and nothing else
+  // does. SQLite permits a single writer, so writes serialize -- a crawl costs
+  // very nearly the count of transactions it opens, not the work inside them.
+  // Measured on production: three transactions per feed gave a 300-feed tick of
+  // 19.5 minutes, about 860 feeds an hour, against 2,400 before any of this.
+  // Folding three into one is a threefold change; making any one of them
+  // cheaper is not.
   //
-  // This is the change that made the directory schedulable at all. The old
-  // ladder capped a silent feed at one re-read a day, so an abandoned podcast
-  // was fetched 365 times a year for ever; sampling production, 15.8% of active
-  // feeds had not published in two years and three quarters had not published
-  // in a month. Demand was 62,700 crawls an hour against a measured capacity
-  // near 2,000. Projected over the same sample, rhythm-based scheduling asks
-  // for 2,241 an hour — 28 times fewer, and inside what the crawler can do.
+  // The ordering below is what makes one transaction possible. Everything that
+  // has to be *read* is read first, in parallel, and everything to be written
+  // is assembled in memory before a single statement is sent.
   const interval = intervalFromDates(resolved.feed.items);
 
   // When this publisher last published, as distinct from when we last read
-  // them. Stored on the feed row so that a page or an API response can say
-  // "current, and dormant since 2023" without a feed_items join -- see 0030.
-  // It falls out of the same date scan the interval above needed, so it is free.
+  // them. Stored on the feed row so a page can say "current, and dormant since
+  // 2023" without a feed_items join -- see 0030. It falls out of the same date
+  // scan the interval needed, so it is free.
   const published = newestPublished(resolved.feed.items);
+
+  // Did this feed publish anything since we last looked?
+  //
+  // The old guard asked "did this crawl store new items", which is only knowable
+  // *after* the write -- and needing that answer first is exactly what forced
+  // topics and credits into transactions of their own. This asks the same
+  // question of the document instead, from two values already in hand, so it can
+  // be answered before anything is written.
+  //
+  // A feed with no usable dates answers null and falls through to the "have we
+  // ever done this" checks below, which is the same conclusion the old guard
+  // reached by a slower route.
+  const knownPublished = feed.last_published_at ? String(feed.last_published_at) : null;
+  const publishedSomethingNew =
+    published !== null && (knownPublished === null || published > knownPublished);
+
+  // Every read the crawl needs, at once, before any of it is written.
+  //
+  // `itemsForKeywords` is the interesting one. Topics are deliberately derived
+  // from what is *stored* rather than from the document -- a feed carries only
+  // its recent items, so extracting from the response alone would narrow a
+  // blog's topics to whatever it published this month. Reading the stored items
+  // *before* the upsert and adding the document's items in memory gives the
+  // same set without the read-after-write that used to force a second
+  // transaction.
+  const [storedItems, existingTopics, hasAuthors] = await Promise.all([
+    q.itemsForKeywords(db, id).catch(() => []),
+    q.countFeedKeywords(db, id).catch(() => 0),
+    authors.feedHasAuthors(db, id).catch(() => true),
+  ]);
+
+  // Topics, when the feed has published something or has none yet.
+  let topics = 0;
+  /** @type {Array<{ sql: string, args: unknown[] }>} */
+  let topicStatements = [];
+  if (publishedSomethingNew || existingTopics === 0) {
+    try {
+      const extracted = topicsFrom(resolved.feed, storedItems);
+      topicStatements = q.keywordStatements(id, extracted);
+      topics = extracted.length;
+    } catch {
+      // Topics are a browsing aid. Failing to extract them must not fail the
+      // crawl -- that would back the feed off and eventually mark a perfectly
+      // healthy blog dead.
+      topicStatements = [];
+      topics = 0;
+    }
+  }
+
+  // Credits, on the same condition and for the same reason. "Stored for free"
+  // was true of the parsing and false of the storing: this used to be three
+  // write transactions per crawl, all of which rewrote the byline already on
+  // file whenever the feed had not changed.
+  let people = 0;
+  /** @type {Array<{ sql: string, args: unknown[] }>} */
+  let creditStatements = [];
+  if (publishedSomethingNew || !hasAuthors) {
+    try {
+      const prepared = await prepareCredits(db, { id, feed_url: String(feed.feed_url) }, resolved.feed.credits ?? []);
+      creditStatements = prepared.statements;
+      people = prepared.people;
+    } catch {
+      // Same trade as topics: a byline that fails to store is a missing name,
+      // where a byline that fails the crawl is a healthy blog on its way to
+      // being marked dead.
+      creditStatements = [];
+      people = 0;
+    }
+  }
 
   const { stored: sent } = await q.storeCrawl(
     db,
@@ -165,55 +251,8 @@ export async function crawlFeed(db, feed, opts = {}) {
     Number(feed.item_count ?? 0),
     interval,
     published,
+    [...topicStatements, ...creditStatements],
   );
-
-  // Only when the feed actually published something, or when it has no topics
-  // yet. Re-extracting on every crawl would rewrite twenty-five rows per feed
-  // per hour across the whole directory to arrive at the same answer — the text
-  // cannot have changed if nothing was added to it.
-  //
-  // Topics are a browsing aid, so failing to extract them must not turn a crawl
-  // that stored its items into a failure — that would back the feed off and
-  // eventually mark a perfectly healthy blog dead.
-  let topics = 0;
-  try {
-    if (sent > 0 || (await q.countFeedKeywords(db, id)) === 0) {
-      topics = await refreshFeedKeywords(db, id, resolved.feed);
-    }
-  } catch (err) {
-    return { ok: true, newItems: sent, topics: 0, topicError: String(err?.message ?? err) };
-  }
-
-  // Whoever the document names, stored for free: the feed is already parsed
-  // and the credits came out of it with it. The links half of enrichment costs
-  // requests and lives in enrichDue instead.
-  //
-  // Guarded for the same reason topics are, on the same condition, and it is
-  // the more expensive of the two omissions. "Stored for free" was true of the
-  // parsing and false of the storing: `storeCredits` issued **three write
-  // transactions on every crawl** — an `update authors` coalescing every column
-  // onto the value already in it, an insert into feed_authors, and one into
-  // author_links — and on a re-crawl of an unchanged feed all three wrote the
-  // answer that was already there. Counted by instrumenting a crawl against a
-  // local database: 4 write transactions, 3 of them pointless.
-  //
-  // Against this database a write transaction costs ~370ms and they serialize
-  // per database, so those three were most of the crawler's ceiling. A byline
-  // cannot have changed if the feed published nothing, which is exactly the
-  // argument the topics block above already makes about its text.
-  //
-  // Guarded for one more reason too. A byline that fails to store is a missing
-  // name; a byline that fails the *crawl* backs the feed off and eventually
-  // marks a healthy blog dead, which is a far worse trade.
-  let people = 0;
-  try {
-    if (sent > 0 || !(await authors.feedHasAuthors(db, id))) {
-      const stored = await storeCredits(db, { id, feed_url: String(feed.feed_url) }, resolved.feed.credits ?? []);
-      people = stored.people;
-    }
-  } catch (err) {
-    return { ok: true, newItems: sent, topics, authorError: String(err?.message ?? err) };
-  }
 
   return { ok: true, newItems: sent, topics, people };
 }
