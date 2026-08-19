@@ -2,8 +2,10 @@ import { notFound } from 'next/navigation';
 import { authors } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { feedAlternates } from '../../../lib/subscribe.js';
 import AdBanner from '../../AdBanner.jsx';
 import AuthorLinks from '../../AuthorLinks.jsx';
+import SubscribeLinks from '../../SubscribeLinks.jsx';
 import { CATEGORIES } from '../../CategoryIndex.jsx';
 import ListFilter from '../../ListFilter.jsx';
 import { FILTER_FROM } from '../../../lib/listFilter.js';
@@ -27,7 +29,14 @@ export async function generateMetadata({ params }) {
       : titles.length
         ? `${person.name} publishes ${titles.slice(0, 3).join(', ')}.`
         : `${person.name} in the rssamplifier directory.`,
-    alternates: { canonical: `${siteUrl()}/authors/${slug}` },
+    alternates: {
+      canonical: `${siteUrl()}/authors/${slug}`,
+      // Subscribe to the person rather than to one of their publications. A
+      // writer with a blog, a newsletter and a podcast has three feeds and no
+      // way to hand somebody all three; the directory already knows which are
+      // theirs, so this is the one river here that exists nowhere else.
+      types: feedAlternates(`${siteUrl()}/authors/${slug}`, String(person.name)),
+    },
   };
 }
 
@@ -132,6 +141,13 @@ export default async function AuthorPage({ params }) {
       </header>
 
       <AuthorLinks links={links} prominent />
+
+      {/* Everything they publish, wherever they publish it, as one feed. Only
+          offered when there is something behind it: a subscribe link on a
+          profile with no credited feeds is a link to an empty document. */}
+      {feeds.length > 0 && (
+        <SubscribeLinks base={`/authors/${slug}`} what={String(person.name)} />
+      )}
 
       <h2>
         {feeds.length === 1 ? 'Publishes' : 'Publishes'}{' '}

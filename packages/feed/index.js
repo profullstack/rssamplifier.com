@@ -10,6 +10,7 @@ export {
   buildRss,
   buildAtom,
   buildJsonFeed,
+  buildMarkdown,
   buildM3u,
   buildPls,
   playable,

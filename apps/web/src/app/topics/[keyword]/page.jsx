@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { feedAlternates } from '../../../lib/subscribe.js';
 import { slugFromUrl } from '../../../lib/topicGroups.js';
 import { pageNumber } from '../../CategoryIndex.jsx';
 import TopicListing from './TopicListing.jsx';
@@ -25,14 +26,10 @@ export async function generateMetadata({ params }) {
       canonical: page,
       // Autodiscovery, which is how a browser extension or a reader offers to
       // subscribe from the page itself rather than making somebody find the
-      // link. Only the two XML formats go here: `types` renders
-      // `<link rel="alternate">`, and a reader that follows an unexpected type
-      // reports a broken feed.
-      types: {
-        'application/rss+xml': [{ url: `${page}.rss`, title: `${topic.keyword} — RSS` }],
-        'application/atom+xml': [{ url: `${page}.atom`, title: `${topic.keyword} — Atom` }],
-        'application/feed+json': [{ url: `${page}.json`, title: `${topic.keyword} — JSON Feed` }],
-      },
+      // link. The set is the one every listing on the site advertises now —
+      // see lib/subscribe.js, which is also what the visible row is built from,
+      // so the two cannot drift.
+      types: feedAlternates(page, topic.keyword),
     },
   };
 }

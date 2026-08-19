@@ -36,7 +36,7 @@ export default function Toolbar({ prev, next, current, siteUrl, feedUrl }) {
       )}
 
       {feedUrl && (
-        <a href={feedUrl} title="Subscribe to the raw feed">
+        <a href={feedUrl} type="application/rss+xml" title="Subscribe to this feed">
           <span className="label">Feed</span>
         </a>
       )}

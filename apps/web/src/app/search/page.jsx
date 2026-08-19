@@ -1,11 +1,13 @@
 import { q } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
+import { feedAlternates } from '../../lib/subscribe.js';
 import { AD_MREC, AD_TEXT, adPlan } from '../../lib/ads.js';
 import { CATEGORIES } from '../../lib/categories.js';
 import { filtersWithHits, searchFilter, searchHref, totalHits } from '../../lib/searchFilters.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
+import SubscribeLinks from '../SubscribeLinks.jsx';
 import Thumb, { Avatar } from '../Thumb.jsx';
 import ListFilter from '../ListFilter.jsx';
 import { FILTER_FROM } from '../../lib/listFilter.js';
@@ -14,10 +16,28 @@ import { feedImage, postThumb } from '../../lib/thumbs.js';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata = {
-  title: 'Search',
-  description: 'Full-text search across every blog, podcast, channel and post in the directory.',
-};
+/**
+ * A search that found something is also a subscription: `/search.rss?q=lisp`
+ * tells a reader when three hundred thousand feeds mention it, with no account
+ * anywhere. That is only announceable once the query is known, which is why
+ * this is a function rather than the static block it used to be.
+ *
+ * @param {{ searchParams: Promise<{ q?: string, kind?: string }> }} props
+ */
+export async function generateMetadata({ searchParams }) {
+  const params = await searchParams;
+  const query = (params.q ?? '').trim();
+  const filter = searchFilter(params.kind);
+  const suffix = `?q=${encodeURIComponent(query)}${filter ? `&kind=${filter.segment}` : ''}`;
+
+  return {
+    title: query ? `${query} · Search` : 'Search',
+    description: 'Full-text search across every blog, podcast, channel and post in the directory.',
+    ...(query
+      ? { alternates: { types: feedAlternates('/search', `${query} — RSS Amplifier`, suffix) } }
+      : {}),
+  };
+}
 
 /**
  * What one result is, for the label on its row.
@@ -72,6 +92,10 @@ export default async function SearchPage({ searchParams }) {
   // relevant to), a search that found nothing carries exactly one line, and a
   // search that found something carries the full set.
   const found = blogs.length > 0 || posts.length > 0;
+
+  // The query string the feed links carry, so `/search.rss?q=…` asks the same
+  // question the page just answered — filter included.
+  const searchQuery = `?q=${encodeURIComponent(query)}${filter ? `&kind=${filter.segment}` : ''}`;
   const postAds = adPlan(posts.length, { first: 8, every: 20, max: 2, formats: [AD_TEXT] });
 
   const filters = query ? filtersWithHits(counts) : [];
@@ -139,6 +163,12 @@ export default async function SearchPage({ searchParams }) {
        * link so it reads as an offer rather than as the first result.
        */}
       {query && <Ad format={AD_TEXT} />}
+
+      {/* A standing question, as a feed. Offered only when the search found
+          something: subscribing to a query that matches nothing today is a
+          reasonable thing to want, but a link that hands back an empty document
+          looks broken rather than patient. */}
+      {found && <SubscribeLinks base="/search" query={searchQuery} what={`“${query}”`} label="Subscribe to this search:" />}
 
       {query && blogs.length === 0 && posts.length === 0 && (
         <p className="empty">

@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../lib/db.js';
+import { feedAlternates } from '../../../../lib/subscribe.js';
 import { slugFromUrl, topicGroup } from '../../../../lib/topicGroups.js';
 import { pageNumber } from '../../../CategoryIndex.jsx';
 import TopicListing from '../TopicListing.jsx';
@@ -65,11 +66,7 @@ export async function generateMetadata(props) {
     description: `${total} ${group.noun} in the RSS Amplifier directory cover ${topic.keyword}.`,
     alternates: {
       canonical: page,
-      types: {
-        'application/rss+xml': [{ url: `${page}.rss`, title: `${heading} — RSS` }],
-        'application/atom+xml': [{ url: `${page}.atom`, title: `${heading} — Atom` }],
-        'application/feed+json': [{ url: `${page}.json`, title: `${heading} — JSON Feed` }],
-      },
+      types: feedAlternates(page, heading),
     },
   };
 }

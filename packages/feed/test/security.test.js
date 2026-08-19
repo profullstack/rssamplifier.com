@@ -86,5 +86,7 @@ test('uniqueSlug avoids reserved routes and collisions', () => {
 
 test('uniqueSlug falls back to the hostname when the title is unusable', () => {
   assert.equal(uniqueSlug('!!!', 'https://www.example.com/feed'), 'example-com');
-  assert.equal(uniqueSlug('', ''), 'feed');
+  // Not 'feed': that address belongs to the directory's own river now, so an
+  // untitled submission gets a placeholder rather than a reserved word.
+  assert.equal(uniqueSlug('', ''), 'untitled');
 });
