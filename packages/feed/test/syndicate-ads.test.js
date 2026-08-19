@@ -55,13 +55,14 @@ const ad = {
 test('interleaveAds places one ad per interval, after real posts', () => {
   const out = interleaveAds(posts(30), [ad, { ...ad, id: 'ad-2' }, { ...ad, id: 'ad-3' }]);
 
-  // Boundaries fall after the 10th, 20th and 30th post — but the 30th is the
-  // last one, and an ad may never trail the feed. So two are placed, and the
-  // third is not: 30 posts + 2 ads.
-  assert.equal(out.length, 32);
+  // Boundaries fall after the 10th, 20th and 30th post. The 30th is the last
+  // one and an ad may never trail the feed, so that ad steps back a post and
+  // follows the 29th instead of being dropped: 30 posts + 3 ads.
+  assert.equal(out.length, 33);
   assert.equal(out[10].sponsored, true);
   assert.equal(out[21].sponsored, true);
-  assert.equal(out.filter((i) => i.sponsored).length, 2);
+  assert.equal(out[31].sponsored, true);
+  assert.equal(out.filter((i) => i.sponsored).length, 3);
   assert.equal(out.at(-1).sponsored, undefined, 'a feed must not end on an ad');
 });
 
@@ -78,6 +79,47 @@ test('adSlotsFor predicts exactly what interleaveAds will place', () => {
   }
 });
 
+test('a feed of exactly ten items carries an ad, one post from the end', () => {
+  // The shape this rule was rewritten for. Ten is the number an RSS document
+  // conventionally holds, and it is by far the commonest length in the
+  // directory: 32,114 of the 83,940 feeds that have items carry exactly ten. The
+  // only boundary in such a list falls at the very end, so the original rule
+  // dropped it and served no ad at all -- 38% of the per-listing feeds were
+  // unsellable by arithmetic, which is what /camera-loopt.rss was showing.
+  const out = interleaveAds(posts(10), [ad]);
+
+  assert.equal(out.length, 11);
+  assert.equal(adSlotsFor(10), 1, 'and the fetch count must agree');
+  assert.equal(out[9].sponsored, true, 'the ad follows the ninth post');
+  assert.equal(out.at(-1).sponsored, undefined, 'a real post still ends the feed');
+  assert.equal(out.filter((i) => i.sponsored).length, 1);
+});
+
+test('a feed too short for one full interval still carries nothing', () => {
+  // The step-back must not become a way in for lists that were always meant to
+  // be left alone: an ad among six posts is the feed, not an ad in it.
+  for (const total of [0, 1, 5, 9]) {
+    assert.equal(adSlotsFor(total), 0, `total=${total}`);
+    assert.equal(interleaveAds(posts(total), [ad]).filter((i) => i.sponsored).length, 0);
+  }
+});
+
+test('two sponsored items are never adjacent', () => {
+  // Stepping the last ad back moves it toward the one before it. At the
+  // interval's own multiples that is safe, but the invariant is what matters:
+  // a reader must never meet two adverts in a row.
+  const many = Array.from({ length: 20 }, (_, i) => ({ ...ad, id: `ad-${i}` }));
+  for (let total = 0; total <= 60; total += 1) {
+    const out = interleaveAds(posts(total), many);
+    for (let i = 1; i < out.length; i += 1) {
+      assert.ok(
+        !(out[i].sponsored && out[i - 1].sponsored),
+        `two ads in a row at total=${total}, index=${i}`,
+      );
+    }
+  }
+});
+
 test('an ad is dated to sort after the post it follows, not above the feed', () => {
   // The bug this exists to prevent: ads dated "start of today" while the newest
   // post in the river is a day older, so every reader -- which orders by date,
@@ -91,7 +133,7 @@ test('an ad is dated to sort after the post it follows, not above the feed', () 
 
   const out = interleaveAds(dated, ads);
   const placed = out.filter((i) => i.sponsored);
-  assert.equal(placed.length, 2);
+  assert.equal(placed.length, 3);
 
   // Each ad is strictly older than the post before it and strictly newer than
   // the post after it, so document order and reader order agree.

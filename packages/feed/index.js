@@ -3,6 +3,7 @@ export { parseOpml, buildOpml, opmlHead, opmlOutline, opmlFoot } from './src/opm
 export {
   AD_EVERY,
   AD_MAX,
+  adPositions,
   adSlotsFor,
   interleaveAds,
   SYNDICATION_FORMATS,
