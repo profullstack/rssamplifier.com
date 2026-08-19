@@ -283,6 +283,58 @@ async function tick() {
       }
     }
 
+    // An upload hands over its list and leaves; this is where the list becomes
+    // feeds. One slice a tick rather than a whole submission, so a very large
+    // catalogue cannot hold the crawl above hostage while it queues — the two
+    // share the process and the import is the one that can wait.
+    //
+    // Above the catch-up return, and deliberately the only thing that is.
+    // Everything below is work nobody asked for by name: discovery finds feeds
+    // on its own schedule, cards and clusters decorate what is already indexed,
+    // and none of it has somebody watching a page. An import is the opposite —
+    // a person handed us a list, was given a URL to follow, and that page says
+    // "working". In catch-up mode it said "working" for ever: a 109,474-entry
+    // upload on 2026-08-19 staged all its entries in 55 seconds and then sat at
+    // 0 queued, because this block was eleven lines below a `return`. Nothing
+    // errored, nothing logged, and the only way to find out was to read the
+    // poller source.
+    //
+    // Catch-up mode exists to stop unrelated writes competing with a deep
+    // first-crawl backlog, and that reasoning holds for everything else here.
+    // It does not hold for the one queue a user is actively waiting on, and a
+    // slice a tick is a small enough price that it never had to.
+    try {
+      const drained = await drainImport(db);
+      if (drained.ran) {
+        log('import-drain', {
+          submission: drained.submissionId,
+          queued: drained.queued,
+          skipped: drained.skipped,
+          remaining: drained.remaining,
+          finished: drained.finished,
+        });
+      }
+    } catch (err) {
+      // One bad slice must not take the crawl down with it; the entries are
+      // still staged, so the next tick tries again.
+      log('import-drain-error', { message: String(err?.message ?? err) });
+    }
+
+    // Above the return for the same reason, and because the two are a pair: the
+    // daemon that drains the queue is the one that tells the submitter it
+    // drained. Draining in catch-up mode while leaving this below would finish
+    // somebody's upload and never say so, which is a stranger failure than not
+    // draining at all. A no-op when no mail provider is configured.
+    //
+    // Guarded, unlike where it used to sit. Down there a throw only cost the
+    // housekeeping that followed it; up here it would cost the crawl.
+    try {
+      const notified = await notifyFinishedSubmissions(db);
+      if (notified.sent || notified.failed) log('notified', notified);
+    } catch (err) {
+      log('notify-error', { message: String(err?.message ?? err) });
+    }
+
     // All work below is resumable enrichment or housekeeping. In recovery mode
     // the deep first-crawl queue is the job, and returning here lets the next
     // minute tick begin immediately instead of waiting behind unrelated writes.
@@ -333,32 +385,6 @@ async function tick() {
       }
     }
 
-    // An upload hands over its list and leaves; this is where the list becomes
-    // feeds. One slice a tick rather than a whole submission, so a very large
-    // catalogue cannot hold the crawl above hostage while it queues — the two
-    // share the process and the import is the one that can wait.
-    try {
-      const drained = await drainImport(db);
-      if (drained.ran) {
-        log('import-drain', {
-          submission: drained.submissionId,
-          queued: drained.queued,
-          skipped: drained.skipped,
-          remaining: drained.remaining,
-          finished: drained.finished,
-        });
-      }
-    } catch (err) {
-      // One bad slice must not take the crawl down with it; the entries are
-      // still staged, so the next tick tries again.
-      log('import-drain-error', { message: String(err?.message ?? err) });
-    }
-
-    // Queued submissions finish long after the upload, so the daemon that
-    // drains the queue is also what tells the submitter it drained. A no-op
-    // when no mail provider is configured.
-    const notified = await notifyFinishedSubmissions(db);
-    if (notified.sent || notified.failed) log('notified', notified);
 
     const toldSearchers = await notifyFinishedDiscoveries(db);
     if (toldSearchers.sent || toldSearchers.failed) log('notified-discovery', toldSearchers);
