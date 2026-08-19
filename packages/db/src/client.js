@@ -131,7 +131,10 @@ export function withTimeout(ms) {
  */
 export function serializeWrites(client, opts = {}) {
   const configured = Number(opts.maxStatements ?? process.env['TURSO_WRITE_GROUP_STATEMENTS']);
-  const maxStatements = Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1000;
+  // One is the safe production default. A five-crawl group was canaried against
+  // the throttled primary and exceeded the 30-second request deadline; grouping
+  // remains available for a database whose transaction path has been measured.
+  const maxStatements = Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1;
   const original = client.batch.bind(client);
 
   /** @type {Array<{ statements: unknown[], resolve: (value: unknown) => void, reject: (reason: unknown) => void }>} */
