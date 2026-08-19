@@ -9,6 +9,7 @@ import { CATEGORIES } from '../CategoryIndex.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { GrowthChart, IndexingChart, Sparkline, ThroughputChart } from './Charts.jsx';
 import CrawlLog from './CrawlLog.jsx';
+import ErrorBrowser from './ErrorBrowser.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +50,7 @@ export default async function CrawlStatsPage() {
     operationalErrors,
   ] = await Promise.all([
     q.crawlStats(client),
-    q.failingFeeds(client, 15),
+    q.failingFeeds(client, 50),
     q.recentlyCrawled(client, 15),
     discovery.countQueuedCandidates(client),
     discovery.countQueuedKeywords(client),
@@ -102,6 +103,30 @@ export default async function CrawlStatsPage() {
     categories.categories.reduce((n, row) => n + (row.growth[day] ?? 0), 0),
   );
 
+  // Plain serializable rows for the client-side disclosure panel. Database Row
+  // objects are deliberately not handed across the server/client boundary.
+  const errorMessages = [
+    ...failing.map((row) => ({
+      id: `feed-${String(row.slug)}`,
+      kind: 'feed',
+      at: row.last_fetched_at ? String(row.last_fetched_at) : null,
+      source: String(row.title || row.feed_url || row.slug),
+      href: `/${String(row.slug)}`,
+      message: row.last_error ? String(row.last_error) : 'Unknown feed error',
+    })),
+    ...operationalErrors.map((row) => {
+      const line = toLine(row);
+      return {
+        id: `daemon-${String(line.id)}`,
+        kind: 'daemon',
+        at: line.at ? String(line.at) : null,
+        source: String(line.event || 'crawler'),
+        href: null,
+        message: describe(line, { name: false }),
+      };
+    }),
+  ];
+
   // A crawler that has not landed a single successful read in a quarter of an
   // hour is stopped, not merely between batches. The backlog tells "stopped"
   // apart from "idle because nothing was due".
@@ -139,12 +164,7 @@ export default async function CrawlStatsPage() {
         <Stat label="Fetched (24h)" value={fmt(stats.fetchedLastDay)} note={`${fmt(stats.succeededLastDay)} succeeded`} />
         <Stat label="New posts (24h)" value={fmt(stats.itemsLastDay)} note="items ingested" />
         <Stat label="Stale" value={fmt(stats.staleActive)} note="active, no success in 24h" />
-        <Stat
-          label="Erroring"
-          value={fmt(stats.errored)}
-          note={`${fmt(stats.dead)} given up`}
-          href="#failing-feeds"
-        />
+        <ErrorBrowser total={stats.errored} dead={stats.dead} errors={errorMessages} />
         <Stat label="Pending" value={fmt(stats.pending)} note="accepted, not yet crawled" />
         {/*
          * Discovery shares this poller, so it belongs on this board: a keyword
