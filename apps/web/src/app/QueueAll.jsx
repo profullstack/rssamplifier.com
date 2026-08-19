@@ -20,8 +20,14 @@ import { LANE_LABEL } from '../lib/queue.js';
  * undoing it, and it should undo *this* rather than empty the lane and take the
  * rest of the reader's queue with it.
  *
+ * Names either a topic or a single feed. Both post the same shape to the same
+ * endpoint and differ only in which query the server re-runs, so a feed page
+ * gets the control it was missing without a second component drifting away from
+ * this one.
+ *
  * @param {{
- *   topic: string,
+ *   topic?: string|null,
+ *   feed?: string|null,
  *   group?: string|null,
  *   total: number,
  *   queued: number,
@@ -29,8 +35,19 @@ import { LANE_LABEL } from '../lib/queue.js';
  *   next: string,
  * }} props
  */
-export default function QueueAll({ topic, group = null, total, queued, lanes, next }) {
+export default function QueueAll({
+  topic = null,
+  feed = null,
+  group = null,
+  total,
+  queued,
+  lanes,
+  next,
+}) {
   if (total === 0) return null;
+
+  // Which playlist this is, and therefore which pair of actions it posts.
+  const scope = feed ? 'feed' : 'topic';
 
   // "All of it" rather than "every single one": a playlist whose entries are
   // already in the queue for other reasons should not offer to add them again.
@@ -46,8 +63,12 @@ export default function QueueAll({ topic, group = null, total, queued, lanes, ne
   return (
     <div className="queue-all">
       <form method="post" action="/api/queue" className="inline-form" data-soft>
-        <input type="hidden" name="action" value={all ? 'remove-topic' : 'add-topic'} />
-        <input type="hidden" name="topic" value={topic} />
+        <input type="hidden" name="action" value={`${all ? 'remove' : 'add'}-${scope}`} />
+        {feed ? (
+          <input type="hidden" name="slug" value={feed} />
+        ) : (
+          <input type="hidden" name="topic" value={topic} />
+        )}
         {group && <input type="hidden" name="group" value={group} />}
         <input type="hidden" name="next" value={next} />
         <button type="submit" className={`queue-button${all ? ' on' : ''}`} aria-pressed={all}>

@@ -4,7 +4,14 @@ import { q, alerts, queue, authors as people } from '@rssamplifier/db';
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { feedAdPlan } from '../../lib/feedAdPlan.js';
-import { lanesOffered, trackFor } from '../../lib/queue.js';
+import {
+  FEED_QUEUE_LIMIT,
+  alreadyQueued,
+  entryLanes,
+  lanesOffered,
+  playableEntries,
+  trackFor,
+} from '../../lib/queue.js';
 import { shareText } from '../../lib/share.js';
 import { feedCard, postThumb } from '../../lib/thumbs.js';
 import { feedAlternates } from '../../lib/subscribe.js';
@@ -16,6 +23,7 @@ import ListFilter from '../ListFilter.jsx';
 import { FILTER_FROM } from '../../lib/listFilter.js';
 import Freshness from '../Freshness.jsx';
 import PlayButton from '../PlayButton.jsx';
+import QueueAll from '../QueueAll.jsx';
 import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
 import SubscribeLinks from '../SubscribeLinks.jsx';
@@ -107,7 +115,7 @@ export default async function FeedPage({ params }) {
   if (!feed) notFound();
 
   const [posts, nav, topics, credited, feedLinks, user] = await Promise.all([
-    q.itemsForFeed(client, String(feed.id), 50),
+    q.itemsForFeed(client, String(feed.id), FEED_QUEUE_LIMIT),
     q.neighbours(client, String(feed.created_at)),
     q.keywordsForFeed(client, String(feed.id)),
     people.authorsForFeed(client, String(feed.id)),
@@ -133,6 +141,12 @@ export default async function FeedPage({ params }) {
         { following: false, alerts: false },
         /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({}),
       ];
+
+  // What "queue all" would act on, worked out from the posts already in hand
+  // rather than asked for separately. The endpoint runs this same function over
+  // this same query when the form comes back, which is what stops the number on
+  // the button and the rows it adds from ever being two different sets.
+  const playable = playableEntries(posts);
 
   // A blog page is the longest read on the site — up to fifty summaries — so it
   // is the one place a rectangle earns its keep, sat in the flow where somebody
@@ -355,6 +369,19 @@ export default async function FeedPage({ params }) {
       )}
 
       <h2>Latest {category.item}</h2>
+
+      {/* Above the list, on the same reasoning the topic player uses: somebody
+          who has decided to keep the whole show has decided that on the
+          strength of the blurb, and should not have to scroll fifty rows to act
+          on it. Renders nothing at all when the feed carries no files, which is
+          every blog — QueueAll returns null on a total of zero. */}
+      <QueueAll
+        feed={slug}
+        total={playable.length}
+        queued={alreadyQueued(playable, queued)}
+        lanes={entryLanes(playable)}
+        next={`/${slug}`}
+      />
 
       {/* An archive page can carry a hundred entries, and looking for one you
           half-remember the title of is the commonest thing to do with it. */}

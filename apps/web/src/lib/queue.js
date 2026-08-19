@@ -18,6 +18,70 @@ export const LANE_LABEL = { read: 'Read', listen: 'Listen', watch: 'Watch' };
 export const LANE_VERB = { read: 'Read later', listen: 'Listen later', watch: 'Watch later' };
 
 /**
+ * How much of a feed "Queue all" covers.
+ *
+ * The same slice the feed page draws, because the button names the feed rather
+ * than carrying its episodes — the endpoint re-runs the page's own query, so
+ * the two numbers have to agree or the button adds something the reader was
+ * never shown. Lives here rather than in either caller for the same reason
+ * PLAYLIST_LIMIT lives beside the topic river: it is a fact about the pair.
+ */
+export const FEED_QUEUE_LIMIT = 50;
+
+/**
+ * What "queue all" on a feed page acts on: its posts that carry a file.
+ *
+ * The one thing this function exists to guarantee is that the page and the
+ * endpoint agree. The button names the feed rather than carrying its episodes,
+ * so the server re-runs the page's query when the form comes back — and if the
+ * two sides filtered that result even slightly differently, the control would
+ * report one number and queue another. They call this instead.
+ *
+ * A blog is excluded rather than queued to Read. The control says "play all",
+ * and quietly filling somebody's reading queue with fifty essays is not what
+ * they pressed; a feed with nothing playable yields nothing, and QueueAll draws
+ * no button at all on a total of zero.
+ *
+ * @param {Array<{ id: unknown, audio_url?: unknown, audio_type?: unknown, url?: unknown }>} posts
+ * @returns {Array<{ itemId: string, lane: 'listen'|'watch' }>} newest first, as given
+ */
+export function playableEntries(posts) {
+  return posts
+    .map((post) => ({ itemId: String(post.id), lane: laneFor(post) }))
+    .filter((entry) => entry.lane !== 'read');
+}
+
+/**
+ * The lanes a set of entries lands in.
+ *
+ * Both are counted rather than assuming a feed is one kind of thing: a show
+ * that publishes episodes and the occasional video splits across two, and a
+ * reader told "queued" who then found nothing in the lane they were looking at
+ * would reasonably conclude the button was broken.
+ *
+ * @param {Array<{ lane: 'listen'|'watch' }>} entries
+ * @returns {('listen'|'watch')[]}
+ */
+export function entryLanes(entries) {
+  return [...new Set(entries.map((entry) => entry.lane))];
+}
+
+/**
+ * How many of these the reader already has lined up, in the lane they'd land in.
+ *
+ * Judged per lane rather than per item, because an episode kept in Read is not
+ * the same intention as one kept in Listen — counting it would make "queue all"
+ * claim to be done when pressing it would still add something.
+ *
+ * @param {Array<{ itemId: string, lane: 'listen'|'watch' }>} entries
+ * @param {Record<string, ('read'|'listen'|'watch')[]>} queued
+ * @returns {number}
+ */
+export function alreadyQueued(entries, queued) {
+  return entries.filter((entry) => (queued[entry.itemId] ?? []).includes(entry.lane)).length;
+}
+
+/**
  * The lane a post belongs in if nobody says otherwise.
  *
  * Read off the enclosure, which is the publisher saying what they published —
