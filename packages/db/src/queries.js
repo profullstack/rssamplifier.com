@@ -1398,8 +1398,17 @@ export async function jobBacklogs(db) {
 
     // A short range read off feeds_created_idx: an hour of submissions is a
     // handful of rows however large the directory gets.
+    //
+    // `indexed by` because the planner does not agree, and gets it badly wrong.
+    // **This database has never been ANALYZEd** -- there is no `sqlite_stat1` --
+    // so SQLite falls back to its built-in guess that an equality test beats a
+    // range test, picks `feeds_status_success_idx (status=?)`, and visits every
+    // `pending` row to check its `created_at`. `pending` is 330k of 444k rows.
+    // Measured: 17,722ms this way, 654ms forced onto the range, and the same
+    // 5,954 rows come back either way.
     db.execute({
-      sql: `select count(*) as n from feeds where created_at >= ? and status = 'pending'`,
+      sql: `select count(*) as n from feeds indexed by feeds_created_idx
+             where created_at >= ? and status = 'pending'`,
       args: [hourAgo],
     }),
 
@@ -1417,10 +1426,16 @@ export async function jobBacklogs(db) {
     // for the reason this whole function exists: 3,275 of 369,056 feeds carry a
     // stamp, so this touches a few thousand index entries, while asking for the
     // complement would visit every row. The backlog is arithmetic afterwards.
+    //
+    // `indexed by` for the same reason as `submitted` above, and it costs even
+    // more here: unforced the planner seeks `status='active'` (109k rows) on
+    // `feeds_status_success_idx` and reads `authors_checked_at` off each one,
+    // when the partial index *is* keyed by exactly the column being counted and
+    // filtered. Measured: 16,067ms unforced, 119ms forced -- 135x, same answer.
     db.execute({
       sql: `select count(*) as n,
                    sum(case when authors_checked_at >= ? then 1 else 0 end) as hour
-            from feeds
+            from feeds indexed by feeds_authors_due_idx
            where status = 'active' and authors_checked_at is not null`,
       args: [hourAgo],
     }),
