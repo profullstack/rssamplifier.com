@@ -561,6 +561,8 @@ log('started', {
   clusterBackfill,
   cardBatch: cardEnabled ? cardBatch : 0,
   authorBatch: authorEnabled ? authorBatch : 0,
+  crawlAutocommit: ['1', 'true'].includes(String(env['TURSO_CRAWL_AUTOCOMMIT'] ?? '').toLowerCase()),
+  auxiliaryWrites: !['0', 'false'].includes(String(env['CRAWL_AUXILIARY_WRITES'] ?? '').toLowerCase()),
   // Said out loud on boot, because a deployment missing the VAPID pair looks
   // exactly like one where nobody has switched browser alerts on — and the two
   // are a config change apart.
