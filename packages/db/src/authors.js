@@ -812,3 +812,108 @@ export async function postsByAuthor(db, feedIds, limit = 12) {
 
   return rows;
 }
+
+/* ------------------------------------------------------------------ *
+ * Bought searches
+ * ------------------------------------------------------------------ */
+
+/**
+ * The people it would be worth buying a search for.
+ *
+ * The gate is mean because the budget is small. What it selects for is the
+ * person we are confident *is* a person, who writes here, and whom nobody can
+ * currently contact — which is the only case where a paid query buys something
+ * the free sources could not.
+ *
+ * Ordered by how much they publish, so a limited budget is spent on the
+ * publishers a reader is most likely to want to reach.
+ *
+ * Anyone searched for already is excluded outright rather than re-searched on a
+ * schedule: a second query for somebody the web did not know about the first
+ * time is the easiest way to spend a month's credits on nothing.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @param {number} [minConfidence] the floor the caller publishes at
+ * @returns {Promise<object[]>}
+ */
+export async function authorsWithoutContact(db, limit = 10, minConfidence = 0.8) {
+  const { rows } = await db.execute({
+    sql: `select a.id, a.slug, a.name, a.site_url as site, a.confidence,
+                 count(distinct fa.feed_id) as feed_count
+            from authors a
+            join feed_authors fa on fa.author_id = a.id
+           where a.confidence >= ?
+             and not exists (select 1 from author_links l where l.author_id = a.id)
+             and not exists (select 1 from author_searches s where s.author_id = a.id)
+             -- A single word is not a searchable name: it returns the world.
+             and instr(trim(a.name), ' ') > 0
+           group by a.id
+           order by feed_count desc, a.confidence desc
+           limit ?`,
+    args: [minConfidence, limit],
+  });
+
+  return rows;
+}
+
+/**
+ * Write down what a search cost, whether or not it found anything.
+ *
+ * @param {Client} db
+ * @param {{ authorId: string|null, queries: number, found: number }} spend
+ * @returns {Promise<void>}
+ */
+export async function recordAuthorSearch(db, spend) {
+  await db.execute({
+    sql: `insert into author_searches (id, author_id, at, queries, found)
+          values (?, ?, ?, ?, ?)`,
+    args: [
+      newId(),
+      spend.authorId ?? null,
+      nowIso(),
+      Math.max(0, Math.floor(Number(spend.queries) || 0)),
+      Math.max(0, Math.floor(Number(spend.found) || 0)),
+    ],
+  });
+}
+
+/**
+ * Credits spent since a moment, which is how much of the budget is gone.
+ *
+ * @param {Client} db
+ * @param {string} since ISO 8601
+ * @returns {Promise<number>}
+ */
+export async function searchSpendSince(db, since) {
+  const { rows } = await db.execute({
+    sql: 'select coalesce(sum(queries), 0) as spent from author_searches where at >= ?',
+    args: [String(since)],
+  });
+
+  return Number(rows[0]?.spent ?? 0);
+}
+
+/**
+ * The start of the current billing period.
+ *
+ * The provider's month does not begin on the first: ValueSERP resets this
+ * account's allowance on the **13th**, so a budget counted per calendar month
+ * would let the allowance be spent twice across a reset and refuse spending
+ * that is actually available just after one.
+ *
+ * @param {Date} [now]
+ * @param {number} [resetDay]
+ * @returns {string} ISO 8601
+ */
+export function billingPeriodStart(now = new Date(), resetDay = 13) {
+  const at = new Date(now.getTime());
+  const start = new Date(
+    Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), resetDay, 0, 0, 0, 0),
+  );
+
+  // Before this month's reset day, the period began last month.
+  if (at.getTime() < start.getTime()) start.setUTCMonth(start.getUTCMonth() - 1);
+
+  return start.toISOString();
+}

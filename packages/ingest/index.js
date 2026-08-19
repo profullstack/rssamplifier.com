@@ -32,3 +32,10 @@ export {
   enrichFeedAuthors,
   storeCredits,
 } from './src/enrich.js';
+export {
+  linksFromSearch,
+  searchDue,
+  searchForAuthor,
+  searchesFor,
+  worthSearching,
+} from './src/websearch.js';
