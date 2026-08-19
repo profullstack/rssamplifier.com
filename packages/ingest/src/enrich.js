@@ -351,61 +351,196 @@ export async function enrichFeedAuthors(db, feed, opts = {}) {
 }
 
 /**
+ * How many publishers are enriched at once.
+ *
+ * Distinct publishers, never the same one twice — see `enrichDue`. Lower than
+ * the crawl's pool because each unit here is several fetches rather than one,
+ * so six workers already have more sockets open than the crawler's eight.
+ */
+export const ENRICH_CONCURRENCY_DEFAULT = 6;
+
+/**
+ * How many rows to read before choosing a batch from them, so the spread has
+ * something to choose from. The crawl's reasoning exactly, at the crawl's cost:
+ * one indexed read either way.
+ */
+const OVERREAD = 3;
+
+/**
+ * How many feeds on one host may enter a single batch.
+ *
+ * A host's feeds are enriched strictly in series, so a batch that is mostly one
+ * host has a floor on its wall-clock no amount of concurrency can lift — and
+ * this hurts here more than it does in the crawl, because one unit of work is
+ * three or four fetches rather than one.
+ */
+const PER_HOST = 3;
+
+/**
  * Run the enrichment pass over the feeds that are due for one.
  *
- * Sequential, unlike the crawl. The crawl parallelises by host because it is
- * fetching thousands of distinct domains and the throughput matters; this
- * fetches three or four pages from the *same* host per feed, so running feeds
- * concurrently would mean hitting one person's blog four times at once. A
- * directory that wants people to publish `rel="me"` links should not be the
- * reason their server falls over.
+ * Concurrent across publishers, strictly serial within one — which is the same
+ * guarantee this made when it ran the whole batch in series, arrived at the way
+ * the crawl arrives at it.
+ *
+ * The original reasoning was sound and is worth keeping straight, because it is
+ * only half a reason to be sequential: enriching one feed means three or four
+ * fetches of the *same* host, so those must not overlap, or a directory that
+ * asks people to publish `rel="me"` becomes the reason their server falls over.
+ * That argument covers the pages of one site. It never covered two unrelated
+ * blogs, and running those in series is what made this the slowest thing in the
+ * daemon by an order of magnitude: measured in production, a batch of five took
+ * minutes rather than the tick's sixty seconds, and because the poller skips a
+ * tick while one is still running, the directory was being walked at roughly an
+ * eighth of its configured rate — 1,536 feeds of 369,054 in two days.
+ *
+ * So the work is grouped into one queue per host and the queues are handed to a
+ * small pool, exactly as `crawlDue` does. One host is one worker's problem from
+ * start to finish, so no publisher ever sees two requests at once; unrelated
+ * publishers no longer wait behind each other.
+ *
+ * Grouped on the host that will actually be *fetched* — the site — rather than
+ * the feed's, because those differ often enough to matter: a blog on its own
+ * domain with a feed proxied through a platform would otherwise be filed under
+ * the platform, and every such blog would end up in one queue.
  *
  * @param {Client} db
  * @param {number} [batchSize]
  * @param {{ verify?: boolean, recheckDays?: number, onEvent?: ((event: object) => void)|null,
- *   fetch?: typeof safeFetch, resolve?: typeof resolveFeed }} [opts]
- * @returns {Promise<{ feeds: number, people: number, links: number }>}
+ *   concurrency?: number, fetch?: typeof safeFetch, resolve?: typeof resolveFeed }} [opts]
+ * @returns {Promise<{ feeds: number, people: number, links: number, hosts: number }>}
  */
 export async function enrichDue(db, batchSize = 10, opts = {}) {
   const recheckDays = Number(opts.recheckDays ?? 90);
   const recheckBefore = new Date(Date.now() - recheckDays * 86_400_000).toISOString();
 
-  const due = await a.dueForAuthors(db, batchSize, recheckBefore);
-  if (due.length === 0) return { feeds: 0, people: 0, links: 0, feedLinks: 0 };
+  const pool = await a.dueForAuthors(db, batchSize * OVERREAD, recheckBefore);
+  if (pool.length === 0) return { feeds: 0, people: 0, links: 0, feedLinks: 0, hosts: 0 };
+
+  const queues = enrichQueues(pool, batchSize);
 
   let feeds = 0;
   let people = 0;
   let links = 0;
   let feedLinks = 0;
+  let next = 0;
 
-  for (const feed of due) {
-    const started = Date.now();
+  const worker = async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= queues.length) return;
 
-    // One site that throws must not cost the batch the feeds behind it, and
-    // must not leave the feed unstamped — an unstamped feed is picked up
-    // first next tick, so a permanently broken one would block the queue.
+      for (const feed of queues[index]) {
+        const started = Date.now();
+
+        // One site that throws must not cost the batch the feeds behind it, and
+        // must not leave the feed unstamped — an unstamped feed is picked up
+        // first next tick, so a permanently broken one would block the queue.
+        try {
+          const result = await enrichFeedAuthors(db, feed, {
+            verify: opts.verify,
+            fetch: opts.fetch,
+            resolve: opts.resolve,
+          });
+          feeds += 1;
+          people += result.people;
+          links += result.links;
+          feedLinks += result.feedLinks ?? 0;
+          report(opts.onEvent, feed, started, { ok: true, amount: result.people, detail: null });
+        } catch (err) {
+          await a.markAuthorsChecked(db, String(feed.id)).catch(() => {});
+          report(opts.onEvent, feed, started, {
+            ok: false,
+            amount: null,
+            detail: String(err?.message ?? err),
+          });
+        }
+      }
+    }
+  };
+
+  const wanted =
+    Number(opts.concurrency) > 0 ? Number(opts.concurrency) : ENRICH_CONCURRENCY_DEFAULT;
+  const workers = Math.max(1, Math.min(wanted, queues.length));
+  await Promise.all(Array.from({ length: workers }, worker));
+
+  // `hosts` is what says whether the spread is working: a batch that is four
+  // hosts cannot go faster than its biggest queue however many workers are
+  // pointed at it, and the number is otherwise invisible from outside.
+  return { feeds, people, links, feedLinks, hosts: queues.length };
+}
+
+/**
+ * Choose a batch spread across publishers, and hand back one queue per host.
+ *
+ * Longest queue first, because whichever host is heaviest in this batch is the
+ * one that decides when the batch ends and so must start at the beginning of
+ * it.
+ *
+ * @param {object[]} pool candidate rows, already in due order
+ * @param {number} batchSize
+ * @returns {Array<Array<object>>}
+ */
+function enrichQueues(pool, batchSize) {
+  const byHost = new Map();
+  const overflow = [];
+
+  // First pass: up to `PER_HOST` from each host, in the order they came due.
+  for (const feed of pool) {
+    const host = enrichHost(feed);
+    const queue = byHost.get(host);
+
+    if (!queue) byHost.set(host, [feed]);
+    else if (queue.length < PER_HOST) queue.push(feed);
+    else overflow.push(feed);
+  }
+
+  // Second pass, and the one that keeps a monolithic due set moving at the rate
+  // it moved before: when a bulk import comes due together the whole batch is
+  // legitimately one host, and throttling that to `PER_HOST` would stall it.
+  let taken = [...byHost.values()].reduce((n, q) => n + q.length, 0);
+  for (const feed of overflow) {
+    if (taken >= batchSize) break;
+    byHost.get(enrichHost(feed)).push(feed);
+    taken += 1;
+  }
+
+  // Trim to the batch the caller asked for, cheapest queues last so the trim
+  // takes from the tail rather than from the host that sets the wall-clock.
+  const queues = [...byHost.values()].sort((x, y) => y.length - x.length);
+  const out = [];
+  let budget = batchSize;
+
+  for (const queue of queues) {
+    if (budget <= 0) break;
+    out.push(queue.slice(0, budget));
+    budget -= Math.min(queue.length, budget);
+  }
+
+  return out;
+}
+
+/**
+ * The host enrichment will actually ask for: the site, or the feed's origin
+ * when no site was published — which is the same fallback `enrichFeedAuthors`
+ * makes, so the grouping matches the fetching.
+ *
+ * @param {{ site_url?: unknown, feed_url?: unknown }} feed
+ * @returns {string}
+ */
+function enrichHost(feed) {
+  for (const candidate of [feed.site_url, feed.feed_url]) {
     try {
-      const result = await enrichFeedAuthors(db, feed, {
-        verify: opts.verify,
-        fetch: opts.fetch,
-        resolve: opts.resolve,
-      });
-      feeds += 1;
-      people += result.people;
-      links += result.links;
-      feedLinks += result.feedLinks ?? 0;
-      report(opts.onEvent, feed, started, { ok: true, amount: result.people, detail: null });
-    } catch (err) {
-      await a.markAuthorsChecked(db, String(feed.id)).catch(() => {});
-      report(opts.onEvent, feed, started, {
-        ok: false,
-        amount: null,
-        detail: String(err?.message ?? err),
-      });
+      return new URL(String(candidate)).hostname.toLowerCase();
+    } catch {
+      /* try the next one */
     }
   }
 
-  return { feeds, people, links, feedLinks };
+  // Unparseable rows get their own bucket keyed by the raw string, so one bad
+  // row is rejected individually rather than blocking a real host's queue.
+  return String(feed.feed_url ?? feed.site_url ?? '');
 }
 
 /**
