@@ -1701,6 +1701,108 @@ export async function recordCrawlHour(db, counts, at = nowIso()) {
 }
 
 /**
+ * Write down how much work is waiting, into this hour's bucket.
+ *
+ * Overwrites rather than accumulating, and that is the whole difference between
+ * this and `recordCrawlHour`: these are gauges. Two samples in one hour are not
+ * two hundred waiting feeds plus two hundred more, they are the same queue
+ * looked at twice, and the later look is the one worth keeping.
+ *
+ * @param {Client} db
+ * @param {{ due?: number, firstCrawl?: number, cards?: number, authors?: number }} depths
+ * @param {string} [at] ISO timestamp deciding the bucket; defaults to now
+ * @returns {Promise<void>}
+ */
+export async function recordQueueHour(db, depths, at = nowIso()) {
+  await db.execute({
+    sql: `insert into queue_hourly (hour, at, due, first_crawl, cards, authors)
+          values (?, ?, ?, ?, ?, ?)
+          on conflict (hour) do update set
+            at          = excluded.at,
+            due         = excluded.due,
+            first_crawl = excluded.first_crawl,
+            cards       = excluded.cards,
+            authors     = excluded.authors`,
+    args: [
+      at.slice(0, 13),
+      at,
+      Number(depths.due ?? 0),
+      Number(depths.firstCrawl ?? 0),
+      Number(depths.cards ?? 0),
+      Number(depths.authors ?? 0),
+    ],
+  });
+}
+
+/**
+ * How many feeds have never been looked at for an author.
+ *
+ * Counted by its complement, because the set is very nearly the whole directory
+ * — 367,518 of 369,054 when this was written — and counting a near-total set
+ * directly means visiting almost every row. The checked side is small and sits
+ * on the partial index 0024 added, so both halves are cheap.
+ *
+ * @param {Client} db
+ * @returns {Promise<number>}
+ */
+export async function countAuthorQueue(db) {
+  const [active, checked] = await Promise.all([
+    db.execute(`select count(*) as n from feeds where status = 'active'`),
+    db.execute(
+      `select count(*) as n from feeds where status = 'active' and authors_checked_at is not null`,
+    ),
+  ]);
+
+  return Math.max(0, Number(active.rows[0]?.n ?? 0) - Number(checked.rows[0]?.n ?? 0));
+}
+
+/**
+ * Drop queue samples older than the charts can show.
+ *
+ * @param {Client} db
+ * @param {number} [days]
+ * @returns {Promise<number>} rows removed
+ */
+export async function pruneQueueHours(db, days = 90) {
+  const { rowsAffected } = await db.execute({
+    sql: 'delete from queue_hourly where hour < ?',
+    args: [nowIso(-days * 86_400_000).slice(0, 13)],
+  });
+  return Number(rowsAffected ?? 0);
+}
+
+/**
+ * Every queue's depth hour by hour, ready to plot.
+ *
+ * Sparse on purpose, unlike the throughput series. A missing hour here means
+ * nobody took a sample, and a burndown that interpolates across an outage
+ * invents a descent that never happened — so the gap is returned as a gap and
+ * the chart draws it as one.
+ *
+ * @param {Client} db
+ * @param {number} [hours]
+ * @returns {Promise<Array<{ hour: string, at: string, due: number, firstCrawl: number, cards: number, authors: number }>>}
+ */
+export async function queueHistory(db, hours = 48) {
+  const { rows } = await db.execute({
+    sql: `select hour, at, due, first_crawl, cards, authors
+            from queue_hourly
+           where hour >= ?
+           order by hour asc`,
+    args: [nowIso(-hours * 3_600_000).slice(0, 13)],
+  });
+
+  return rows.map((r) => ({
+    hour: String(r.hour),
+    at: String(r.at),
+    due: Number(r.due ?? 0),
+    firstCrawl: Number(r.first_crawl ?? 0),
+    cards: Number(r.cards ?? 0),
+    authors: Number(r.authors ?? 0),
+  }));
+}
+
+/**
  * Drop rollup rows older than the charts can show.
  *
  * @param {Client} db

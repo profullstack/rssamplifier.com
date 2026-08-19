@@ -1,13 +1,25 @@
 import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
-import { categoryStats, indexingHistory, jobBacklogs, GROWTH_DAYS } from '../../lib/crawlstats.js';
+import {
+  categoryStats,
+  indexingHistory,
+  jobBacklogs,
+  queueHistory,
+  GROWTH_DAYS,
+} from '../../lib/crawlstats.js';
 import { describe, toLine } from '../../lib/crawlLog.js';
 import { etaLabel, jobRows } from '../../lib/jobs.js';
 import AutoRefresh from '../AutoRefresh.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
 import Toolbar from '../Toolbar.jsx';
-import { GrowthChart, IndexingChart, Sparkline, ThroughputChart } from './Charts.jsx';
+import {
+  GrowthChart,
+  IndexingChart,
+  QueueBurndown,
+  Sparkline,
+  ThroughputChart,
+} from './Charts.jsx';
 import CrawlLog from './CrawlLog.jsx';
 import ErrorBrowser, { ErrorBrowserButton } from './ErrorBrowser.jsx';
 
@@ -48,6 +60,7 @@ export default async function CrawlStatsPage() {
     activity,
     alertAccounts,
     operationalErrors,
+    queues,
   ] = await Promise.all([
     q.crawlStats(client),
     q.failingFeeds(client, 50),
@@ -81,6 +94,10 @@ export default async function CrawlStatsPage() {
     // Kept separately from the rolling live-log window. At crawler throughput,
     // 400 successful feed lines can evict an operational failure in minutes.
     q.crawlOperationalErrors(client, { limit: 20, hours: 24 }),
+    // Sampled by the poller rather than counted here: these are the same
+    // expensive counts the jobs board caches, and the chart wants them as a
+    // history anyway.
+    queueHistory(),
   ]);
 
   const jobs = jobRows({
@@ -95,6 +112,38 @@ export default async function CrawlStatsPage() {
     candidateQueue: discoveryQueue,
     alertAccounts,
   });
+
+  // Only the queues that live on `feeds`, which are the ones the poller can
+  // sample cheaply enough to write down every ten minutes. Keyword and
+  // candidate depths are on the jobs board above but not here: they are read
+  // from the discovery tables, they move in steps rather than slopes, and a
+  // burndown of a number that is usually zero is a flat line.
+  const burndownQueues = [
+    {
+      key: 'due',
+      label: 'Feed updates',
+      what: 'Overdue for a re-read. Meant to be deep — read the slope, not the height.',
+      values: queues.series.due ?? [],
+    },
+    {
+      key: 'first-crawl',
+      label: 'First crawls',
+      what: 'Imported or discovered, never yet read. This one should trend to zero.',
+      values: queues.series.firstCrawl ?? [],
+    },
+    {
+      key: 'authors',
+      label: 'Author walk',
+      what: 'Sites never looked at for who writes them. The longest queue by far.',
+      values: queues.series.authors ?? [],
+    },
+    {
+      key: 'cards',
+      label: 'Feed pictures',
+      what: 'Feeds with no card image yet.',
+      values: queues.series.cards ?? [],
+    },
+  ];
 
   // The whole directory's curve is the categories' curves added up, which is
   // one array of thirty numbers rather than a seventh query for a total the
@@ -242,6 +291,12 @@ export default async function CrawlStatsPage() {
           ))}
         </tbody>
       </table>
+
+      {/* The table above says how deep each queue is; this says which way it is
+          going, which is the half a count cannot carry. A backlog of twelve
+          thousand is a crawler falling behind or one halfway through catching
+          up, and those are opposite emergencies. */}
+      <QueueBurndown hours={queues.hours} queues={burndownQueues} />
 
       <h2 id="daemon-errors">Daemon errors (24h)</h2>
       <p>
