@@ -23,8 +23,55 @@ export function connect(opts = {}) {
   if (!url) throw new Error('TURSO_DATABASE_URL must be set');
 
   return serializeWrites(
-    createClient(url.startsWith('file:') ? { url } : { url, authToken }),
+    createClient(
+      url.startsWith('file:') ? { url } : { url, authToken, fetch: withTimeout(requestTimeoutMs()) },
+    ),
   );
+}
+
+/**
+ * How long any single request to the database may take before it is abandoned.
+ *
+ * The default is undici's, which is **five minutes**, and five minutes is not a
+ * timeout — it is a promise that one wedged request will hold a crawl worker
+ * for the rest of the tick. Measured after write serialisation landed: per-feed
+ * p50 was 5.3 seconds while p90 was 301 seconds, and the p90 is entirely this
+ * ceiling. Twelve ticks an hour of twenty-five feeds each should have taken
+ * forty-five seconds a tick and took five minutes, because a handful of
+ * stragglers each ate a worker for three hundred seconds.
+ *
+ * Thirty seconds is deliberately generous rather than tight. With writes
+ * serialised in-process a real transaction commits in one to two seconds, so
+ * anything still outstanding at thirty has not been queued, it has been lost —
+ * and the feed is better retried on its own schedule than waited on.
+ *
+ * @returns {number} milliseconds
+ */
+function requestTimeoutMs() {
+  const raw = Number(process.env['TURSO_REQUEST_TIMEOUT_MS']);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+}
+
+/**
+ * `fetch` with a deadline, for libSQL to make its requests through.
+ *
+ * An AbortSignal rather than a shorter undici setting, because the timeout has
+ * to apply to the whole request — headers *and* body — and it has to be one
+ * this code owns rather than one the runtime picks.
+ *
+ * A caller's own signal is respected as well as the deadline: whichever fires
+ * first wins, so this cannot quietly extend the life of a request something
+ * else has already given up on.
+ *
+ * @param {number} ms
+ * @returns {typeof fetch}
+ */
+export function withTimeout(ms) {
+  return (input, init = {}) => {
+    const deadline = AbortSignal.timeout(ms);
+    const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    return fetch(input, { ...init, signal });
+  };
 }
 
 /**
