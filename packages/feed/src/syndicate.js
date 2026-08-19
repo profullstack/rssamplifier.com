@@ -128,26 +128,64 @@ export const AD_EVERY = 10;
 export const AD_MAX = 3;
 
 /**
+ * Where the sponsored items go, as indexes to insert *after*.
+ *
+ * One function rather than two, because the count and the placement have to
+ * agree exactly: every ad fetched costs an impression the moment the ad network
+ * records it, so an ad counted and then not placed is reach an advertiser paid
+ * for and nobody got. `adSlotsFor` is this list's length, and `interleaveAds`
+ * walks this list — neither re-derives the rule.
+ *
+ * **The last slot steps back rather than being dropped.** A feed of exactly ten
+ * items has its only boundary at the very end, and an ad may never trail a
+ * document, so the first version of this dropped it and served no ad at all.
+ * That was not an edge case: **32,114 of the directory's 83,940 feeds with
+ * items carry exactly ten** — the number an RSS document conventionally holds —
+ * so 38% of the per-listing feeds were unsellable by arithmetic alone. Moving
+ * that ad one post earlier keeps both rules a reader can feel (nine real posts
+ * before the first ad, a real post after the last) and costs nothing.
+ *
+ * A list shorter than one full interval still gets nothing. A six-post feed
+ * cannot carry an ad without the ad becoming the feed, and the same rule
+ * governs the web units (see apps/web/src/lib/ads.js).
+ *
+ * @param {number} total how many real items the document will carry
+ * @param {{ every?: number, max?: number }} [opts]
+ * @returns {number[]} ascending item indexes, each meaning "an ad follows this"
+ */
+export function adPositions(total, { every = AD_EVERY, max = AD_MAX } = {}) {
+  const n = Number(total) || 0;
+  const gap = Math.max(1, Math.floor(Number(every) || AD_EVERY));
+  const cap = Math.max(0, Math.floor(Number(max) ?? AD_MAX));
+  if (n < gap || cap === 0) return [];
+
+  const out = [];
+
+  for (let i = gap - 1; i < n && out.length < cap; i += gap) {
+    // Never trailing: an ad as the last entry reads as the feed having ended in
+    // an advertisement. Step back one post instead of skipping the slot.
+    const at = i + 1 < n ? i : i - 1;
+    // Stepping back cannot land on or before the previous ad — that would put
+    // two sponsored items next to each other, which is worse than one fewer.
+    if (at < 0 || (out.length > 0 && at <= out[out.length - 1])) break;
+    out.push(at);
+  }
+
+  return out;
+}
+
+/**
  * How many sponsored items a list of this length will actually take.
  *
  * Exported because the caller has to decide how many ads to *fetch* before it
- * can interleave them, and every fetched ad costs an impression the moment the
- * ad network records it. If the two disagreed, the difference would be metered
- * against an advertiser and then never published — the caller would pay for
- * reach nobody got. So the count lives here, next to the placement rule it has
- * to match, rather than being re-derived at each call site.
+ * can interleave them. See `adPositions` for why the two must not disagree.
  *
  * @param {number} total how many real items the document will carry
  * @param {{ every?: number, max?: number }} [opts]
  * @returns {number}
  */
-export function adSlotsFor(total, { every = AD_EVERY, max = AD_MAX } = {}) {
-  const n = Number(total) || 0;
-  if (n < every) return 0;
-  // Boundaries strictly inside the list: the last one is dropped when it would
-  // land at the end, for the same reason interleaveAds refuses to trail.
-  const boundaries = Math.ceil(n / every) - 1;
-  return Math.max(0, Math.min(max, boundaries));
+export function adSlotsFor(total, opts) {
+  return adPositions(total, opts).length;
 }
 
 /**
@@ -174,28 +212,29 @@ export function adSlotsFor(total, { every = AD_EVERY, max = AD_MAX } = {}) {
  * has already stored the item keeps whatever date it first saw, and one that
  * has not gets an item that sorts where we intended.
  *
- * A list shorter than one full interval gets nothing. A six-post feed cannot
- * carry an ad without the ad becoming the feed, and the same rule already
- * governs the web units (see apps/web/src/lib/ads.js).
+ * Which items an ad follows is `adPositions`' decision, not this function's —
+ * including the short-list rule, and the one that steps the final ad back from
+ * the end of the document rather than dropping it.
  *
  * @param {Item[]} items the real posts, in the order they should appear
  * @param {Item[]} ads sponsored items, already in Item shape
  * @param {{ every?: number, max?: number }} [opts]
  * @returns {Item[]} one list, ads interleaved
  */
-export function interleaveAds(items, ads, { every = AD_EVERY, max = AD_MAX } = {}) {
+export function interleaveAds(items, ads, opts) {
   if (!Array.isArray(ads) || ads.length === 0) return items;
-  if (items.length < every) return items;
+
+  // Only as many slots as there are ads to fill them. Trimming the tail rather
+  // than the head matters: the first slot is the one most readers reach.
+  const at = new Set(adPositions(items.length, opts).slice(0, ads.length));
+  if (at.size === 0) return items;
 
   const out = [];
   let placed = 0;
 
   for (let i = 0; i < items.length; i += 1) {
     out.push(items[i]);
-    // Never trailing: an ad as the last entry of a feed reads as the feed
-    // having ended in an advertisement, and costs the slot nothing to skip.
-    const boundary = (i + 1) % every === 0 && i + 1 < items.length;
-    if (boundary && placed < max && placed < ads.length) {
+    if (at.has(i)) {
       out.push(datedAfter(ads[placed], items[i]));
       placed += 1;
     }

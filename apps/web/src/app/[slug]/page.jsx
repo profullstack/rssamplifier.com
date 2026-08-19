@@ -1,10 +1,9 @@
 import { notFound } from 'next/navigation';
 import { q, alerts, queue, authors as people } from '@rssamplifier/db';
-import { AD_EVERY, AD_MAX } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
-import { adPlan } from '../../lib/ads.js';
+import { feedAdPlan } from '../../lib/feedAdPlan.js';
 import { lanesOffered, trackFor } from '../../lib/queue.js';
 import { shareText } from '../../lib/share.js';
 import { feedCard, postThumb } from '../../lib/thumbs.js';
@@ -141,13 +140,14 @@ export default async function FeedPage({ params }) {
   // so it never becomes a column of boxes, and none at all on a blog with only
   // a handful of entries.
   //
-  // One in ten, which is the same cadence the syndicated documents use (AD_EVERY
-  // and AD_MAX in @rssamplifier/feed). It was one in twelve starting at the
-  // fourth post, and there was no reason for the difference beyond the two
-  // having been written at different times — a reader who meets an ad after ten
-  // posts in the feed and after four on the page is being told two different
-  // things about how heavily this site advertises.
-  const ads = adPlan(posts.length, { first: AD_EVERY - 1, every: AD_EVERY, max: AD_MAX });
+  // One in ten, which is not merely the same number the syndicated documents
+  // use but the same function: feedAdPlan asks @rssamplifier/feed's adPositions
+  // where the ads go, so /phoenix-fm and /phoenix-fm.rss place them after the
+  // same posts. Restating the cadence here is what let the two drift before —
+  // it was one in twelve starting at the fourth post, and a reader who meets an
+  // ad after four posts on the page and after ten in the feed is being told two
+  // different things about how heavily this site advertises.
+  const ads = feedAdPlan(posts.length);
 
   const podcast = feed.category === 'podcast';
 
