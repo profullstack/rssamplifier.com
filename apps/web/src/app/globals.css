@@ -2565,11 +2565,26 @@ select {
   font-size: 0.7rem;
   color: var(--accent);
   margin-top: 0.3rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
 }
 
-a.job-errors:hover,
-a.job-errors:focus-visible {
+.job-errors:hover,
+.job-errors:focus-visible {
   text-decoration: underline;
+}
+
+.error-count-button {
+  border: 0;
+  background: transparent;
+  color: var(--link, var(--accent));
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .crawl-error {
