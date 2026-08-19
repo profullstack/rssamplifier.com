@@ -2,6 +2,7 @@ import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { categoryStats, indexingHistory } from '../../../lib/crawlstats.js';
+import { toLine } from '../../../lib/crawlLog.js';
 import { jobRows } from '../../../lib/jobs.js';
 
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,7 @@ export async function GET() {
     backlogs,
     activity,
     alertAccounts,
+    operationalErrors,
   ] = await Promise.all([
     q.crawlStats(client),
     q.failingFeeds(client, 20),
@@ -46,6 +48,7 @@ export async function GET() {
     // See the page: this only tells a sender with nobody to serve from one that
     // has stopped, which the log alone cannot say.
     alerts.alertingAccountCount(client),
+    q.crawlOperationalErrors(client, { limit: 20, hours: 24 }),
   ]);
 
   const jobs = jobRows({
@@ -84,6 +87,10 @@ export async function GET() {
           clearsInHours: job.eta == null ? null : Math.round(job.eta * 10) / 10,
           lastRanAt: job.lastAt,
         })),
+        // Daemon/background failures are separate from per-feed failures. A
+        // monitor should not have to tail a rolling stream to learn that the
+        // database writer or a maintenance job is timing out.
+        operationalErrors: operationalErrors.map(toLine),
         // What the directory holds, and how that has moved. `growth` is
         // cumulative and aligned to `days`, so the two zip into a series
         // without the caller having to reconstruct anything.

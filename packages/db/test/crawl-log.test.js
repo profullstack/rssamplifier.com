@@ -21,6 +21,29 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+test('a log flush is one autocommit statement, not a write transaction', async () => {
+  const calls = [];
+  const client = {
+    execute: async (statement) => {
+      calls.push(statement);
+      return { rowsAffected: 2 };
+    },
+    batch: async () => {
+      throw new Error('the log must not join the throttled transaction queue');
+    },
+  };
+
+  const written = await q.appendCrawlLog(client, [
+    { event: 'crawl-error', status: 'error', detail: 'timeout' },
+    { event: 'crawl', detail: '{"crawled":25}' },
+  ]);
+
+  assert.equal(written, 2);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /values \(\?, \?, \?, \?, \?, \?, \?, \?\), \(\?, \?, \?, \?, \?, \?, \?, \?\)/);
+  assert.equal(calls[0].args.length, 16);
+});
+
 test('a line keeps the fields a reader needs and nothing is invented', async () => {
   const written = await q.appendCrawlLog(db, [
     {
@@ -90,6 +113,24 @@ test('the tail is the newest lines, oldest first', async () => {
     all.slice(-2).map((r) => Number(r.id)),
     'the limit takes the end of the log, and the log still reads downwards',
   );
+});
+
+test('operational errors survive outside the rolling feed log', async () => {
+  await q.appendCrawlLog(db, [
+    { event: 'feed', status: 'error', subject: 'broken.example', detail: 'http-500' },
+    { event: 'crawl-error', status: 'error', detail: 'database timed out' },
+    { event: 'cluster-backfill-error', status: 'error', detail: 'database is locked' },
+    { event: 'crawl', detail: '{"crawled":25}' },
+  ]);
+
+  const errors = await q.crawlOperationalErrors(db, { limit: 10, hours: 1 });
+
+  assert.deepEqual(
+    errors.slice(0, 2).map((row) => String(row.event)),
+    ['cluster-backfill-error', 'crawl-error'],
+    'newest first, without ordinary per-feed failures',
+  );
+  assert.ok(errors.every((row) => row.status === 'error'));
 });
 
 test('a line with no event is not a line', async () => {

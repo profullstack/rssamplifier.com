@@ -1666,9 +1666,16 @@ export async function indexingHistory(db, hours = 48) {
 /**
  * Write lines to the crawler's log.
  *
- * One batch per call, because the poller buffers a couple of seconds of lines
- * and hands them over together: a crawl batch produces twenty-five of these and
- * twenty-five separate round trips to Turso would cost more than the crawl.
+ * One statement per call, because the poller buffers a couple of seconds of
+ * lines and hands them over together. This used to be one INSERT statement per
+ * line inside an explicit write transaction. Under Turso write throttling that
+ * transaction joined the same scarce queue as feed storage, timed out, and
+ * dropped the very daemon errors /crawlstats was meant to expose.
+ *
+ * A multi-row autocommit INSERT is still one atomic statement, needs no explicit
+ * transaction, and stays off the crawler's transaction queue. The recorder caps
+ * a flush at 501 rows (including a dropped-lines marker), so its 4,008 bound
+ * parameters remain comfortably below SQLite's limit.
  *
  * Every field but `at` and `event` is optional — a line only fills in the
  * columns it has something to say about.
@@ -1681,22 +1688,22 @@ export async function appendCrawlLog(db, entries) {
   const rows = (Array.isArray(entries) ? entries : [entries]).filter((e) => e?.event);
   if (rows.length === 0) return 0;
 
-  const statements = rows.map((entry) => ({
-    sql: `insert into crawl_log (at, event, status, subject, slug, amount, detail, ms)
-          values (?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [
-      entry.at ?? nowIso(),
-      String(entry.event),
-      entry.status == null ? null : String(entry.status),
-      entry.subject == null ? null : String(entry.subject),
-      entry.slug == null ? null : String(entry.slug),
-      entry.amount == null ? null : Number(entry.amount),
-      entry.detail == null ? null : String(entry.detail),
-      entry.ms == null ? null : Number(entry.ms),
-    ],
-  }));
+  const args = rows.flatMap((entry) => [
+    entry.at ?? nowIso(),
+    String(entry.event),
+    entry.status == null ? null : String(entry.status),
+    entry.subject == null ? null : String(entry.subject),
+    entry.slug == null ? null : String(entry.slug),
+    entry.amount == null ? null : Number(entry.amount),
+    entry.detail == null ? null : String(entry.detail),
+    entry.ms == null ? null : Number(entry.ms),
+  ]);
 
-  await db.batch(statements, 'write');
+  await db.execute({
+    sql: `insert into crawl_log (at, event, status, subject, slug, amount, detail, ms)
+          values ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+    args,
+  });
   return rows.length;
 }
 
@@ -1742,6 +1749,32 @@ export async function crawlLogTail(db, limit = 60) {
     args: [Math.max(1, Math.min(Number(limit) || 60, 1000))],
   });
   return [...rows].reverse();
+}
+
+/**
+ * Recent daemon failures, independently of the rolling feed log.
+ *
+ * A busy crawler emits hundreds of successful feed lines in minutes, so an
+ * operational error disappears from the live panel's bounded window long
+ * before somebody opens the status page. Feed failures already have their own
+ * table below it; this query deliberately returns only daemon/job failures.
+ *
+ * @param {Client} db
+ * @param {{ limit?: number, hours?: number }} [opts]
+ * @returns {Promise<Array<object>>} newest first
+ */
+export async function crawlOperationalErrors(db, { limit = 20, hours = 24 } = {}) {
+  const { rows } = await db.execute({
+    sql: `select id, at, event, status, subject, slug, amount, detail, ms
+          from crawl_log
+          where status = 'error' and event <> 'feed' and at >= ?
+          order by id desc limit ?`,
+    args: [
+      nowIso(-Math.max(1, Number(hours) || 24) * 3_600_000),
+      Math.max(1, Math.min(Number(limit) || 20, 100)),
+    ],
+  });
+  return rows;
 }
 
 /**

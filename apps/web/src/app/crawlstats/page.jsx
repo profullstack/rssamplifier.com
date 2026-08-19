@@ -2,7 +2,7 @@ import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import { categoryStats, indexingHistory, jobBacklogs, GROWTH_DAYS } from '../../lib/crawlstats.js';
-import { toLine } from '../../lib/crawlLog.js';
+import { describe, toLine } from '../../lib/crawlLog.js';
 import { etaLabel, jobRows } from '../../lib/jobs.js';
 import AutoRefresh from '../AutoRefresh.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
@@ -46,6 +46,7 @@ export default async function CrawlStatsPage() {
     backlogs,
     activity,
     alertAccounts,
+    operationalErrors,
   ] = await Promise.all([
     q.crawlStats(client),
     q.failingFeeds(client, 15),
@@ -76,6 +77,9 @@ export default async function CrawlStatsPage() {
     // alert pass writes no log line at all when nobody is subscribed, and a
     // silent job is otherwise indistinguishable from a dead one.
     alerts.alertingAccountCount(client),
+    // Kept separately from the rolling live-log window. At crawler throughput,
+    // 400 successful feed lines can evict an operational failure in minutes.
+    q.crawlOperationalErrors(client, { limit: 20, hours: 24 }),
   ]);
 
   const jobs = jobRows({
@@ -213,6 +217,40 @@ export default async function CrawlStatsPage() {
           ))}
         </tbody>
       </table>
+
+      <h2>Daemon errors (24h)</h2>
+      <p>
+        Failures in the crawler itself and its background jobs. Feed-specific failures are listed
+        separately below; these lines remain visible even after the busy live log has rolled past
+        them.
+      </p>
+      {operationalErrors.length === 0 ? (
+        <p>No daemon or background-job errors were recorded in the last 24 hours.</p>
+      ) : (
+        <table className="crawl-table">
+          <thead>
+            <tr>
+              <th scope="col">Time</th>
+              <th scope="col">Event</th>
+              <th scope="col">Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {operationalErrors.map((row) => {
+              const line = toLine(row);
+              return (
+                <tr key={line.id}>
+                  <td className="num">
+                    <time dateTime={line.at}>{new Date(line.at).toISOString()}</time>
+                  </td>
+                  <td><code>{line.event}</code></td>
+                  <td className="crawl-error">{describe(line, { name: false })}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
 
       <h2>Live log</h2>
       <p>

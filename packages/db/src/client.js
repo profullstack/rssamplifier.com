@@ -75,7 +75,8 @@ export function withTimeout(ms) {
 }
 
 /**
- * One write transaction at a time, per process.
+ * One write transaction at a time, per process, with queued callers folded
+ * into the next transaction.
  *
  * SQLite permits exactly one writer. That is not a limitation to be tuned
  * around, it is the storage engine, and the crawler had been ignoring it: four
@@ -99,9 +100,22 @@ export function withTimeout(ms) {
  *
  * So writes queue here instead of at the database. A caller waits its turn in
  * this process, where waiting is free and ordered, rather than racing a lock
- * across the network where losing costs 300 seconds. Throughput is unchanged --
- * the database could only ever run one writer anyway -- but the time formerly
- * spent timing out is now spent committing.
+ * across the network where losing costs 300 seconds.
+ *
+ * Queueing alone fixed the livelock and exposed the next limit: every first
+ * crawl still opened one remote transaction. With six crawl workers and a
+ * throttled write path, a 600-feed pass took 37 minutes even though 445 hosts
+ * were available. The five workers waiting while the first transaction runs
+ * have already prepared all of their statements, so the next transaction
+ * folds those callers together. SQLite was going to serialize them anyway;
+ * this pays for the remote transaction once instead of once per feed.
+ *
+ * Results are sliced back to the caller that supplied each statement range, so
+ * this is invisible above the client. A statement-local SQLite error is retried
+ * caller by caller to identify the bad write without wedging its neighbours. A
+ * transport or timeout failure is not retried here: repeating a whole failed
+ * remote transaction as several more remote transactions would amplify the
+ * outage.
  *
  * Reads are untouched. They do not take the write lock, they measured fine
  * throughout (80-400ms), and putting them behind this queue would serialise a
@@ -112,30 +126,79 @@ export function withTimeout(ms) {
  * briefly, so the population that was livelocking is the one this covers.
  *
  * @param {import('@libsql/client').Client} client
+ * @param {{ maxStatements?: number }} [opts]
  * @returns {import('@libsql/client').Client}
  */
-export function serializeWrites(client) {
-  /** The tail of the queue: every write chains onto the previous one. */
-  let tail = Promise.resolve();
+export function serializeWrites(client, opts = {}) {
+  const configured = Number(opts.maxStatements ?? process.env['TURSO_WRITE_GROUP_STATEMENTS']);
+  const maxStatements = Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1000;
+  const original = client.batch.bind(client);
+
+  /** @type {Array<{ statements: unknown[], resolve: (value: unknown) => void, reject: (reason: unknown) => void }>} */
+  const waiting = [];
+  let draining = false;
 
   /**
-   * @template T
-   * @param {() => Promise<T>} run
-   * @returns {Promise<T>}
+   * Put one caller behind the transaction currently in flight.
+   *
+   * The first caller starts immediately. Everyone arriving while it awaits the
+   * remote database accumulates in `waiting` and is folded together on the next
+   * turn, up to a statement ceiling that keeps one transaction bounded.
+   *
+   * @param {unknown[]} statements
+   * @returns {Promise<unknown>}
    */
-  const enqueue = (run) => {
-    // Chained off a settled-either-way tail, so one failed write does not
-    // wedge every write after it -- which would turn a transient error into
-    // the outage this exists to prevent.
-    const mine = tail.then(run, run);
-    tail = mine.then(
-      () => undefined,
-      () => undefined,
-    );
-    return mine;
-  };
+  const enqueue = (statements) =>
+    new Promise((resolve, reject) => {
+      waiting.push({ statements: Array.from(statements ?? []), resolve, reject });
+      void drain();
+    });
 
-  const original = client.batch.bind(client);
+  async function drain() {
+    if (draining) return;
+    draining = true;
+
+    try {
+      while (waiting.length > 0) {
+        const group = [];
+        let statementCount = 0;
+
+        while (waiting.length > 0) {
+          const next = waiting[0];
+          const size = next.statements.length;
+          if (group.length > 0 && statementCount + size > maxStatements) break;
+          group.push(waiting.shift());
+          statementCount += size;
+        }
+
+        const statements = group.flatMap((entry) => entry.statements);
+
+        try {
+          const results = await original(statements, 'write');
+          settleGroup(group, Array.from(results ?? []));
+        } catch (err) {
+          if (group.length > 1 && isStatementError(err)) {
+            // The transaction was rejected because one statement is bad. Run
+            // each caller on its own to preserve failure isolation and ordering.
+            for (const entry of group) {
+              try {
+                entry.resolve(await original(entry.statements, 'write'));
+              } catch (singleErr) {
+                entry.reject(singleErr);
+              }
+            }
+          } else {
+            for (const entry of group) entry.reject(err);
+          }
+        }
+      }
+    } finally {
+      draining = false;
+      // A caller can arrive after the while condition and before the flag is
+      // cleared. Do not leave it asleep until an unrelated later write arrives.
+      if (waiting.length > 0) void drain();
+    }
+  }
 
   // The one method replaced, on the instance, rather than the whole client
   // wrapped in a Proxy. A Proxy was the first attempt and it broke 154 tests:
@@ -145,7 +208,7 @@ export function serializeWrites(client) {
   client.batch = (statements, mode) =>
     // Only transactions that can take the write lock. A read batch is several
     // selects and has no business waiting behind a crawl.
-    mode === 'read' ? original(statements, mode) : enqueue(() => original(statements, mode));
+    mode === 'read' ? original(statements, mode) : enqueue(statements);
 
   // `transaction()` is deliberately left alone. It hands the caller an open
   // transaction to hold across awaits, which this queue cannot bound -- a lock
@@ -154,6 +217,41 @@ export function serializeWrites(client) {
   // decision rather than a silent hole in the serialisation.
 
   return client;
+}
+
+/**
+ * Hand each caller the result rows belonging to its own statements.
+ *
+ * libSQL returns one ResultSet per statement, in order. A caller above this
+ * layer must never learn that its transaction shared a round trip.
+ *
+ * @param {Array<{ statements: unknown[], resolve: (value: unknown) => void }>} group
+ * @param {unknown[]} results
+ */
+function settleGroup(group, results) {
+  let offset = 0;
+  for (const entry of group) {
+    const end = offset + entry.statements.length;
+    entry.resolve(results.slice(offset, end));
+    offset = end;
+  }
+}
+
+/**
+ * Whether retrying a failed combined transaction can isolate one bad caller.
+ *
+ * Network failures and deadlines affect the database as a whole and must not be
+ * multiplied into N retries. SQLite statement/constraint errors are local to
+ * the SQL or data and are worth splitting once so neighbouring feeds survive.
+ *
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isStatementError(err) {
+  const text = String(err?.message ?? err);
+  return /SQLITE_(?:CONSTRAINT|ERROR|MISMATCH|RANGE)|constraint failed|syntax error|no such (?:table|column)/i.test(
+    text,
+  );
 }
 
 
