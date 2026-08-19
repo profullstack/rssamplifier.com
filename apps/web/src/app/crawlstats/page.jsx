@@ -9,7 +9,7 @@ import { CATEGORIES } from '../CategoryIndex.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { GrowthChart, IndexingChart, Sparkline, ThroughputChart } from './Charts.jsx';
 import CrawlLog from './CrawlLog.jsx';
-import ErrorBrowser from './ErrorBrowser.jsx';
+import ErrorBrowser, { ErrorBrowserButton } from './ErrorBrowser.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -215,12 +215,9 @@ export default async function CrawlStatsPage() {
               <td>
                 <span className={`job-state job-state-${job.state}`}>{job.state}</span>
                 {job.errors > 0 && (
-                  <a
-                    className="job-errors"
-                    href={['update', 'first-crawl'].includes(job.key) ? '#failing-feeds' : '#daemon-errors'}
-                  >
+                  <ErrorBrowserButton className="job-errors">
                     {fmt(job.errors)} {job.errors === 1 ? 'error' : 'errors'}
-                  </a>
+                  </ErrorBrowserButton>
                 )}
               </td>
               <td className="num">
@@ -349,7 +346,9 @@ export default async function CrawlStatsPage() {
                 <td className="num">{row.addedLastMonth ? `+${fmt(row.addedLastMonth)}` : '—'}</td>
                 <td className="num">{fmt(row.items)}</td>
                 <td className="num">
-                  {row.errored ? <a href="#failing-feeds">{fmt(row.errored)}</a> : '—'}
+                  {row.errored ? (
+                    <ErrorBrowserButton className="error-count-button">{fmt(row.errored)}</ErrorBrowserButton>
+                  ) : '—'}
                 </td>
                 <td className="spark-cell">
                   <Sparkline
@@ -378,7 +377,9 @@ export default async function CrawlStatsPage() {
             </td>
             <td className="num">{fmt(sum(categories.categories, 'items'))}</td>
             <td className="num">
-              <a href="#failing-feeds">{fmt(sum(categories.categories, 'errored'))}</a>
+              <ErrorBrowserButton className="error-count-button">
+                {fmt(sum(categories.categories, 'errored'))}
+              </ErrorBrowserButton>
             </td>
             <td />
           </tr>

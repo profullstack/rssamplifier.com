@@ -17,6 +17,15 @@ export default function ErrorBrowser({ total, dead, errors }) {
     if (open) panel.current?.focus();
   }, [open]);
 
+  useEffect(() => {
+    const show = () => {
+      setOpen(true);
+      window.setTimeout(() => panel.current?.focus(), 0);
+    };
+    window.addEventListener('rssamplifier:open-errors', show);
+    return () => window.removeEventListener('rssamplifier:open-errors', show);
+  }, []);
+
   const copy = async (text, key) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -98,5 +107,22 @@ export default function ErrorBrowser({ total, dead, errors }) {
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * Open the shared error panel from counts elsewhere on the page.
+ *
+ * @param {{ className?: string, children: import('react').ReactNode }} props
+ */
+export function ErrorBrowserButton({ className, children }) {
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={() => window.dispatchEvent(new Event('rssamplifier:open-errors'))}
+    >
+      {children}
+    </button>
   );
 }
