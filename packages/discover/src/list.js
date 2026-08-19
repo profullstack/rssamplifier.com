@@ -67,5 +67,4 @@ export async function candidatesFromList(url, opts = {}) {
  * A discovery crawler that does not identify itself is one a maintainer cannot
  * ask to stop, which is the sort of thing that gets a project blocked.
  */
-export const USER_AGENT =
-  'rssamplifier-discovery/1.0 (+https://rssamplifier.com/about; feed directory)';
+export const USER_AGENT = 'rssamplifier-discovery/1.0 (+https://rssamp.com/about; feed directory)';
