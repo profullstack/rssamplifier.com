@@ -8,6 +8,7 @@ import { currentUser } from '../../../lib/auth.js';
 import { popularLanguages } from '../../../lib/languages.js';
 import { isEpisode, isPicture, isWatchable, playableMedia } from '../../../lib/media.js';
 import { readerView } from '../../../lib/reader.js';
+import { thumbSrc } from '../../../lib/thumbs.js';
 import { lanesOffered, trackFor } from '../../../lib/queue.js';
 import { shareText } from '../../../lib/share.js';
 import { AD_MREC } from '../../../lib/ads.js';
@@ -245,6 +246,42 @@ export default async function ReaderPage({ params, searchParams }) {
   // the episode going behind it. This is only the branch where there is nothing
   // to show and something to play.
   const listenable = !watchable && !readable && !framed && !extracted && Boolean(media.src);
+
+  // The post's own picture, when that is the whole post.
+  //
+  // A third branch on the argument the video and audio ones make, closing the
+  // last hole it left. A photoblog entry, a fediverse note, a comic, an image
+  // board's item: the feed carries the picture in its <description>, the item
+  // page is a JavaScript app that extracts to nothing, and its host refuses
+  // framing — so all three escapes shut and the post fell through to a notice
+  // saying the site will not be embedded, over a link out, with the picture
+  // nowhere on the page.
+  //
+  // It was on the page until recently, inside the body, which makes this a
+  // regression rather than a gap. #106 stopped storing `content_html` to keep
+  // the database from growing, on the reasoning that `item_extracts` re-fetches
+  // an article the first time somebody reads it. True of an article. Not true
+  // of a picture: there is no prose to extract, so the extractor stores `empty`
+  // and the reader is left holding nothing.
+  //
+  // `image_url` is the answer because it never went anywhere. Ingest has always
+  // stored the picture a post declares — it is what the listings put beside
+  // every headline — so this costs no column, no crawl and no backfill, and it
+  // works on the rows already written as well as the ones still to come.
+  const picture = thumbSrc(post.image_url);
+
+  // Whether anything on this page is the post itself rather than a description
+  // of it. An extract is; a body is, unless it is the summary again wrapped in
+  // tags — which is exactly the shape a picture post's body has once the
+  // picture has been taken out of it.
+  const bodyShown = Boolean(extracted) || (Boolean(article) && !repeats(article, summary));
+
+  // Narrower than the audio branch for the reason that one is narrower than the
+  // video branch: a page that frames still frames, and a post with words of its
+  // own still shows them. This is only the case where the picture is all there
+  // is.
+  const viewable =
+    !watchable && !readable && !framed && !listenable && !bodyShown && Boolean(picture);
 
   // Whether the pictures in the body get to be the size they were drawn.
   //
@@ -589,6 +626,43 @@ export default async function ReaderPage({ params, searchParams }) {
                * same page the fallback branch below carries a unit on.
                */}
               <Ad format={AD_MREC} />
+            </>
+          ) : viewable ? (
+            <>
+              {/*
+               * The picture, where the refusal notice used to be.
+               *
+               * The full width of the column rather than the 131px it gets
+               * beside a headline in a listing: this is the post, not a marker
+               * for one. Never scaled up past its own size, for the reason
+               * written over `.reader-article.pictures img` — a small drawing
+               * stretched across a monitor is worse than a small drawing.
+               *
+               * `alt=""` because the h1 directly above is the caption the
+               * publisher wrote, and repeating it here would have a screen
+               * reader say it twice. That empty alt is also what lets a dead
+               * URL disappear rather than draw a broken-image icon — see
+               * Thumb.jsx, and the handler in the layout that hides one.
+               */}
+              <p className="reader-picture">
+                <img src={picture ?? ''} alt="" decoding="async" />
+              </p>
+
+              {summary && <p className={`lede${translated ? ' translated' : ''}`}>{summary}</p>}
+
+              {postUrl && (
+                <p className="hint">
+                  <a href={postUrl} target="_blank" rel="noopener">
+                    See it on {hostOf(postUrl)} ↗
+                  </a>
+                </p>
+              )}
+
+              {/* No ad, on the video branch's reasoning rather than the audio
+                  branch's: what fills this column is somebody else's picture,
+                  and a unit sold beside it is money made off their work. An
+                  audio transport is a strip with our own summary around it;
+                  this is the whole page. */}
             </>
           ) : (
             <div className="reader-fallback">

@@ -1620,6 +1620,30 @@ body:has(.reader) {
   padding: 1rem 0.5rem;
 }
 
+/* A post whose picture is the post — a photoblog entry, a comic, an image
+   board's item — at the size it was published.
+
+   Centred with auto margins rather than with the translate trick
+   `.reader-article.pictures img` uses: that one is escaping a fixed measure,
+   and this paragraph already has the column's full width to work in.
+
+   Never scaled up, for the reason written over that rule. Where the only
+   picture we hold is a feed's thumbnail, 131px stretched across a monitor is
+   worse than 131px. */
+.reader-picture {
+  margin: 0 auto 1.2rem;
+  text-align: center;
+}
+
+.reader-picture img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  margin-inline: auto;
+  border-radius: 8px;
+}
+
 .button {
   display: inline-block;
   padding: 0.6rem 1.1rem;
