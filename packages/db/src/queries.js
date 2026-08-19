@@ -515,7 +515,16 @@ function textLength(html) {
  * @returns {Promise<{ total: number, stored: number }>} `stored` is the change
  *   in the stored total — posts actually new, not posts offered.
  */
-export async function storeCrawl(db, id, items, feed, previousItemCount = 0, intervalMinutes = null, lastPublishedAt = null) {
+export async function storeCrawl(
+  db,
+  id,
+  items,
+  feed,
+  previousItemCount = 0,
+  intervalMinutes = null,
+  lastPublishedAt = null,
+  extra = [],
+) {
   const now = nowIso();
   const before = Number(previousItemCount) || 0;
 
@@ -585,9 +594,20 @@ export async function storeCrawl(db, id, items, feed, previousItemCount = 0, int
     ],
   };
 
-  const results = await db.batch([...itemStatements(id, items, now), settle], 'write');
+  // `extra` is everything else this crawl decided to write -- the feed's topics
+  // and its credits -- carried into the same transaction rather than opening
+  // two more of their own. It goes *after* the feed row so that a failure
+  // anywhere rolls back a crawl that had not been recorded yet, rather than one
+  // that had.
+  const results = await db.batch([...itemStatements(id, items, now), settle, ...extra], 'write');
 
-  const total = Number(results[results.length - 1]?.rows?.[0]?.item_count ?? before);
+  // Indexed rather than taken from the end: `extra` now sits behind the feed
+  // row, so "the last result" stopped being the one carrying RETURNING. Reading
+  // the wrong result here would silently report every crawl as storing nothing,
+  // which is precisely the bug that once pinned the whole directory to an
+  // hourly re-crawl.
+  const settleIndex = results.length - extra.length - 1;
+  const total = Number(results[settleIndex]?.rows?.[0]?.item_count ?? before);
   return { total, stored: Math.max(0, total - before) };
 }
 
@@ -748,20 +768,36 @@ export async function itemsForKeywords(db, feedId, limit = 200) {
  * @returns {Promise<number>} rows written
  */
 export async function replaceFeedKeywords(db, feedId, keywords) {
-  const statements = [
+  // One batch, so a feed is never left with its old topics deleted and its new
+  // ones unwritten.
+  await db.batch(keywordStatements(feedId, keywords), 'write');
+  return keywords.length;
+}
+
+/**
+ * A feed's topics as statements, ready to join somebody else's transaction.
+ *
+ * Split out so that `crawlFeed` can put the items, the feed row, the topics and
+ * the credits into a **single** write transaction. On this database writes
+ * serialize -- SQLite has one writer -- so the cost of a crawl is very nearly
+ * the number of transactions it opens, not the work inside them. Folding three
+ * transactions into one is a threefold change in crawl throughput; making any
+ * one of them cheaper is not.
+ *
+ * @param {string} feedId
+ * @param {Array<{ slug: string, keyword: string, words?: number, count?: number, source?: string }>} keywords
+ * @returns {Array<{ sql: string, args: unknown[] }>}
+ */
+export function keywordStatements(feedId, keywords) {
+  return [
     { sql: 'delete from feed_keywords where feed_id = ?', args: [feedId] },
-    ...keywords.map((k) => ({
+    ...(keywords ?? []).map((k) => ({
       sql: `insert into feed_keywords (feed_id, slug, keyword, words, count, source)
             values (?, ?, ?, ?, ?, ?)
             on conflict (feed_id, slug) do nothing`,
       args: [feedId, k.slug, k.keyword, k.words ?? 1, k.count ?? 0, k.source ?? 'content'],
     })),
   ];
-
-  // One batch, so a feed is never left with its old topics deleted and its new
-  // ones unwritten.
-  await db.batch(statements, 'write');
-  return keywords.length;
 }
 
 /**

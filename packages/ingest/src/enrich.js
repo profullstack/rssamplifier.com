@@ -86,6 +86,35 @@ export async function claimAuthorSlug(db, name, fallbackUrl = '') {
  * @returns {Promise<{ people: number, links: number, feedLinks: number }>}
  */
 export async function storeCredits(db, feed, credits, links = []) {
+  const { statements, people, links: linkCount, feedLinks } = await prepareCredits(db, feed, credits, links);
+  if (statements.length === 0) return { people: 0, links: 0, feedLinks: 0 };
+
+  // One transaction for the people, the feed's link to them, their accounts and
+  // the feed's own accounts. Ordered so each author row is inserted before
+  // anything selects its id.
+  await db.batch(statements, 'write');
+  return { people, links: linkCount, feedLinks };
+}
+
+/**
+ * The same work, stopping short of writing.
+ *
+ * Split out so `crawlFeed` can fold these statements into the single write
+ * transaction that also carries the items, the feed row and the topics. On this
+ * database writes serialize -- SQLite has one writer -- so a crawl costs very
+ * nearly the number of transactions it opens. This used to be one of three per
+ * feed; it is now part of one.
+ *
+ * The reads stay here because they must happen first and cannot be batched: a
+ * slug has to be unique, which means looking at the ones already taken.
+ *
+ * @param {Client} db
+ * @param {{ id: string, feed_url: string }} feed
+ * @param {Array<import('@rssamplifier/feed').Credit>} credits
+ * @param {Array<object>} [links]
+ * @returns {Promise<{ statements: Array<{sql: string, args: unknown[]}>, people: number, links: number, feedLinks: number }>}
+ */
+export async function prepareCredits(db, feed, credits, links = []) {
   const merged = mergeCredits(credits.filter(Boolean));
 
   // Slugs first, and they are the only reads left here.
@@ -176,14 +205,8 @@ export async function storeCredits(db, feed, credits, links = []) {
   // under.
   if (merged.length === 0) statements.push(...a.feedLinkStatements(feed.id, links));
 
-  if (statements.length === 0) return { people: 0, links: 0, feedLinks: 0 };
-
-  // One transaction for the people, the feed's link to them, their accounts and
-  // the feed's own accounts. Ordered so that each author row is inserted before
-  // anything selects its id.
-  await db.batch(statements, 'write');
-
   return {
+    statements,
     people: merged.length,
     // Statements issued rather than rows changed. The guards on the conflict
     // clauses mean an unchanged credit writes nothing, so a row count here
