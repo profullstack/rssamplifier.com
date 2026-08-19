@@ -1,4 +1,4 @@
-import { connect, migrate, q, accounts, alerts } from '@rssamplifier/db';
+import { connect, createWriteWorker, migrate, q, accounts, alerts } from '@rssamplifier/db';
 import {
   crawlDue,
   enrichDue,
@@ -133,6 +133,11 @@ const authorIntervalMs = (Number(env['AUTHOR_INTERVAL_SECONDS']) || 60) * 1000;
 // wasteful and is not: it means the current hour's point is never more than ten
 // minutes stale on a page that refreshes every fifteen seconds.
 const queueSampleMs = (Number(env['QUEUE_SAMPLE_SECONDS']) || 600) * 1000;
+
+// Where the write queue lives. Absent, `connect()` falls back to the
+// in-process serialiser and this daemon starts no worker — the system as it
+// shipped before the queue existed, which is the right thing to degrade to.
+const redisUrl = env['REDIS_URL'] ?? '';
 
 // How long before a feed is looked at again. Long, because the answer changes
 // when somebody redesigns their blog or joins a new network, not weekly.
@@ -641,6 +646,48 @@ async function queueTick() {
   }
 }
 
+/**
+ * The one process that actually writes to Turso.
+ *
+ * SQLite permits a single writer, and until now the closest we could get was
+ * one writer *per process* — `serializeWrites` queues inside whichever process
+ * it is loaded in, so the poller and the web service still contended with each
+ * other. The queue now lives in Redis and exactly one consumer drains it, which
+ * is the guarantee the storage engine actually wants.
+ *
+ * It runs here rather than in its own service on purpose. The poller is already
+ * the origin of almost every write, so co-locating the worker keeps the common
+ * path to one Redis hop, and it means there is no third service to keep alive
+ * for the database to be writable. The tradeoff is that a poller outage stops
+ * the web service's writes too — which is why the jobs survive the outage in
+ * Redis rather than dying with the process, and why the web service degrades to
+ * failed writes rather than silent ones.
+ *
+ * Its client is deliberately unqueued (`queue: false`): this is the consumer,
+ * and a queued client here would post every job straight back to itself.
+ */
+const writeWorker = redisUrl
+  ? createWriteWorker(connect({ queue: false }), {
+      url: redisUrl,
+      onEvent: publishLog ? recorder.record : null,
+    })
+  : null;
+
+if (writeWorker) {
+  // A job that failed every attempt is a write that did not happen, which is
+  // exactly the class of failure this daemon exists to make visible.
+  writeWorker.on('failed', (job, err) => {
+    log('write-failed', {
+      id: job?.id ?? null,
+      attempts: job?.attemptsMade ?? 0,
+      message: String(err?.message ?? err),
+    });
+  });
+  writeWorker.on('error', (err) => {
+    log('write-worker-error', { message: String(err?.message ?? err) });
+  });
+}
+
 const timer = setInterval(tick, intervalMs);
 const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
 const cardTimer = setInterval(cardTick, cardIntervalMs);
@@ -684,6 +731,12 @@ function shutdown(signal) {
   clearInterval(enrichTimer);
   clearInterval(alertTimer);
   clearInterval(queueTimer);
+
+  // Closed gracefully, which for BullMQ means "finish the job in hand, take no
+  // more". A write half-applied because the container went away is the one
+  // failure a queue is supposed to prevent, and Railway sends SIGTERM on every
+  // deploy — so this runs several times a day.
+  void writeWorker?.close();
 
   // Recorded before the buffer is closed, so the live log's last line is the
   // daemon saying it stopped rather than the log simply going quiet — which is

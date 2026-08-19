@@ -1,3 +1,13 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+allowBuilds:
+  # An optional native accelerator for msgpackr, which BullMQ uses to pack job
+  # payloads. Declined rather than left unanswered: pnpm fails the whole install
+  # on an undecided build script, so "no opinion" breaks the Docker image.
+  #
+  # Off because the fallback is a pure-JS packer that is fast enough for the
+  # traffic here — a few write jobs a second — and building a native addon
+  # inside the image would add a toolchain to it for a speedup nothing is
+  # waiting on.
+  msgpackr-extract: false

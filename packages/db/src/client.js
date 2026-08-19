@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { createClient } from '@libsql/client';
 
+import { queueWrites } from './writeQueue.js';
+
 /**
  * Open a Turso/libSQL connection.
  *
@@ -12,7 +14,7 @@ import { createClient } from '@libsql/client';
  * A `file:` URL needs no auth token, which is what makes local development and
  * the test suite work without a Turso account.
  *
- * @param {{ url?: string, authToken?: string }} [opts]
+ * @param {{ url?: string, authToken?: string, redisUrl?: string, queue?: boolean }} [opts]
  * @returns {import('@libsql/client').Client}
  */
 export function connect(opts = {}) {
@@ -22,11 +24,36 @@ export function connect(opts = {}) {
 
   if (!url) throw new Error('TURSO_DATABASE_URL must be set');
 
-  return serializeWrites(
-    createClient(
-      url.startsWith('file:') ? { url } : { url, authToken, fetch: withTimeout(requestTimeoutMs()) },
-    ),
+  const client = createClient(
+    url.startsWith('file:') ? { url } : { url, authToken, fetch: withTimeout(requestTimeoutMs()) },
   );
+
+  // Redis moves the write queue out of the process, which is the only way to
+  // get one writer per *cluster* rather than one per process — see writeQueue.js
+  // for why that gap mattered. Absent, the in-process queue still holds the line
+  // it always held.
+  //
+  // The fallback is not only for local development. It is what a Redis outage
+  // degrades to: a directory that writes one-at-a-time per process is the
+  // system as it shipped yesterday, where one that cannot write at all is down.
+  const redis = opts.redisUrl ?? env['REDIS_URL'];
+  const enabled = ['1', 'true'].includes(String(env['WRITE_QUEUE'] ?? '1').toLowerCase());
+
+  // `queue: false` is how the write worker itself connects. It is the process
+  // that *drains* the queue, so a queued client there would post every job
+  // straight back and nothing would ever reach the database. It still gets
+  // `serializeWrites`, which costs nothing at a worker concurrency of one and
+  // means the worker behaves identically if it is ever run alongside anything
+  // else in the same process.
+  //
+  // A file: URL is a local SQLite file — the tests and local development. It has
+  // no remote transaction to protect and no second process contending for it,
+  // and routing it through Redis would make the suite depend on a broker.
+  const wanted = opts.queue !== false && enabled && !url.startsWith('file:');
+
+  if (wanted && redis) return queueWrites(client, { url: redis });
+
+  return serializeWrites(client);
 }
 
 /**

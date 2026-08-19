@@ -1,4 +1,5 @@
 export { connect, newId, nowIso } from './src/client.js';
+export { createWriteWorker, WRITE_QUEUE } from './src/writeQueue.js';
 export { migrate } from './src/migrate.js';
 export * as q from './src/queries.js';
 export * as accounts from './src/accounts.js';
