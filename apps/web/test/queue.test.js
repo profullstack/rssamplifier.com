@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { dockCarries, dockable, embedded, laneFor, lanesOffered, trackFor } from '../src/lib/queue.js';
+import {
+  alreadyQueued,
+  dockCarries,
+  dockable,
+  embedded,
+  entryLanes,
+  laneFor,
+  lanesOffered,
+  playableEntries,
+  trackFor,
+} from '../src/lib/queue.js';
 
 /** An episode: an mp3 enclosure on a post. */
 const EPISODE = {
@@ -103,4 +113,55 @@ test('an embed becomes a track, and says which kind it is', () => {
 
 test('a post with nothing attached is not offered to the dock as a track', () => {
   assert.equal(trackFor(POST, { slug: 'blog', feedTitle: 'Blog' }), null);
+});
+
+test('queue-all acts on the posts that carry a file, and nothing else', () => {
+  // A podcast's page is the case this exists for: every row is an episode, so
+  // all of them queue. The article in the middle is the one that must not — the
+  // control says "play all", and a blog post has nothing to play.
+  const entries = playableEntries([
+    { id: 'a', ...EPISODE },
+    { id: 'b', ...POST },
+    { id: 'c', ...YOUTUBE },
+  ]);
+
+  assert.deepEqual(entries, [
+    { itemId: 'a', lane: 'listen' },
+    { itemId: 'c', lane: 'watch' },
+  ]);
+});
+
+test('a blog offers nothing to queue at all', () => {
+  // Not an empty button but no button: QueueAll returns null on a total of
+  // zero, so this is what keeps the control off every blog in the directory.
+  assert.deepEqual(playableEntries([{ id: 'a', ...POST }]), []);
+});
+
+test('a feed that publishes both kinds names both lanes', () => {
+  // A reader told "queued" who then found nothing in the lane they were looking
+  // at would reasonably conclude the button was broken, so the note names every
+  // lane the press will touch rather than assuming a feed is one kind of thing.
+  const mixed = playableEntries([
+    { id: 'a', ...EPISODE },
+    { id: 'c', ...YOUTUBE },
+  ]);
+  assert.deepEqual(entryLanes(mixed), ['listen', 'watch']);
+  assert.deepEqual(entryLanes(playableEntries([{ id: 'a', ...EPISODE }])), ['listen']);
+  assert.deepEqual(entryLanes([]), []);
+});
+
+test('what is already queued is counted in the lane it would land in', () => {
+  const entries = playableEntries([
+    { id: 'a', ...EPISODE },
+    { id: 'c', ...YOUTUBE },
+  ]);
+
+  assert.equal(alreadyQueued(entries, {}), 0);
+  assert.equal(alreadyQueued(entries, { a: ['listen'] }), 1);
+  assert.equal(alreadyQueued(entries, { a: ['listen'], c: ['watch'] }), 2);
+
+  // Kept to read later is a different intention from kept to listen to, and
+  // counting it would let the button claim to be done while pressing it would
+  // still add the episode.
+  assert.equal(alreadyQueued(entries, { a: ['read'] }), 0);
 });

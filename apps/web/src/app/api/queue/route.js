@@ -2,7 +2,7 @@ import { q, queue } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
-import { laneFor, trackFor } from '../../../lib/queue.js';
+import { FEED_QUEUE_LIMIT, laneFor, playableEntries, trackFor } from '../../../lib/queue.js';
 import { PLAYLIST_LIMIT } from '../../../lib/topicFeed.js';
 import { topicGroup } from '../../../lib/topicGroups.js';
 
@@ -14,6 +14,8 @@ const ACTIONS = new Set([
   'remove',
   'add-topic',
   'remove-topic',
+  'add-feed',
+  'remove-feed',
   'done',
   'undone',
   'up',
@@ -105,6 +107,32 @@ export async function POST(req) {
 
     const changed =
       action === 'add-topic'
+        ? await queue.addMany(client, userId, entries)
+        : await queue.removeMany(client, userId, entries);
+
+    if (wantsHtml) return redirect(back);
+    return json({ ok: true, action, changed, counts: await queue.counts(client, userId) });
+  }
+
+  if (action === 'add-feed' || action === 'remove-feed') {
+    // One podcast's episodes, on the same terms as a topic's playlist above:
+    // named by the page rather than carried by the form, and re-queried here so
+    // the button acts on exactly what is listed under it.
+    //
+    // A feed's archive is not a playlist, though, and that is the one
+    // difference. `mediaForTopic` filters to the playable rows in SQL because a
+    // topic spans thousands of feeds; a feed page has already read its fifty
+    // posts, so `playableEntries` applies the same filter to the same query the
+    // page itself runs — which is what keeps the count on the button and the
+    // rows this adds from ever being two different sets.
+    const feed = await q.feedBySlug(client, slug);
+    if (!feed) return wantsHtml ? redirect(back) : json({ error: 'not-found' }, 404);
+
+    const rows = await q.itemsForFeed(client, String(feed.id), FEED_QUEUE_LIMIT);
+    const entries = playableEntries(rows);
+
+    const changed =
+      action === 'add-feed'
         ? await queue.addMany(client, userId, entries)
         : await queue.removeMany(client, userId, entries);
 
