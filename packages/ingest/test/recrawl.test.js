@@ -140,20 +140,60 @@ test('the abandoned feed stops being fetched daily for ever', async () => {
   assert.ok(minutes / 1440 > 30, `two years dead -> ${(minutes / 1440).toFixed(0)} days, not 1`);
 });
 
-test('an undated feed keeps the old doubling ladder, ceiling included', async () => {
-  // No dates is not evidence of abandonment, so these feeds keep exactly the
-  // behaviour they had -- including the one-day cap that the dated path drops.
+test('an undated feed is scheduled on observed change, not on a ladder', async () => {
+  // The case that was left over after cadence shipped, and the reason for the
+  // change log. Measured on production 2026-08-19: feeds stating no dates were
+  // 1,653 of 81,553 active feeds -- two percent -- and asked for 1,183 crawls an
+  // hour of a total 2,693. Forty-four percent of the work for two percent of the
+  // directory, and not because they were busy. With no dates they fell to the
+  // doubling ladder, and the ladder returns to its sixty-minute floor whenever a
+  // crawl stores anything; a feed whose guids churn stores something every time
+  // and so never left the floor.
+  //
+  // Now the crawler uses its own observations instead. The document is unchanged
+  // every time here, so each crawl adds evidence of silence and the interval
+  // only ever grows.
   const feed = await seed();
   const undated = async () => UNDATED;
 
   await crawlFeed(db, feed, { resolve: undated });
-  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 60, 'stored posts, so hourly');
+  const first = await q.feedBySlug(db, 'quiet');
+  assert.equal(Number(first.fetch_interval_minutes), 60, 'nothing observed yet, so the floor');
+  assert.ok(first.content_hash, 'and the contents are fingerprinted for next time');
+  assert.equal(JSON.parse(first.change_log).length, 1, 'a first crawl is a change');
+
+  // Unchanged, so the log does not grow: it is a record of changes, not of
+  // crawls. That distinction is the whole reason it can measure silence.
+  await crawlFeed(db, first, { resolve: undated });
+  const second = await q.feedBySlug(db, 'quiet');
+  assert.equal(JSON.parse(second.change_log).length, 1, 'an unchanged crawl is not a change');
+  assert.ok(
+    Number(second.fetch_interval_minutes) >= Number(first.fetch_interval_minutes),
+    'and an unchanged crawl never shortens the interval',
+  );
+});
+
+test('an undated feed that never changes decays past the old one-day ceiling', async () => {
+  // The ceiling is what actually cost the directory. An undated feed used to top
+  // out at one day and be fetched 365 times a year for ever; it now decays on
+  // its own silence to the ninety-day ceiling the dated path already had.
+  //
+  // Driven by hand rather than by crawling repeatedly, because the point being
+  // made is about a year of silence and the test has to take a millisecond.
+  const feed = await seed();
+  const undated = async () => UNDATED;
+  await crawlFeed(db, feed, { resolve: undated });
+
+  // A year ago, and nothing since.
+  const aYearAgo = new Date(Date.now() - 365 * DAY).toISOString();
+  await db.execute({
+    sql: 'update feeds set change_log = ? where id = ?',
+    args: [JSON.stringify([aYearAgo]), feed.id],
+  });
 
   await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: undated });
-  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 120, 'then doubles');
-
-  await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: undated });
-  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 240);
+  const days = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes) / 1440;
+  assert.ok(days > 30, `a year of silence -> ${days.toFixed(0)} days, not 1`);
 });
 
 test('a re-crawl that stored nothing does not go near the author path again', async () => {
@@ -319,4 +359,163 @@ test('a failing feed still backs off on its own ladder', async () => {
   const row = await q.feedBySlug(db, 'quiet');
   assert.equal(Number(row.error_count), 1);
   assert.equal(Number(row.fetch_interval_minutes), 60, 'first failure waits an hour');
+});
+
+/* --------------------------------------------------------- conditional GET */
+
+test('validators are stored on a crawl and sent back on the next one', async () => {
+  const feed = await seed();
+  const withValidators = async () => ({
+    ...DOCUMENT,
+    etag: 'W/"abc"',
+    lastModified: 'Mon, 18 Aug 2026 09:00:00 GMT',
+  });
+
+  await crawlFeed(db, feed, { resolve: withValidators });
+
+  const stored = await q.feedBySlug(db, 'quiet');
+  assert.equal(stored.http_etag, 'W/"abc"');
+  assert.equal(stored.http_last_modified, 'Mon, 18 Aug 2026 09:00:00 GMT');
+
+  // And the next crawl offers them back, which is the only thing that makes a
+  // 304 possible at all.
+  let sent = null;
+  await crawlFeed(db, stored, {
+    resolve: async (_url, conditional) => {
+      sent = conditional;
+      return withValidators();
+    },
+  });
+  assert.equal(sent.etag, 'W/"abc"');
+  assert.equal(sent.lastModified, 'Mon, 18 Aug 2026 09:00:00 GMT');
+});
+
+test('a 304 settles the feed without touching a single post', async () => {
+  // The cheapest crawl there is, and the one this change exists to make common.
+  // What limits this crawler is write transactions per feed; a feed that has not
+  // changed should cost one small update and no reads of feed_items at all.
+  const feed = await seed();
+  await crawlFeed(db, feed, { resolve: async () => ({ ...DOCUMENT, etag: 'W/"abc"' }) });
+
+  const before = await q.feedBySlug(db, 'quiet');
+  const res = await crawlFeed(db, before, {
+    resolve: async () => ({ ok: false, notModified: true, etag: 'W/"abc"' }),
+  });
+
+  assert.equal(res.ok, true, 'a 304 is a successful crawl, not a failure');
+  assert.equal(res.notModified, true);
+  assert.equal(res.newItems, 0);
+
+  const after = await q.feedBySlug(db, 'quiet');
+  assert.equal(Number(after.item_count), Number(before.item_count), 'no posts were touched');
+  assert.equal(after.status, 'active', 'and it is emphatically not an error');
+  assert.equal(Number(after.error_count), 0);
+  assert.equal(after.http_etag, 'W/"abc"', 'the validator survives');
+  assert.ok(after.next_fetch_at > before.next_fetch_at, 'and it is scheduled again');
+});
+
+test('a 304 never pulls a quiet feed back to a shorter interval', async () => {
+  // Evidence of no change is evidence in one direction. Without this guard a
+  // feed resting at the ceiling is dragged back every time we confirm it is
+  // still silent, so it oscillates instead of settling and never stops costing
+  // crawls -- which is the failure the whole ceiling exists to prevent.
+  const feed = await seed();
+  await crawlFeed(db, feed, { resolve: async () => document(800, 7) });
+
+  const before = await q.feedBySlug(db, 'quiet');
+  assert.ok(Number(before.fetch_interval_minutes) / 1440 > 30, 'two years dead, so months out');
+
+  await crawlFeed(db, before, { resolve: async () => ({ ok: false, notModified: true }) });
+
+  const after = await q.feedBySlug(db, 'quiet');
+  assert.ok(
+    Number(after.fetch_interval_minutes) >= Number(before.fetch_interval_minutes),
+    `${before.fetch_interval_minutes} -> ${after.fetch_interval_minutes}`,
+  );
+});
+
+test('a feed that starts publishing again accelerates on its first new post', async () => {
+  // The other half of the asymmetry, and the reason it is stated as "never
+  // sooner" rather than "always longer". A crawl that *did* see a change
+  // recomputes freely, so a blog coming back after two years is not stuck at the
+  // ceiling waiting for a ladder to climb back down.
+  const feed = await seed();
+  await crawlFeed(db, feed, { resolve: async () => document(800, 7) });
+
+  const dormant = await q.feedBySlug(db, 'quiet');
+  assert.ok(Number(dormant.fetch_interval_minutes) / 1440 > 30);
+
+  // It posts again, on its old weekly rhythm.
+  await crawlFeed(db, dormant, { resolve: async () => document(1, 7) });
+
+  const revived = await q.feedBySlug(db, 'quiet');
+  const back = Number(revived.fetch_interval_minutes) / 1440;
+  assert.ok(back > 3 && back < 4, `back to a weekly rhythm, not ${back.toFixed(0)} days`);
+});
+
+test('a scraped source is never asked conditionally', async () => {
+  // Its feed_url is a page of prose, and validators would describe that page. A
+  // marketing site that has not changed its header is not evidence that the
+  // posts extracted from it have not.
+  const feed = await seed();
+  await db.execute({
+    sql: 'update feeds set source_kind = ?, http_etag = ? where id = ?',
+    args: ['scraped', 'W/"abc"', feed.id],
+  });
+
+  let scrapeArgs = null;
+  await crawlFeed(db, await q.feedBySlug(db, 'quiet'), {
+    scrape: async (...args) => {
+      scrapeArgs = args;
+      return DOCUMENT;
+    },
+  });
+
+  assert.equal(scrapeArgs.length, 1, 'scrapeFeed takes a URL and nothing else');
+});
+
+test('a feed that lists nothing decays instead of being read hourly for ever', async () => {
+  // Sampling production's undated feeds on 2026-08-19, most of the ones sitting
+  // on the hourly floor had `item_count = 0`. They are not broken -- they parse,
+  // they are simply empty -- so nothing ever marked them failing and nothing
+  // ever backed them off, and each one had been fetched every hour for months to
+  // be told the same thing again.
+  const feed = await seed();
+  const nothing = async () => ({ ok: true, feed: { ...DOCUMENT.feed, items: [] } });
+
+  await crawlFeed(db, feed, { resolve: nothing });
+  const first = await q.feedBySlug(db, 'quiet');
+  assert.equal(Number(first.item_count), 0);
+  assert.ok(first.content_hash, 'an empty feed is fingerprinted like any other');
+
+  // Second crawl: same emptiness, so no change is recorded and the schedule may
+  // only lengthen from here.
+  await crawlFeed(db, first, { resolve: nothing });
+  const second = await q.feedBySlug(db, 'quiet');
+  assert.equal(JSON.parse(second.change_log).length, 1, 'still empty is not a change');
+
+  // Now let a month of that silence pass, and it is no longer an hourly feed.
+  await db.execute({
+    sql: 'update feeds set change_log = ? where id = ?',
+    args: [JSON.stringify([new Date(Date.now() - 30 * DAY).toISOString()]), feed.id],
+  });
+  await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: nothing });
+
+  const settled = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes);
+  assert.ok(settled / 1440 > 5, `a month of nothing -> every ${(settled / 1440).toFixed(0)} days`);
+});
+
+test('a feed that fills up after being empty is noticed at once', async () => {
+  // The other direction, and the reason emptiness is treated as a fingerprint
+  // rather than as a reason to stop caring. A newly submitted feed whose first
+  // crawl caught it empty must not be written off.
+  const feed = await seed();
+  await crawlFeed(db, feed, { resolve: async () => ({ ok: true, feed: { ...DOCUMENT.feed, items: [] } }) });
+
+  const empty = await q.feedBySlug(db, 'quiet');
+  const res = await crawlFeed(db, empty, { resolve });
+
+  assert.equal(res.newItems, 5, 'the posts land');
+  const after = await q.feedBySlug(db, 'quiet');
+  assert.equal(JSON.parse(after.change_log).length, 2, 'and it is recorded as a change');
 });

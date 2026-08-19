@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * How often a feed is worth re-reading, judged by how often it actually posts.
  *
@@ -178,7 +180,24 @@ export function newestPublished(items, now = Date.now()) {
 export function intervalFromDates(items, now = Date.now()) {
   const times = publishedTimes(items, now);
   if (times.length < 2) return null;
+  return scheduleFrom(times, now);
+}
 
+/**
+ * The interval a set of instants implies.
+ *
+ * The whole of the scheduling policy, extracted so that the two things which
+ * can stand in for "when did this feed publish" run through identical
+ * arithmetic rather than through two ladders that drift apart. Those two things
+ * are the dates in the document (`intervalFromDates`) and, when a document
+ * carries none, the times we ourselves watched its contents change
+ * (`intervalFromChanges`).
+ *
+ * @param {number[]} times epoch ms, newest first, at least one
+ * @param {number} now epoch ms
+ * @returns {number} minutes, between MIN_INTERVAL and MAX_INTERVAL
+ */
+function scheduleFrom(times, now) {
   const silence = Math.max(0, (now - times[0]) / 60_000);
 
   // The typical gap, not the mean. A blog that posted forty times during one
@@ -186,11 +205,11 @@ export function intervalFromDates(items, now = Date.now()) {
   // median describes the ordinary week, which is what we are scheduling for.
   const spacing = gaps(times);
 
-  // Every date in the document is the same instant. That is a feed with one
-  // publishing event, not a feed with a rhythm of zero — an archive dumped in
-  // one go, or a generator that stamps every entry with the build time. There
-  // is no cadence to infer, so schedule it on its silence alone, which is the
-  // only real evidence available.
+  // Every instant is the same one, or there is only one of them. That is a feed
+  // with a single publishing event, not a feed with a rhythm of zero — an
+  // archive dumped in one go, or a generator that stamps every entry with the
+  // build time. There is no cadence to infer, so schedule it on its silence
+  // alone, which is the only real evidence available.
   if (spacing.length === 0) return clamp(silence / 4, MIN_INTERVAL, MAX_INTERVAL);
 
   const rhythm = median(spacing);
@@ -229,4 +248,194 @@ function median(sorted) {
 function clamp(n, lo, hi) {
   if (!Number.isFinite(n)) return lo;
   return Math.round(Math.min(Math.max(n, lo), hi));
+}
+
+/* ------------------------------------------------- feeds that state no dates */
+
+/**
+ * How many observed changes to keep on the feed row.
+ *
+ * Twelve, which is a rhythm out of eleven gaps and a few kilobytes across the
+ * whole directory. More would buy a steadier median at the cost of describing a
+ * publisher who has since changed how often they post, which is the same
+ * trade-off `SAMPLE` makes and it lands in the same place.
+ */
+export const CHANGE_LOG_LIMIT = 12;
+
+/**
+ * The earliest instant this log can honestly hold.
+ *
+ * Every entry was written by this crawler's own clock, and this crawler did not
+ * exist in 2019. Anything older is a corrupt row rather than a very patient
+ * publisher.
+ */
+const EPOCH_FLOOR = Date.parse('2020-01-01T00:00:00.000Z');
+
+/**
+ * A fingerprint of what a feed currently contains.
+ *
+ * Over the *identity* of the items and not their bodies, because the question is
+ * "did this publisher publish", and a corrected typo in a post from March is not
+ * a publication. Sorted first, so a feed that reorders its entries — plenty of
+ * generators emit them in whatever order the filesystem walked — is not read as
+ * having republished all of them at once.
+ *
+ * A title is included alongside the guid and link because a retitled post is a
+ * visible editorial act the directory does want to notice, and because some
+ * feeds carry neither guid nor link and a title is all there is to key on.
+ *
+ * Truncated to 32 hex characters. This is compared for equality against a value
+ * we wrote ourselves, never looked up and never defended against an adversary
+ * choosing inputs, so the collision budget is enormous and the column stays
+ * small.
+ *
+ * **An empty document gets a signature like any other, and this matters more
+ * than it sounds.** Sampling production's undated feeds on 2026-08-19, most of
+ * the ones pinned to the hourly floor had `item_count = 0` -- they parse, they
+ * are simply empty, and they have been read every hour for months to be told so
+ * again. Returning nothing for them would make every crawl compare unequal to
+ * the last, which is exactly the "always changed, so always hourly" failure this
+ * module exists to end. Listing nothing is a fact about a feed, it is a stable
+ * one, and it deserves a stable fingerprint.
+ *
+ * A document whose items carry no guid, no link and no title hashes the same as
+ * an empty one. That is a real limitation and an acceptable one: an item with
+ * nothing to identify it cannot be stored, shown or de-duplicated either, so a
+ * feed made entirely of them has published nothing anybody can act on.
+ *
+ * @param {Array<{ guid?: unknown, link?: unknown, title?: unknown }>} items
+ * @returns {string} 32 hex characters, stable across reordering
+ */
+export function contentSignature(items) {
+  const keys = [];
+  for (const item of items ?? []) {
+    const guid = item?.guid ?? '';
+    const link = item?.link ?? '';
+    const title = item?.title ?? '';
+    const key = `${guid} ${link} ${title}`;
+    // An item with nothing to identify it cannot contribute; counting it would
+    // make N such items indistinguishable from one.
+    if (key !== '  ') keys.push(key);
+  }
+  keys.sort();
+  return createHash('sha256').update(keys.join(' ')).digest('hex').slice(0, 32);
+}
+
+/**
+ * The change log stored on a feed row, cleaned and newest first.
+ *
+ * Tolerant of anything a text column can hold, because it is written by a
+ * version of the crawler that may not be the one reading it: bad JSON, a
+ * non-array, unparseable entries and future dates all degrade to "no history",
+ * which costs a feed one crawl on the fallback ladder rather than an exception
+ * on the hot path.
+ *
+ * @param {unknown} raw the `change_log` column
+ * @param {number} [now] epoch ms
+ * @returns {number[]} epoch ms, newest first
+ */
+export function changeTimes(raw, now = Date.now()) {
+  if (raw === null || raw === undefined || raw === '') return [];
+  let parsed;
+  try {
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  const out = [];
+  for (const entry of parsed) {
+    // A number is taken as epoch milliseconds, which is what a hand-written
+    // backfill or another language's JSON encoder is most likely to have put
+    // here. Everything else goes through Date.parse.
+    const t = typeof entry === 'number' ? entry : Date.parse(String(entry));
+    if (!Number.isFinite(t)) continue;
+    // Our own clock wrote these, so a future one is a bad row rather than a fast
+    // publisher — and unlike a publisher's date there is no skew to allow for.
+    if (t > now) continue;
+    // Nor can one predate the service. This is not pedantry: `Date.parse('123')`
+    // is the year 123, so a bare number that slipped in as a string would read
+    // as nineteen centuries of silence, and the feed would be filed at the
+    // ninety-day ceiling on the strength of a typo.
+    if (t < EPOCH_FLOOR) continue;
+    out.push(t);
+  }
+  return out.sort((a, b) => b - a).slice(0, CHANGE_LOG_LIMIT);
+}
+
+/**
+ * The change log to store after this crawl.
+ *
+ * Returns the existing entries untouched when nothing changed, so an unchanged
+ * feed writes the same string back and the column stays a record of changes
+ * rather than a record of crawls — which is the whole point of it, since crawls
+ * are exactly what this is trying to stop doing.
+ *
+ * @param {unknown} raw the `change_log` column as it stands
+ * @param {boolean} changed whether this crawl saw different contents
+ * @param {number} [now] epoch ms
+ * @returns {string} JSON, ready to store
+ */
+export function recordChange(raw, changed, now = Date.now()) {
+  const times = changeTimes(raw, now);
+  const next = changed ? [now, ...times].slice(0, CHANGE_LOG_LIMIT) : times;
+  return JSON.stringify(next.map((t) => new Date(t).toISOString()));
+}
+
+/**
+ * How long to wait before reading a feed whose document states no dates.
+ *
+ * The substitute for `intervalFromDates`, running the same rhythm-and-silence
+ * arithmetic over instants we observed rather than instants a publisher claimed.
+ * It exists because those feeds are, measured on production on 2026-08-19, two
+ * percent of the directory and forty-four percent of the crawl demand: with no
+ * dates there is nothing for cadence to reason about, so they fall to the old
+ * doubling ladder, and the ladder returns to its floor whenever a crawl stores
+ * anything. A feed whose guids churn stores something every time and therefore
+ * never leaves the floor.
+ *
+ * **One observation is enough here, and that is the real difference from
+ * `intervalFromDates`.** A single date in a document says when one post went out
+ * and nothing about whether another will follow, so dates need two before they
+ * mean anything. A single entry in this log means "the contents changed then,
+ * and we have looked every time since and seen nothing" — because the looking is
+ * ours. Silence measured from it is therefore evidence, and a feed that never
+ * changes decays towards the ceiling on its own: each crawl finds the silence a
+ * little longer, sets the interval to a quarter of it, and the gap grows by
+ * about a quarter each time until it reaches ninety days. No "is this feed dead"
+ * classifier, and nothing to maintain.
+ *
+ * @param {unknown} raw the `change_log` column
+ * @param {number} [now] epoch ms
+ * @returns {number|null} minutes, or null when the log holds nothing usable and
+ *   the caller should fall back to the ladder
+ */
+export function intervalFromChanges(raw, now = Date.now()) {
+  const times = changeTimes(raw, now);
+  if (times.length === 0) return null;
+  return scheduleFrom(times, now);
+}
+
+/**
+ * The interval to store, given one just computed and the one the feed already
+ * had.
+ *
+ * Used on the paths where a crawl learned that **nothing had changed** — a 304,
+ * or a document whose signature matched what was already on file. Such a crawl
+ * is evidence in one direction only, so the interval may lengthen and must never
+ * shorten: a feed sitting at ninety days because it has published nothing since
+ * 2023 should not be pulled back to a fortnight merely because we checked and it
+ * was still silent. Without this the interval of a slow feed oscillates instead
+ * of settling.
+ *
+ * @param {number|null} computed
+ * @param {unknown} current the feed's `fetch_interval_minutes`
+ * @returns {number|null} null when there was nothing to compute either
+ */
+export function neverSooner(computed, current) {
+  if (computed === null || computed === undefined) return null;
+  const held = Number(current);
+  if (!Number.isFinite(held) || held <= 0) return clamp(computed, MIN_INTERVAL, MAX_INTERVAL);
+  return clamp(Math.max(computed, held), MIN_INTERVAL, MAX_INTERVAL);
 }

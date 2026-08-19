@@ -196,7 +196,7 @@ async function tick() {
     // stdout: they are the content of a log somebody is watching, and twenty-five
     // a minute forever is not what Railway's viewer is for. The tick summary
     // below is the durable record of the same work.
-    const { crawled, failed, items, hosts } = await crawlDue(
+    const { crawled, failed, items, unchanged, hosts } = await crawlDue(
       db,
       batchSize,
       concurrency,
@@ -210,6 +210,12 @@ async function tick() {
         crawled,
         failed,
         items,
+        // Of those crawls, how many the publisher answered with a 304 -- a
+        // header exchange and one small write, instead of a document, a parse
+        // and an upsert. Whether a server honours a conditional request is
+        // entirely up to that server, so this cannot be predicted from here and
+        // has to be watched.
+        unchanged,
         // How many distinct hosts the batch touched. The number that says
         // whether the worker pool had anything to do: `crawled` and `ms`
         // together look identical for a batch spread over 80 hosts and one

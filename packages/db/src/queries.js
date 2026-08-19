@@ -13,10 +13,20 @@ import { newId, nowIso } from './client.js';
  */
 
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
+// The scheduling signals on the last line are not read by any page, and they are
+// here anyway. `crawlFeed` takes a feed row and decides from these four columns
+// whether to ask conditionally and whether the contents changed; handed a row
+// selected without them it cannot tell "this column was not selected" from "this
+// feed has no fingerprint yet", so it concludes the feed has changed -- every
+// time, for ever. That pins the feed at the floor and writes a change-log entry
+// per crawl, which then reads back as a feed publishing hourly. Nothing errors.
+// They are a few hundred bytes next to `description` and `categories`, which is
+// a cheap price for a failure mode that would be invisible.
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
   fetch_interval_minutes, next_fetch_at, item_count, last_published_at, created_at, updated_at, source_kind,
-  card_url, card_width, card_height, card_type, authors_checked_at`;
+  card_url, card_width, card_height, card_type, authors_checked_at,
+  http_etag, http_last_modified, content_hash, change_log`;
 
 /** The categories the directory is browsable by. */
 export const KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
@@ -532,6 +542,17 @@ function textLength(html) {
  * @param {object[]} items parsed items, as `upsertItems` takes them
  * @param {object} feed parsed feed metadata, as `markCrawlSuccess` takes it
  * @param {number} previousItemCount `item_count` from the due row
+ * @param {number|null} intervalMinutes the interval the caller worked out, or
+ *   null to let the SQL ladder below decide
+ * @param {string|null} lastPublishedAt newest believable date in the document
+ * @param {Array<{ sql: string, args: unknown[] }>} extra topics and credits
+ * @param {{ etag?: string|null, lastModified?: string|null, contentHash?: string|null, changeLog?: string|null }} [signals]
+ *   what this crawl learned about when to come back -- see migration 0032. An
+ *   object rather than four more positional parameters, which at this arity is
+ *   the difference between a readable call site and a row of nulls nobody can
+ *   count. Every field is written with `coalesce(?, column)`, so omitting one
+ *   keeps what was there rather than clearing it: a server that stopped sending
+ *   an ETag has not told us the old one is wrong about anything else.
  * @returns {Promise<{ total: number, stored: number }>} `stored` is the change
  *   in the stored total — posts actually new, not posts offered.
  */
@@ -544,6 +565,7 @@ export async function storeCrawl(
   intervalMinutes = null,
   lastPublishedAt = null,
   extra = [],
+  signals = {},
 ) {
   const now = nowIso();
   const before = Number(previousItemCount) || 0;
@@ -593,6 +615,15 @@ export async function storeCrawl(
             -- whether this publisher is still active" -- which would be a
             -- worse claim than the one we already had.
             last_published_at = coalesce(?, last_published_at),
+            -- Kept rather than cleared when this crawl has nothing to say about
+            -- them, for the same reason as last_published_at above. A server
+            -- that answered without an ETag this once has not retracted the one
+            -- it gave us last time, and dropping it would turn every later
+            -- request back into an unconditional one.
+            http_etag = coalesce(?, http_etag),
+            http_last_modified = coalesce(?, http_last_modified),
+            content_hash = coalesce(?, content_hash),
+            change_log = coalesce(?, change_log),
             updated_at = ?
           where id = ?
           returning item_count`,
@@ -609,6 +640,10 @@ export async function storeCrawl(
       ...ladderArgs, // next_fetch_at
       id, // item_count
       lastPublishedAt,
+      signals.etag ?? null,
+      signals.lastModified ?? null,
+      signals.contentHash ?? null,
+      signals.changeLog ?? null,
       now,
       id,
     ],
@@ -2040,8 +2075,21 @@ export async function dueFeeds(db, limit = 25) {
     // crawl still needs it to know what it is fetching.
     // item_count comes along so a crawl that stored nothing can pass the number
     // straight back instead of paying for a count(*) to be told it is unchanged.
+    //
+    // last_published_at is what the crawl compares the document against to
+    // decide whether this publisher has published since we last looked -- the
+    // guard that keeps topics and credits from being rewritten on every crawl of
+    // an unchanged feed. It was missing from this select, so `knownPublished`
+    // read null for every feed the poller crawled and the guard was open in
+    // production the whole time.
+    //
+    // The last four are the conditional-request and change-detection signals
+    // added in 0032: what the server's validators were, what the feed contained,
+    // and when we last saw that change. They are what lets a feed stating no
+    // dates be scheduled on evidence rather than on the doubling ladder.
     sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
-                 item_count
+                 item_count, last_published_at,
+                 http_etag, http_last_modified, content_hash, change_log
           from feeds
           where status <> 'dead' and next_fetch_at <= ?
           order by next_fetch_at asc limit ?`,
@@ -2487,6 +2535,52 @@ export async function youtubeChannelIds(db) {
   }
 
   return ids;
+}
+
+/**
+ * Settle a feed that was read successfully and had not changed.
+ *
+ * The cheapest crawl there is, and the one this whole change exists to make
+ * common. Nothing was published, so there are no items to upsert, no topics to
+ * re-derive, no byline to re-check and no count to recompute -- a single-row
+ * update by primary key, which on this database is one write transaction where a
+ * full crawl is one write transaction doing considerably more inside it.
+ *
+ * `item_count` is deliberately not recomputed. It cannot have changed: nothing
+ * was written. Recomputing it would add a `count(*)` over feed_items to the one
+ * path in the crawler that has no reason to touch that table at all.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {number} minutes when to come back
+ * @param {{ etag?: string|null, lastModified?: string|null, contentHash?: string|null, changeLog?: string|null }} [signals]
+ */
+export async function markUnchanged(db, id, minutes, signals = {}) {
+  const now = nowIso();
+  await db.execute({
+    sql: `update feeds set
+            status = 'active', last_fetched_at = ?, last_success_at = ?,
+            last_error = null, error_count = 0,
+            fetch_interval_minutes = ?, next_fetch_at = ?,
+            http_etag = coalesce(?, http_etag),
+            http_last_modified = coalesce(?, http_last_modified),
+            content_hash = coalesce(?, content_hash),
+            change_log = coalesce(?, change_log),
+            updated_at = ?
+          where id = ?`,
+    args: [
+      now,
+      now,
+      minutes,
+      nowIso(minutes * 60_000),
+      signals.etag ?? null,
+      signals.lastModified ?? null,
+      signals.contentHash ?? null,
+      signals.changeLog ?? null,
+      now,
+      id,
+    ],
+  });
 }
 
 /**
