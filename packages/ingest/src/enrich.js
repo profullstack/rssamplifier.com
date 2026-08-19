@@ -4,6 +4,7 @@ import {
   credit,
   hostIdentity,
   identityFromHtml,
+  identityFromHumansTxt,
   identityFromProfile,
   identityKey,
   linksBackTo,
@@ -40,8 +41,36 @@ import { authors as a } from '@rssamplifier/db';
  * @typedef {import('@libsql/client').Client} Client
  */
 
-/** Pages tried on a site, in order, until one names somebody. */
-const IDENTITY_PATHS = ['/', '/about', '/about/', '/about-me', '/contact', '/colophon'];
+/**
+ * Pages tried on a site, in order, until one names somebody.
+ *
+ * `/now` and `/uses` are here because this is the small web: both are
+ * conventions of exactly the population this directory indexes, both are
+ * written in the first person, and a blog that has one usually has no `/about`
+ * — which is why they sit after the pages that are more likely to exist rather
+ * than instead of them. `MAX_PAGES` still bounds the whole list.
+ */
+const IDENTITY_PATHS = [
+  '/',
+  '/about',
+  '/about/',
+  '/about-me',
+  '/contact',
+  '/colophon',
+  '/now',
+  '/uses',
+];
+
+/**
+ * The file whose only job is to name the people.
+ *
+ * Tried last and only when nothing else named anybody, because it is a request
+ * spent on a file most sites do not have. When a site does have one it is the
+ * best source on it: every other place identity turns up is markup that carries
+ * it as a side effect, while somebody writing this was answering the question
+ * directly.
+ */
+const HUMANS_TXT = '/humans.txt';
 
 /** Cap on the pages fetched per feed, whatever the list above allows. */
 const MAX_PAGES = 3;
@@ -317,6 +346,35 @@ export async function enrichFeedAuthors(db, feed, opts = {}) {
       // The homepage named somebody and linked them somewhere: that is the
       // whole answer, and the /about page would only repeat it.
       if (identity.credits.length > 0 && identity.profiles.length > 0) break;
+    }
+  }
+
+  // 2b. humans.txt, when the pages named nobody.
+  //
+  // Conditional on purpose. This is a file most sites do not publish, so asking
+  // every site for it would spend one request per feed across the directory to
+  // help the minority that has one. Asking only after the ordinary pages have
+  // come back empty spends it exactly where it is the difference between an
+  // author and no author.
+  //
+  // Not parsed as HTML: it is a text file, and a server that answers every path
+  // with its 404 page would otherwise turn that page into a person.
+  if (siteUrl && credits.length === 0) {
+    let target;
+    try {
+      target = new URL(HUMANS_TXT, siteUrl).toString();
+    } catch {
+      target = '';
+    }
+
+    if (target) {
+      const page = await fetchPage(target).catch(() => null);
+      if (page?.ok) {
+        pages += 1;
+        const found = identityFromHumansTxt(page.body, page.url || target);
+        collect(found.profiles);
+        credits.push(...found.credits);
+      }
     }
   }
 

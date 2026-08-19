@@ -67,6 +67,7 @@ export {
   feedContacts,
   feedCredits,
   identityFromHtml,
+  identityFromHumansTxt,
   identityKey,
   isRoleEmail,
   linksBackTo,
