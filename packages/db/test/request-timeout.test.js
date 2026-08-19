@@ -10,6 +10,34 @@ import { withTimeout } from '../src/client.js';
  * out entirely.
  */
 
+/**
+ * A `fetch` that never answers, and rejects when the request is abandoned.
+ *
+ * The `aborted` check is the whole point of this helper existing. A real fetch
+ * handed a signal that has *already* fired rejects immediately, but an `abort`
+ * listener added afterwards never hears anything — the event has been and gone.
+ * So a stub that only listens hangs for ever whenever the deadline wins the
+ * race to the first line of the stub, which is exactly what a loaded CI runner
+ * arranges: these four tests were cancelled on the first run of the new
+ * workflow with "Promise resolution is still pending but the event loop has
+ * already resolved", while passing every time on a quiet laptop.
+ *
+ * @param {(reason: unknown) => Error|unknown} [reasonFor] what to reject with
+ * @returns {(input: unknown, init?: { signal?: AbortSignal }) => Promise<never>}
+ */
+function neverAnswers(reasonFor = (reason) => reason) {
+  return (_input, init = {}) =>
+    new Promise((_resolve, reject) => {
+      const { signal } = init;
+      if (!signal) return;
+      if (signal.aborted) {
+        reject(reasonFor(signal.reason));
+        return;
+      }
+      signal.addEventListener('abort', () => reject(reasonFor(signal.reason)));
+    });
+}
+
 test('a request that outlives its deadline is abandoned', async () => {
   // The reason this exists. undici's default is five minutes, and five minutes
   // is not a timeout -- it is a promise that one wedged request will hold a
@@ -19,10 +47,7 @@ test('a request that outlives its deadline is abandoned', async () => {
   const fetching = withTimeout(30);
   const original = globalThis.fetch;
 
-  globalThis.fetch = (_input, init) =>
-    new Promise((_resolve, reject) => {
-      init.signal.addEventListener('abort', () => reject(init.signal.reason));
-    });
+  globalThis.fetch = neverAnswers();
 
   try {
     await assert.rejects(
@@ -54,10 +79,7 @@ test("a caller's own signal still wins if it fires first", async () => {
   const original = globalThis.fetch;
   const controller = new AbortController();
 
-  globalThis.fetch = (_input, init) =>
-    new Promise((_resolve, reject) => {
-      init.signal.addEventListener('abort', () => reject(new Error('aborted by caller')));
-    });
+  globalThis.fetch = neverAnswers(() => new Error('aborted by caller'));
 
   try {
     const pending = fetching('https://example.invalid/', { signal: controller.signal });
