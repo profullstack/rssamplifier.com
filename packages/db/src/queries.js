@@ -2179,14 +2179,69 @@ export async function recentlyCrawled(db, limit = 20) {
   return rows;
 }
 
+/** The columns a crawl needs off a feed row. Shared by both due queries. */
+const DUE_COLUMNS = `id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
+                 item_count, last_published_at,
+                 http_etag, http_last_modified, content_hash, change_log`;
+
 /**
- * Feeds whose next_fetch_at has passed.
+ * The share of a tick reserved for hand-submitted feeds.
+ *
+ * Half, so the express lane cannot starve the backlog no matter how many
+ * submissions arrive: a tick always spends at least half of itself on the
+ * ordinary queue. In practice the reservation is never taken up — real people
+ * submit a handful of blogs an hour against a batch of twenty-five — so this
+ * is a ceiling on the pathological case rather than a division of normal work.
+ */
+const EXPRESS_SHARE = 0.5;
+
+/**
+ * Feeds a person submitted by hand and that have never been crawled.
+ *
+ * The express lane. Read before the ordinary queue because ordering the two
+ * together cannot work: they are ordered by `next_fetch_at asc` and the backlog
+ * is *older*, so a submission stamped `now` sorts last behind ~307,000 feeds
+ * that were overdue before it arrived. Sorting by priority instead would put a
+ * 416,000-row sort in front of every tick. Two reads, the first against a
+ * partial index that is normally empty, is the cheap way to say "these first".
+ *
+ * `last_fetched_at is null` is in the predicate rather than being cleared after
+ * the fact, so this expedites the *first* crawl only — which is the whole of
+ * what a submitter is waiting for. Afterwards the feed is scheduled on its own
+ * publishing rhythm like everything else.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function expressFeeds(db, limit = 25) {
+  if (limit <= 0) return [];
+
+  const { rows } = await db.execute({
+    sql: `select ${DUE_COLUMNS}
+          from feeds
+          where priority > 0 and last_fetched_at is null
+            and status <> 'dead' and next_fetch_at <= ?
+          order by next_fetch_at asc limit ?`,
+    args: [nowIso(), limit],
+  });
+  return rows;
+}
+
+/**
+ * Feeds whose next_fetch_at has passed, hand-submitted ones first.
  *
  * @param {Client} db
  * @param {number} [limit]
  * @returns {Promise<object[]>}
  */
 export async function dueFeeds(db, limit = 25) {
+  // Bounded rather than unbounded even though the express table is tiny: the
+  // point of a reserved share is that it is reserved in both directions.
+  const express = await expressFeeds(db, Math.floor(limit * EXPRESS_SHARE));
+  const remaining = limit - express.length;
+  if (remaining <= 0) return express;
+
   const { rows } = await db.execute({
     // slug and title are along for the log: a crawler log line that names the
     // blog and links to its page is worth two columns the crawl itself is
@@ -2206,15 +2261,19 @@ export async function dueFeeds(db, limit = 25) {
     // added in 0032: what the server's validators were, what the feed contained,
     // and when we last saw that change. They are what lets a feed stating no
     // dates be scheduled on evidence rather than on the doubling ladder.
-    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
-                 item_count, last_published_at,
-                 http_etag, http_last_modified, content_hash, change_log
+    //
+    // The express rows are excluded rather than deduplicated afterwards: they
+    // have just been read and are about to be crawled, and handing the same
+    // feed to two workers in one tick is two crawls of it.
+    sql: `select ${DUE_COLUMNS}
           from feeds
           where status <> 'dead' and next_fetch_at <= ?
+            and not (priority > 0 and last_fetched_at is null)
           order by next_fetch_at asc limit ?`,
-    args: [nowIso(), limit],
+    args: [nowIso(), remaining],
   });
-  return rows;
+
+  return express.concat(rows);
 }
 
 /**
@@ -2336,13 +2395,14 @@ export async function insertFeedsBulk(db, feeds) {
 
   const now = nowIso();
   const row = `(?, ?, ?, ?, ?, null, null, null, null, '[]', 'pending', null, null, null, 0,
-                60, ?, 0, ?, ?, ?)`;
+                60, ?, 0, ?, ?, ?, ?)`;
 
   const result = await db.execute({
     sql: `insert into feeds
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
        categories, status, last_fetched_at, last_success_at, last_error, error_count,
-       fetch_interval_minutes, next_fetch_at, item_count, submission_id, created_at, updated_at)
+       fetch_interval_minutes, next_fetch_at, item_count, submission_id, created_at, updated_at,
+       priority)
       values ${feeds.map(() => row).join(', ')}
       on conflict do nothing`,
     args: feeds.flatMap((f) => [
@@ -2355,6 +2415,10 @@ export async function insertFeedsBulk(db, feeds) {
       f.submission_id ?? null,
       now,
       now,
+      // Zero unless the caller is putting a hand-submitted feed in the express
+      // lane. Written here rather than defaulted by the column so that a row
+      // inserted by an import is explicit about not being expedited.
+      Number(f.priority) > 0 ? 1 : 0,
     ]),
   });
 
