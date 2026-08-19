@@ -10,6 +10,54 @@ import { withTimeout } from '../src/client.js';
  * out entirely.
  */
 
+/**
+ * A `fetch` that never answers, and rejects when the request is abandoned.
+ *
+ * Two things a naive stub gets wrong, both of which cost a CI run to find.
+ *
+ * **It has to keep the process alive.** `AbortSignal.timeout()` schedules an
+ * *unref'd* timer — by design, so a pending deadline never holds a program
+ * open — and a stub that merely returns a promise gives the event loop nothing
+ * else to do. The loop drains, and the test runner reports "Promise resolution
+ * is still pending but the event loop has already resolved" and cancels the
+ * whole file. In production this cannot happen, because a real in-flight fetch
+ * holds a socket open; only a stub that does literally nothing is exposed to
+ * it. Node 24's runner happens to keep the loop alive and Node 22's does not,
+ * which is why this passed locally and failed in CI on the same commit.
+ *
+ * **It has to honour a signal that has already fired.** A real fetch handed an
+ * aborted signal rejects at once; an `abort` listener added afterwards hears
+ * nothing, because the event has been and gone.
+ *
+ * @param {(reason: unknown) => Error|unknown} [reasonFor] what to reject with
+ * @returns {(input: unknown, init?: { signal?: AbortSignal }) => Promise<never>}
+ */
+function neverAnswers(reasonFor = (reason) => reason) {
+  return (_input, init = {}) =>
+    new Promise((_resolve, reject) => {
+      const { signal } = init;
+      // Deliberately ref'd, and cleared on every exit below so it cannot outlive
+      // the request it is standing in for.
+      const inFlight = setTimeout(() => {}, 30_000);
+      const abandon = (reason) => {
+        clearTimeout(inFlight);
+        reject(reasonFor(reason));
+      };
+
+      // `withTimeout` always supplies one; a stub left pending with nothing to
+      // wake it would wedge the file for thirty seconds rather than fail.
+      if (!signal) {
+        clearTimeout(inFlight);
+        return;
+      }
+      if (signal.aborted) {
+        abandon(signal.reason);
+        return;
+      }
+      signal.addEventListener('abort', () => abandon(signal.reason));
+    });
+}
+
 test('a request that outlives its deadline is abandoned', async () => {
   // The reason this exists. undici's default is five minutes, and five minutes
   // is not a timeout -- it is a promise that one wedged request will hold a
@@ -19,10 +67,7 @@ test('a request that outlives its deadline is abandoned', async () => {
   const fetching = withTimeout(30);
   const original = globalThis.fetch;
 
-  globalThis.fetch = (_input, init) =>
-    new Promise((_resolve, reject) => {
-      init.signal.addEventListener('abort', () => reject(init.signal.reason));
-    });
+  globalThis.fetch = neverAnswers();
 
   try {
     await assert.rejects(
@@ -54,10 +99,7 @@ test("a caller's own signal still wins if it fires first", async () => {
   const original = globalThis.fetch;
   const controller = new AbortController();
 
-  globalThis.fetch = (_input, init) =>
-    new Promise((_resolve, reject) => {
-      init.signal.addEventListener('abort', () => reject(new Error('aborted by caller')));
-    });
+  globalThis.fetch = neverAnswers(() => new Error('aborted by caller'));
 
   try {
     const pending = fetching('https://example.invalid/', { signal: controller.signal });
