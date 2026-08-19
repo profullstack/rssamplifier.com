@@ -13,7 +13,8 @@ export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Alerts',
-  description: 'Where you are told about new posts from the blogs and topics you follow.',
+  description:
+    'Where you are told about new posts from the blogs, topics and people you follow.',
 };
 
 /** What each error code from /api/alerts/channels means to a reader. */
@@ -52,7 +53,8 @@ export default async function AlertsPage({ searchParams }) {
   ]);
 
   const hasEmail = channels.some((c) => c.kind === 'email');
-  const watching = following.feeds.length + following.topics.length;
+  const watching =
+    following.feeds.length + following.topics.length + following.authors.length;
 
   return (
     <>
@@ -150,7 +152,8 @@ export default async function AlertsPage({ searchParams }) {
       {watching === 0 ? (
         <p className="empty">
           Nothing yet. Open a blog you <a href="/following">follow</a> — or any{' '}
-          <a href="/topics">topic</a> — and press 🔔 beside the Follow button.
+          <a href="/topics">topic</a> or <a href="/authors">person</a> — and press 🔔 beside the
+          Follow button.
         </p>
       ) : (
         <>
@@ -164,6 +167,16 @@ export default async function AlertsPage({ searchParams }) {
                   </a>
                 );
               })}
+            </div>
+          )}
+
+          {following.authors.length > 0 && (
+            <div className="feed-meta detail">
+              {following.authors.map((a) => (
+                <a key={String(a.slug)} href={`/authors/${encodeURIComponent(String(a.slug))}`}>
+                  {String(a.name)}
+                </a>
+              ))}
             </div>
           )}
 

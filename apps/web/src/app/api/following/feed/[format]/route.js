@@ -58,7 +58,7 @@ export async function GET(req, { params }) {
     );
   }
 
-  const { feeds, topics, items } = await following(client, String(user.id), {
+  const { feeds, topics, authors, items } = await following(client, String(user.id), {
     limit: RIVER_LIMIT,
   });
 
@@ -85,10 +85,11 @@ export async function GET(req, { params }) {
     format,
     {
       title: 'Following — RSS Amplifier',
-      description: `Recent posts from the ${count(topics.length, 'topic')} and ${count(
-        feeds.length,
-        'blog',
-      )} this RSS Amplifier account follows.`,
+      description: `Recent posts from the ${count(topics.length, 'topic')}, ${count(
+        authors.length,
+        'person',
+        'people',
+      )} and ${count(feeds.length, 'blog')} this RSS Amplifier account follows.`,
       link: `${origin}/following`,
       selfUrl: followingFeedUrl(origin, token, format),
     },
@@ -116,8 +117,8 @@ export async function GET(req, { params }) {
  * @param {string} noun
  * @returns {string}
  */
-function count(n, noun) {
-  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+function count(n, noun, plural = `${noun}s`) {
+  return `${n} ${n === 1 ? noun : plural}`;
 }
 
 /**

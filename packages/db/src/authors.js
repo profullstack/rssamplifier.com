@@ -853,6 +853,51 @@ export async function postsByAuthor(db, feedIds, limit = 12) {
   return rows;
 }
 
+/**
+ * How many of one author's feeds a river reads.
+ *
+ * The same bound `ALERT_AUTHOR_FEEDS` puts on the alert query, for the same
+ * reason: somebody credited on more feeds than this is a mis-merge rather than
+ * a polymath, and either way the page should not pay for it.
+ */
+export const RIVER_AUTHOR_FEEDS = 20;
+
+/**
+ * What one person has published lately, by their id.
+ *
+ * The sibling of `postsByAuthor`, which takes feed ids because its caller — the
+ * author page — has already loaded them. The river has not: it holds a list of
+ * follows and would otherwise have to fetch every author in full simply to
+ * learn which feeds are theirs, which is one round trip per followed person
+ * before a single post has been read.
+ *
+ * @param {Client} db
+ * @param {string} authorId
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function postsByAuthorId(db, authorId, limit = 60) {
+  const { rows } = await db.execute({
+    sql: `with picked as (
+            select fa.feed_id from feed_authors fa
+            join feeds f on f.id = fa.feed_id and f.status <> 'dead'
+            where fa.author_id = ?
+            limit ?
+          )
+          select i.guid, i.title, i.url, i.summary, i.published_at, i.created_at,
+                 i.image_url, i.audio_url, i.audio_type, i.audio_seconds, i.cluster_key,
+                 f.slug as feed_slug, f.title as feed_title, f.category, f.feed_url
+          from feed_items i
+          join feeds f on f.id = i.feed_id
+          where i.feed_id in (select feed_id from picked)
+          order by i.published_at desc nulls last, i.created_at desc
+          limit ?`,
+    args: [authorId, RIVER_AUTHOR_FEEDS, limit],
+  });
+
+  return rows;
+}
+
 /* ------------------------------------------------------------------ *
  * Bought searches
  * ------------------------------------------------------------------ */

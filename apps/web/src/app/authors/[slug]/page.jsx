@@ -1,10 +1,12 @@
 import { notFound } from 'next/navigation';
-import { authors } from '@rssamplifier/db';
+import { alerts, authors } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { currentUser } from '../../../lib/auth.js';
 import { feedAlternates } from '../../../lib/subscribe.js';
 import AdBanner from '../../AdBanner.jsx';
 import AuthorLinks from '../../AuthorLinks.jsx';
+import FollowControls from '../../FollowControls.jsx';
 import SubscribeLinks from '../../SubscribeLinks.jsx';
 import { CATEGORIES } from '../../CategoryIndex.jsx';
 import ListFilter from '../../ListFilter.jsx';
@@ -58,6 +60,15 @@ export default async function AuthorPage({ params }) {
 
   const feeds = person.feeds ?? [];
   const links = person.links ?? [];
+
+  // Whether this reader already follows them, and whether that follow is
+  // alerting. One round trip for both, the way the feed and topic pages do it:
+  // the button and the bell are rendered together and asking twice would be two
+  // queries for one row.
+  const user = await currentUser();
+  const follow = user
+    ? await alerts.authorFollowState(db(), String(user.id), String(person.id))
+    : { following: false, alerts: false };
 
   // What they have published lately, read off their own feeds' ids rather than
   // searched for -- see `postsByAuthor`. A profile that lists the blogs but not
@@ -141,6 +152,29 @@ export default async function AuthorPage({ params }) {
       </header>
 
       <AuthorLinks links={links} prominent />
+
+      {/* Follow the person, and then decide whether to be told. Above the
+          subscribe links deliberately: those hand the reader a document to take
+          somewhere else, and this keeps them here, which is the thing the page
+          could describe and not offer.
+
+          Only where there is something to follow. A profile with no credited
+          feeds would produce a follow that can never deliver anything, which is
+          the same reason the subscribe links below are conditional. */}
+      {feeds.length > 0 && (
+        <div className="detail-actions">
+          <FollowControls
+            endpoint="/api/follows/authors"
+            kind="author"
+            slug={slug}
+            following={follow.following}
+            alerts={follow.alerts}
+            signedIn={Boolean(user)}
+            next={`/authors/${slug}`}
+            label={`Follow ${person.name}`}
+          />
+        </div>
+      )}
 
       {/* Everything they publish, wherever they publish it, as one feed. Only
           offered when there is something behind it: a subscribe link on a

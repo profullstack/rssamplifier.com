@@ -122,11 +122,20 @@ export function renderEmail(items, opts = {}) {
 /**
  * How a post says which follow brought it, when that is not simply its blog.
  *
+ * A followed blog needs no suffix: the post is already attributed to it, and
+ * "via" the thing it plainly came from reads as noise. A topic and a person
+ * both do need one, because in either case the reason it arrived is not the
+ * publication printed beside it. Following someone who writes in four places is
+ * the whole point of an author follow, so the name is the part that explains
+ * the alert.
+ *
  * @param {ReturnType<typeof alertItem>} item
  * @returns {string}
  */
 function viaSuffix(item) {
-  return item.via.kind === 'topic' ? ` · via ${item.via.title}` : '';
+  const { kind, title } = item.via;
+  if (!title) return '';
+  return kind === 'topic' || kind === 'author' ? ` · via ${title}` : '';
 }
 
 /**

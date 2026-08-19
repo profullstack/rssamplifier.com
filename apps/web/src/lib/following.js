@@ -1,4 +1,4 @@
-import { accounts, q } from '@rssamplifier/db';
+import { accounts, authors as people, q } from '@rssamplifier/db';
 import { dedupeItems } from '@rssamplifier/feed';
 
 import { topicGroup } from './topicGroups.js';
@@ -6,14 +6,17 @@ import { topicGroup } from './topicGroups.js';
 /**
  * One reader's river: everything they follow, in one list.
  *
- * Two kinds of follow feed it. A followed **blog** is a publication — tell me
+ * Three kinds of follow feed it. A followed **blog** is a publication — tell me
  * when these people post. A followed **topic** is a subject — tell me when
  * anybody posts about this — and it may be narrowed to one category of that
  * topic, so /topics/ai and /topics/ai/podcasts are followed separately the way
- * they are browsed separately.
+ * they are browsed separately. A followed **author** is a person, which is none
+ * of the above: somebody with a blog, a newsletter and a podcast is three
+ * publications, and following the person is the only way to ask for all three
+ * and for the fourth they have not started yet.
  *
- * Both end up in the same merged list, because the reader did not ask for two
- * lists. What the list keeps per row is where it came from: `via` names the
+ * All three end up in the same merged list, because the reader did not ask for
+ * three lists. What the list keeps per row is where it came from: `via` names the
  * follow that pulled it in, so a post that turned up because of a topic can say
  * so instead of appearing to come from a blog nobody remembers following.
  */
@@ -32,6 +35,16 @@ import { topicGroup } from './topicGroups.js';
  * is most likely to still care about.
  */
 export const RIVER_TOPICS = 12;
+
+/**
+ * How many followed people the river draws from.
+ *
+ * The same cap as topics and for the same reason, one query each. Set to the
+ * same number rather than a tuned one: an author query reads at most twenty
+ * feeds by primary key and is cheaper than a topic's, so if twelve topics are
+ * affordable then twelve people certainly are.
+ */
+export const RIVER_AUTHORS = 12;
 
 /**
  * How many posts a following river carries, on the page and in the feed.
@@ -125,25 +138,33 @@ function published(row) {
  *
  * @param {import('@libsql/client').Client} client
  * @param {string} userId
- * @param {{ limit?: number, riverTopics?: number }} [opts]
+ * @param {{ limit?: number, riverTopics?: number, riverAuthors?: number }} [opts]
  * @returns {Promise<{
  *   feeds: object[],
  *   topics: object[],
+ *   authors: object[],
  *   items: object[],
  *   topicsUsed: number,
+ *   authorsUsed: number,
  * }>}
  */
 export async function following(client, userId, opts = {}) {
-  const { limit = RIVER_LIMIT, riverTopics = RIVER_TOPICS } = opts;
+  const {
+    limit = RIVER_LIMIT,
+    riverTopics = RIVER_TOPICS,
+    riverAuthors = RIVER_AUTHORS,
+  } = opts;
 
-  const [feeds, topics] = await Promise.all([
+  const [feeds, topics, authors] = await Promise.all([
     accounts.followedFeeds(client, userId),
     accounts.followedTopics(client, userId),
+    accounts.followedAuthors(client, userId),
   ]);
 
   const drawnFrom = topics.slice(0, riverTopics);
+  const peopleDrawnFrom = authors.slice(0, riverAuthors);
 
-  const [feedItems, topicItems] = await Promise.all([
+  const [feedItems, topicItems, authorItems] = await Promise.all([
     feeds.length ? accounts.followedItems(client, userId, PER_SOURCE) : Promise.resolve([]),
     Promise.all(
       drawnFrom.map(async (follow) => {
@@ -162,6 +183,19 @@ export async function following(client, userId, opts = {}) {
         };
       }),
     ),
+    // One source per followed person. Attributed to the person rather than to
+    // the publication the row happens to carry, which is the whole reason
+    // somebody follows an author instead of their blog.
+    Promise.all(
+      peopleDrawnFrom.map(async (follow) => ({
+        via: {
+          kind: 'author',
+          title: String(follow.name || follow.slug),
+          href: `/authors/${encodeURIComponent(String(follow.slug))}`,
+        },
+        rows: await people.postsByAuthorId(client, String(follow.id), PER_SOURCE),
+      })),
+    ),
   ]);
 
   const items = mergeRiver(
@@ -171,11 +205,19 @@ export async function following(client, userId, opts = {}) {
       // carries in feed_slug.
       { via: { kind: 'feed', title: '', href: '' }, rows: feedItems },
       ...topicItems,
+      ...authorItems,
     ],
     limit,
   );
 
-  return { feeds, topics, items, topicsUsed: drawnFrom.length };
+  return {
+    feeds,
+    topics,
+    authors,
+    items,
+    topicsUsed: drawnFrom.length,
+    authorsUsed: peopleDrawnFrom.length,
+  };
 }
 
 /**
