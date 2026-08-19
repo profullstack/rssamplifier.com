@@ -1,7 +1,7 @@
 import { q, discovery, alerts } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
-import { categoryStats, indexingHistory } from '../../../lib/crawlstats.js';
+import { categoryStats, indexingHistory, jobBacklogs } from '../../../lib/crawlstats.js';
 import { toLine } from '../../../lib/crawlLog.js';
 import { jobRows } from '../../../lib/jobs.js';
 
@@ -43,7 +43,17 @@ export async function GET() {
     discovery.countQueuedKeywords(client),
     indexingHistory(),
     categoryStats(),
-    q.jobBacklogs(client),
+    // The cached reader, which is what the page has always used. This route
+    // called `q.jobBacklogs` directly and so paid the uncached count on every
+    // request -- 27.9 seconds of a 53-second response, while /crawlstats
+    // rendered the same numbers in 3.7. Nothing about a status endpoint wants
+    // that: the backlog it reports is hundreds of thousands of feeds draining
+    // at a few hundred an hour, so a sixty-second-old answer is the same answer.
+    //
+    // The liveness numbers stay uncached, which is the distinction that matters
+    // -- `crawlStats` and `logActivity` below are still read fresh, so this
+    // endpoint can still never claim a dead crawler is alive.
+    jobBacklogs(),
     q.logActivity(client, 1),
     // See the page: this only tells a sender with nobody to serve from one that
     // has stopped, which the log alone cannot say.
@@ -52,7 +62,11 @@ export async function GET() {
   ]);
 
   const jobs = jobRows({
-    backlogs,
+    // Null when the read failed and nothing was cached. `jobBacklogs` returns
+    // null rather than zeroes on purpose -- "0 waiting" reads as "all caught
+    // up", which would be a lie -- and an empty object leaves each backlog
+    // undefined, which serialises as unknown rather than as done.
+    backlogs: backlogs ?? {},
     activity,
     fetchedLastHour: stats.fetchedLastHour,
     keywordQueue: keywordsQueued,
