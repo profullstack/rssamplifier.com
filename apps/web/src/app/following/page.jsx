@@ -3,6 +3,8 @@ import { accounts } from '@rssamplifier/db';
 
 import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { postThumb } from '../../lib/thumbs.js';
@@ -80,6 +82,11 @@ export default async function FollowingPage({ searchParams }) {
       {topics.length > 0 && (
         <>
           <h2>Topics</h2>
+
+          {topics.length >= FILTER_FROM && (
+            <ListFilter target=".following-list > li" noun="topic" />
+          )}
+
           <ul className="post-list following-list">
             {topics.map((t) => {
               const label = topicLabel(t);
@@ -166,6 +173,12 @@ export default async function FollowingPage({ searchParams }) {
       )}
 
       <h2>Latest</h2>
+
+      {/* The river is the reason to come back to this page, and it is the one
+          list here long enough that finding a post in it means scrolling. */}
+      {items.length >= FILTER_FROM && (
+        <ListFilter target="article.entry" noun="post" searchHref="/search?q=" />
+      )}
 
       {items.length === 0 ? (
         <p className="empty">

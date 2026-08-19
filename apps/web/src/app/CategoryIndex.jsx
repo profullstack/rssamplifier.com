@@ -5,7 +5,9 @@ import { AD_TEXT, adPlan } from '../lib/ads.js';
 import { CATEGORIES } from '../lib/categories.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
+import ListFilter from './ListFilter.jsx';
 import SubscribeLinks from './SubscribeLinks.jsx';
+import { FILTER_FROM } from '../lib/listFilter.js';
 import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
 
@@ -85,6 +87,18 @@ export default async function CategoryIndex({ kind, page = 1 }) {
           {total} {total === 1 ? category.one : category.noun}
         </span>
       </h2>
+
+      {/* Narrows the page you are on, not the category: sixty rows is a lot to
+          read through for one name, and the pager is still how you reach the
+          rest of them. */}
+      {rows.length >= FILTER_FROM && (
+        <ListFilter
+          target=".feed-list .feed-row"
+          noun={category.one}
+          plural={category.noun}
+          searchHref="/search?q="
+        />
+      )}
 
       {rows.length === 0 ? (
         <p className="empty">

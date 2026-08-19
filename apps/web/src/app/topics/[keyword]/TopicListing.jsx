@@ -9,6 +9,8 @@ import { shareText } from '../../../lib/share.js';
 import Ad from '../../Ad.jsx';
 import AdBanner from '../../AdBanner.jsx';
 import FollowControls from '../../FollowControls.jsx';
+import ListFilter from '../../ListFilter.jsx';
+import { FILTER_FROM } from '../../../lib/listFilter.js';
 import Share from '../../Share.jsx';
 import { Avatar } from '../../Thumb.jsx';
 import { feedImage } from '../../../lib/thumbs.js';
@@ -250,6 +252,10 @@ export default async function TopicListing({ topic, counts, group = null, page =
       </div>
 
       <Ad format={AD_TEXT} />
+
+      {rows.length >= FILTER_FROM && (
+        <ListFilter target=".feed-list .feed-row" noun="feed" searchHref="/search?q=" />
+      )}
 
       <div className="feed-list">
         {rows.flatMap((f, i) => {

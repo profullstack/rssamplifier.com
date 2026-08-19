@@ -242,3 +242,36 @@ test('a short post with no picture in it is prose, not a picture', () => {
   assert.equal(isPicture(''), false);
   assert.equal(isPicture(null), false);
 });
+
+test('an http enclosure is handed to the player over https, because http cannot play', () => {
+  // What SomaFM's feeds print: an Icecast stream at http://, on a host that
+  // has served https for years. The player is a subresource of a page served
+  // over https, so the browser blocks the http one as mixed content — and
+  // `media-src` lists https only, so it is refused before that. The reader saw
+  // a transport with a dead play button and nothing explaining it.
+  //
+  // There is no version of this where http plays, so relaxing the policy would
+  // not have helped. Upgrading is the only move that can.
+  const stream = {
+    url: 'https://somafm.com/beatblender/',
+    audio_url: 'http://ice2.somafm.com/beatblender-128-mp3',
+    audio_type: 'audio/mpeg',
+  };
+
+  assert.deepEqual(playableMedia(stream), {
+    kind: 'audio',
+    src: 'https://ice2.somafm.com/beatblender-128-mp3',
+  });
+});
+
+test('an https enclosure is left exactly as the publisher wrote it', () => {
+  const post = {
+    url: 'https://example.com/ep/1',
+    audio_url: 'https://example.com/ep/1.mp3?token=http://not-a-scheme',
+    audio_type: 'audio/mpeg',
+  };
+
+  // Only a leading scheme is rewritten — an http:// sitting inside a query
+  // string is somebody's parameter, not the address being fetched.
+  assert.equal(playableMedia(post).src, post.audio_url);
+});

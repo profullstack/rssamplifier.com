@@ -6,6 +6,8 @@ import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import AuthorLinks from '../AuthorLinks.jsx';
 import { pageNumber } from '../CategoryIndex.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,6 +127,17 @@ export default async function AuthorsPage({ searchParams }) {
           {total} {total === 1 ? 'author' : 'authors'}
         </span>
       </h2>
+
+      {/* On top of the form above rather than instead of it: that one asks the
+          database and reloads, this one narrows the cards already rendered. */}
+      {people.length >= FILTER_FROM && (
+        <ListFilter
+          target=".author-grid > li"
+          noun="author"
+          searchHref="/authors?q="
+          searchLabel="Search every author →"
+        />
+      )}
 
       {people.length === 0 ? (
         <p className="empty">

@@ -9,6 +9,8 @@ import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import SubscribeLinks from '../SubscribeLinks.jsx';
 import Thumb, { Avatar } from '../Thumb.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
 import Toolbar from '../Toolbar.jsx';
 import { feedImage, postThumb } from '../../lib/thumbs.js';
 
@@ -194,6 +196,14 @@ export default async function SearchPage({ searchParams }) {
       {blogs.length > 0 && (
         <>
           <h2>{feedsHeading}</h2>
+
+          {/* Narrowing results is not the same question as searching again: the
+              server matched on the query, this cuts the matches down by a word
+              you can see in them. */}
+          {blogs.length >= FILTER_FROM && (
+            <ListFilter target=".feed-list .feed-row" noun="result" placeholder="Narrow these…" />
+          )}
+
           <div className="feed-list">
             {blogs.map((b) => (
               <a className="feed-row" key={String(b.slug)} href={`/${b.slug}`}>
@@ -212,6 +222,11 @@ export default async function SearchPage({ searchParams }) {
       {posts.length > 0 && (
         <>
           <h2>{postsHeading}</h2>
+
+          {posts.length >= FILTER_FROM && (
+            <ListFilter target="article.entry" noun="result" placeholder="Narrow these…" />
+          )}
+
           {posts.flatMap((p, i) => {
             // A result goes to our reader, not straight off the site: the post
             // is framed with the toolbar still on screen, and the way out to

@@ -7,6 +7,8 @@ import AdBanner from '../../AdBanner.jsx';
 import AuthorLinks from '../../AuthorLinks.jsx';
 import SubscribeLinks from '../../SubscribeLinks.jsx';
 import { CATEGORIES } from '../../CategoryIndex.jsx';
+import ListFilter from '../../ListFilter.jsx';
+import { FILTER_FROM } from '../../../lib/listFilter.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -154,6 +156,10 @@ export default async function AuthorPage({ params }) {
         </span>
       </h2>
 
+      {feeds.length >= FILTER_FROM && (
+        <ListFilter target=".feed-list > li" noun="feed" />
+      )}
+
       {feeds.length === 0 ? (
         <p className="empty">
           Nothing in the directory is credited to them any more — a feed they wrote may have been
@@ -182,6 +188,11 @@ export default async function AuthorPage({ params }) {
       {posts.length > 0 && (
         <>
           <h2>Lately</h2>
+
+          {posts.length >= FILTER_FROM && (
+            <ListFilter target=".post-list > li" noun="post" searchHref="/search?q=" />
+          )}
+
           <ul className="post-list">
             {posts.map((post) => (
               <li key={`${post.feed_slug}-${post.guid}`}>

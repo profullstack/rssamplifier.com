@@ -55,6 +55,22 @@ export async function readerView(post) {
 
   const probe = await probePage(url, { origin: siteUrl() });
 
+  // A stream is not a page, whatever its headers say it will allow.
+  //
+  // Icecast sends no X-Frame-Options and no framing policy, so the verdict on
+  // a radio stream comes back "yes, frame me" — and the frame then loads an
+  // endless mp3, which renders as nothing while it downloads forever. The
+  // post looked broken and was not: the audio was playable the whole time,
+  // sitting in the docked player behind an empty rectangle.
+  //
+  // Declining the frame is what hands the post to the player branch, where a
+  // thing you listen to belongs. Deliberately not recorded as a failed
+  // extract: nothing was attempted and nothing failed, and writing it down
+  // would stop the post being looked at again if it ever becomes a page.
+  if (isStream(probe.contentType)) {
+    return { frameable: false, reason: 'stream', article: null };
+  }
+
   if (probe.frameable) return { frameable: true, reason: probe.reason, article: null };
 
   // No body to read: the fetch failed, or the response was not HTML. Recorded
@@ -103,6 +119,24 @@ function article(stored) {
     siteName: stored.siteName,
     length: stored.length,
   };
+}
+
+/**
+ * Whether a response is something to play rather than something to read.
+ *
+ * Audio and video only. A PDF or an image is also not an article, but both
+ * render in a frame as themselves, so the frame is still the right answer for
+ * them — this is about the types where the frame shows nothing at all.
+ *
+ * @param {string} contentType
+ * @returns {boolean}
+ */
+function isStream(contentType) {
+  const type = String(contentType ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  return type.startsWith('audio/') || type.startsWith('video/');
 }
 
 /**
