@@ -42,6 +42,11 @@ const concurrency = Number(env['POLL_CONCURRENCY']) || 8;
 // unspread batch handed one worker a hundred feeds while the rest finished in
 // seconds. Raise it only alongside evidence that a host can absorb it.
 const perHost = Number(env['POLL_PER_HOST']) || 8;
+// A large imported first-crawl queue should own the daemon until it is under
+// control. Discovery, imports and housekeeping are resumable; running them
+// after every crawl can leave the next batch waiting minutes for a constrained
+// database writer.
+const catchupOnly = ['1', 'true'].includes(String(env['CRAWL_CATCHUP'] ?? '').toLowerCase());
 // Discovery candidates checked per tick. Smaller than the crawl batch on
 // purpose: each one is a cold site that may need three fetches to find a feed,
 // and unlike a crawl it is speculative work nobody is waiting on.
@@ -227,6 +232,11 @@ async function tick() {
         log('rollup-error', { message: String(err?.message ?? err) });
       }
     }
+
+    // All work below is resumable enrichment or housekeeping. In recovery mode
+    // the deep first-crawl queue is the job, and returning here lets the next
+    // minute tick begin immediately instead of waiting behind unrelated writes.
+    if (catchupOnly) return;
 
     // A keyword search queues more work than its request could finish, in both
     // phases: keywords still to search, then the sites those searches turn up.
@@ -563,6 +573,7 @@ log('started', {
   authorBatch: authorEnabled ? authorBatch : 0,
   crawlAutocommit: ['1', 'true'].includes(String(env['TURSO_CRAWL_AUTOCOMMIT'] ?? '').toLowerCase()),
   auxiliaryWrites: !['0', 'false'].includes(String(env['CRAWL_AUXILIARY_WRITES'] ?? '').toLowerCase()),
+  catchupOnly,
   // Said out loud on boot, because a deployment missing the VAPID pair looks
   // exactly like one where nobody has switched browser alerts on — and the two
   // are a config change apart.
