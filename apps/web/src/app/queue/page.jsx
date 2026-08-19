@@ -8,6 +8,8 @@ import { postThumb } from '../../lib/thumbs.js';
 import PlayButton from '../PlayButton.jsx';
 import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -83,6 +85,10 @@ export default async function QueuePage({ searchParams }) {
           Finished
         </a>
       </nav>
+
+      {entries.length >= FILTER_FROM && (
+        <ListFilter target=".queue-list > li" noun="item" plural="items" />
+      )}
 
       {entries.length === 0 ? (
         <p className="empty">

@@ -8,6 +8,8 @@ import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
 import Toolbar from './Toolbar.jsx';
 import { CATEGORIES } from './CategoryIndex.jsx';
+import ListFilter from './ListFilter.jsx';
+import { FILTER_FROM } from '../lib/listFilter.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -134,6 +136,10 @@ export default async function Home() {
       <h2>
         Recently added <span className="pill">{total} blogs</span>
       </h2>
+
+      {rows.length >= FILTER_FROM && (
+        <ListFilter target=".feed-list .feed-row" noun="blog" searchHref="/search?q=" />
+      )}
 
       {rows.length === 0 ? (
         <p className="empty">Nothing here yet. Be the first — paste a URL above.</p>

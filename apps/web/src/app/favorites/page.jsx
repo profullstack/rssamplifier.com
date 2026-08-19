@@ -6,6 +6,8 @@ import { currentUser } from '../../lib/auth.js';
 import { postThumb } from '../../lib/thumbs.js';
 import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,6 +47,10 @@ export default async function FavoritesPage() {
           <p className="lede">
             {items.length} saved post{items.length === 1 ? '' : 's'}, most recent first.
           </p>
+
+          {items.length >= FILTER_FROM && (
+            <ListFilter target=".post-list > li" noun="saved post" />
+          )}
 
           <ul className="post-list">
             {items.map((item) => {
