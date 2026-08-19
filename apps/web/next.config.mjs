@@ -151,7 +151,7 @@ const nextConfig = {
         // before the workspace is resolvable. Adding a format means editing
         // both, and the syndication test asserts the two lists agree.
         {
-          source: '/topics/:slug.:format(rss|atom|json|xml|m3u|pls)',
+          source: '/topics/:slug.:format(rss|atom|json|xml|md|m3u|pls)',
           destination: '/api/topics/:slug/feed/:format',
         },
 
@@ -168,7 +168,7 @@ const nextConfig = {
         // Listed after the one-segment rule for readability only; the two
         // cannot both match, because a rewrite parameter never spans a slash.
         {
-          source: '/topics/:slug/:group.:format(rss|atom|json|xml|m3u|pls)',
+          source: '/topics/:slug/:group.:format(rss|atom|json|xml|md|m3u|pls)',
           destination: '/api/topics/:slug/:group/feed/:format',
         },
 
@@ -185,6 +185,53 @@ const nextConfig = {
         {
           source: '/following.:format(rss|atom|json|xml)',
           destination: '/api/following/feed/:format',
+        },
+
+        // Everything else that lists things, as a feed of ours.
+        //
+        // These four rules are ordered, and the order is the whole design: the
+        // last of them matches *any* single segment with an extension, because
+        // a feed's page is `/:slug` and its feed has to be `/:slug.rss`. So
+        // every fixed address that also wants a feed has to be named before it.
+        // Anything with a page.jsx or a route.js of its own is already safe —
+        // afterFiles runs only when the filesystem did not answer — which is
+        // why /sitemap.xml, /skill.md and /llms.txt are not listed here and
+        // cannot be shadowed.
+        //
+        // Markdown is in the format list for the same reason it is in
+        // SYNDICATION_FORMATS: an agent handed a URL should not have to parse
+        // XML to read a blog. It carries no playlist spellings, and neither do
+        // the directory rules — a directory entry has nothing to play.
+
+        // The directory itself: what was added to it, newest first.
+        { source: '/feed.:format(rss|atom|json|xml|md)', destination: '/api/directory/feed/:format' },
+
+        // One category of it. The segments are the category pages' own paths,
+        // duplicated from CATEGORIES in apps/web/src/lib/categories.js — this
+        // file is evaluated before the workspace resolves, so it cannot import
+        // them. A test asserts the two lists agree.
+        {
+          source:
+            '/:kind(blogs|news|podcasts|music|videos|comics|lives|reels).:format(rss|atom|json|xml|md)',
+          destination: '/api/directory/:kind/feed/:format',
+        },
+
+        // A saved search. `?q=` rides along on the caller's own URL — see the
+        // /following note above for why a destination query would not.
+        { source: '/search.:format(rss|atom|json|xml|md)', destination: '/api/search/feed/:format' },
+
+        // One person, across every feed of theirs the directory knows about.
+        {
+          source: '/authors/:slug.:format(rss|atom|json|xml|md)',
+          destination: '/api/authors/:slug/feed/:format',
+        },
+
+        // One feed of the directory — our copy, at our address, so a reader who
+        // wants to subscribe to what they are reading does not have to leave to
+        // do it. Last, because `:slug` matches anything.
+        {
+          source: '/:slug.:format(rss|atom|json|xml|md|m3u|pls)',
+          destination: '/api/feeds/:slug/feed/:format',
         },
       ],
     };

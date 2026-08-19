@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { q, alerts, queue, authors as people } from '@rssamplifier/db';
+import { AD_EVERY, AD_MAX } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
@@ -7,6 +8,7 @@ import { adPlan } from '../../lib/ads.js';
 import { lanesOffered, trackFor } from '../../lib/queue.js';
 import { shareText } from '../../lib/share.js';
 import { feedCard, postThumb } from '../../lib/thumbs.js';
+import { feedAlternates } from '../../lib/subscribe.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import AuthorLinks from '../AuthorLinks.jsx';
@@ -15,6 +17,7 @@ import Freshness from '../Freshness.jsx';
 import PlayButton from '../PlayButton.jsx';
 import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
+import SubscribeLinks from '../SubscribeLinks.jsx';
 import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
@@ -46,7 +49,15 @@ export async function generateMetadata({ params }) {
   return {
     title,
     description,
-    alternates: { canonical: url },
+    // Our copy of this feed, at our address, announced the way every feed
+    // reader and browser extension looks for one. Before this the page had no
+    // rel="alternate" at all and autodiscovery found nothing — the one link
+    // offered pointed at the publisher's own URL, which is a strange thing for
+    // a directory to hand out: the reader subscribes somewhere else and none of
+    // the work this site did (cleaned summaries, credited authors, the reader)
+    // goes with them. The publisher's original is still on the page, one line
+    // down and labelled as theirs.
+    alternates: { canonical: url, types: feedAlternates(url, title) },
 
     // Spread rather than set to undefined, and this is not a style choice: a key
     // that is *present* and undefined is read by Next as "this page has no
@@ -124,10 +135,17 @@ export default async function FeedPage({ params }) {
 
   // A blog page is the longest read on the site — up to fifty summaries — so it
   // is the one place a rectangle earns its keep, sat in the flow where somebody
-  // has already stopped to read. Three units across fifty posts, alternating so
-  // it never becomes a column of boxes, and none at all on a blog with only a
-  // handful of entries.
-  const ads = adPlan(posts.length, { first: 3, every: 12, max: 3 });
+  // has already stopped to read. At most three across fifty posts, alternating
+  // so it never becomes a column of boxes, and none at all on a blog with only
+  // a handful of entries.
+  //
+  // One in ten, which is the same cadence the syndicated documents use (AD_EVERY
+  // and AD_MAX in @rssamplifier/feed). It was one in twelve starting at the
+  // fourth post, and there was no reason for the difference beyond the two
+  // having been written at different times — a reader who meets an ad after ten
+  // posts in the feed and after four on the page is being told two different
+  // things about how heavily this site advertises.
+  const ads = adPlan(posts.length, { first: AD_EVERY - 1, every: AD_EVERY, max: AD_MAX });
 
   const podcast = feed.category === 'podcast';
 
@@ -206,13 +224,27 @@ export default async function FeedPage({ params }) {
             {hostOf(String(feed.site_url))} ↗
           </a>
         )}
+        {/* The publisher's own feed, named as theirs and pointed at plainly.
+            It is no longer the page's subscribe link — that is ours, below —
+            but a directory that hides where a feed came from is a worse
+            directory, and somebody who wants to go straight to the source
+            should not have to view-source to find it. */}
         <a href={String(feed.feed_url)} rel="noopener">
-          RSS feed ↗
+          Source feed ↗
         </a>
         <span>
           {feed.item_count} {category.item}
         </span>
       </div>
+
+      {/* Subscribe here, to us. The same posts, our summaries, and links that
+          come back to the reader on this site rather than leaving it. `.md` is
+          in the row because half of what reads this directory is not a person. */}
+      <SubscribeLinks
+        base={`/${slug}`}
+        what={`this ${category.one}`}
+        formats={podcast || feed.category === 'music' ? ['rss', 'atom', 'json', 'md', 'm3u', 'pls'] : undefined}
+      />
 
       {/* How current this page is, and whether the feed behind it is still
           publishing — two different questions, both answered, always. See
@@ -399,7 +431,7 @@ export default async function FeedPage({ params }) {
         next={nav.next}
         current={String(feed.title)}
         siteUrl={feed.site_url ? String(feed.site_url) : null}
-        feedUrl={String(feed.feed_url)}
+        feedUrl={`/${slug}.rss`}
       />
     </>
   );

@@ -5,6 +5,7 @@ import { AD_TEXT, adPlan } from '../lib/ads.js';
 import { CATEGORIES } from '../lib/categories.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
+import SubscribeLinks from './SubscribeLinks.jsx';
 import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
 
@@ -70,6 +71,11 @@ export default async function CategoryIndex({ kind, page = 1 }) {
 
       <h1>{category.heading}</h1>
       <p className="lede">{category.lede}</p>
+
+      {/* This category, as a feed of what has just been added to it — the
+          listing below, in a form a reader can be told about instead of having
+          to come back and check. */}
+      <SubscribeLinks base={category.path} what={`the ${category.noun} directory`} />
 
       <Ad format={AD_TEXT} />
 

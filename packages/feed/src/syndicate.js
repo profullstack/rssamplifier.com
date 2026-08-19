@@ -17,6 +17,12 @@
  *   parser. This is deliberately *not* the same document as `/api/topics/:slug`:
  *   that lists the feeds filed under a topic, this lists what they published.
  *   A directory listing and a river are different questions.
+ * - **Markdown** (`.md`) — the one a language model reads without being handed a
+ *   parser at all. The same river written as prose: a heading per item, the
+ *   date and byline under it, the summary below that. Nothing polls a `.md`, so
+ *   it is not a subscription format; it is the shape an agent told to "read
+ *   this blog" can use directly, and a machine-readable copy that is pleasant
+ *   to read is this directory's whole pitch.
  * - **M3U** (`.m3u`) and **PLS** (`.pls`) — playlists. Not feeds at all: they
  *   carry no dates, no links and no prose, only an ordered list of media to
  *   play. They exist here because a topic like `jazz` or `radio` is mostly
@@ -44,6 +50,7 @@ export const SYNDICATION_FORMATS = new Map([
   ['xml', { type: 'application/rss+xml; charset=utf-8', label: 'RSS', media: false }],
   ['atom', { type: 'application/atom+xml; charset=utf-8', label: 'Atom', media: false }],
   ['json', { type: 'application/feed+json; charset=utf-8', label: 'JSON Feed', media: false }],
+  ['md', { type: 'text/markdown; charset=utf-8', label: 'Markdown', media: false }],
   ['m3u', { type: 'audio/x-mpegurl; charset=utf-8', label: 'M3U', media: true }],
   ['pls', { type: 'audio/x-scpls; charset=utf-8', label: 'PLS', media: true }],
 ]);
@@ -65,6 +72,8 @@ export function buildSyndication(format, channel, items) {
       return buildAtom(channel, items);
     case 'json':
       return buildJsonFeed(channel, items);
+    case 'md':
+      return buildMarkdown(channel, items);
     case 'm3u':
       return buildM3u(channel, items);
     case 'pls':
@@ -461,6 +470,105 @@ export function buildJsonFeed(channel, items) {
   };
 
   return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+// --------------------------------------------------------------- markdown
+
+/**
+ * The same river, as a Markdown document.
+ *
+ * For the readers that are not feed readers: an agent handed a URL, a curl in a
+ * terminal, a repository that wants the last twenty posts checked in as text.
+ * All of those can parse RSS and would mostly rather not, and this directory's
+ * pitch is that the machine-readable copy is the good copy.
+ *
+ * Two rules keep it honest. Summaries are already plain text by the time they
+ * arrive — the crawler reduces somebody else's HTML on the way in — so the only
+ * escaping needed is for characters that would turn a title into markup. And a
+ * sponsored item says so on its own line under the heading rather than in a
+ * footnote: disclosure a reader has to go looking for is not disclosure.
+ *
+ * @param {Channel} channel
+ * @param {Item[]} items
+ * @returns {string}
+ */
+export function buildMarkdown(channel, items) {
+  const out = [`# ${mdText(channel.title)}`, ''];
+
+  if (channel.description) out.push(mdText(channel.description), '');
+
+  // Two trailing spaces on the first line: a hard break, so the pair reads as
+  // two lines in every renderer rather than one run-on sentence.
+  out.push(`Page: <${channel.link}>  `, `Feed: <${channel.selfUrl}>`, '');
+
+  if (items.length === 0) {
+    out.push('_Nothing published yet._', '');
+    return `${out.join('\n')}\n`;
+  }
+
+  out.push('---', '');
+
+  for (const item of items) {
+    // The item's own title, not `entryTitle` — that prefixes the publication
+    // for the playlists, where there is no other line to carry it. Here there
+    // is one directly underneath, and a heading reading "Quantum Notes -
+    // Entanglement, briefly" above "Quantum Notes" says it twice.
+    const title = mdText(item.title || '(untitled)');
+    // The link is in the heading rather than beside it, so somebody skimming
+    // headings can open one without hunting for a URL underneath.
+    out.push(item.url ? `## [${title}](${item.url})` : `## ${title}`);
+
+    // One meta line — date, byline, publication, and the sponsorship mark when
+    // there is one. A middle dot rather than four bullets, which would run
+    // longer than most of the summaries they sit above.
+    const meta = [];
+    if (item.published_at) meta.push(isoDate(item.published_at));
+    if (item.author) meta.push(mdText(item.author));
+    if (item.feed_title) meta.push(mdText(item.feed_title));
+    if (item.sponsored) meta.push(`**${SPONSORED}**`);
+    if (meta.length) out.push('', `_${meta.join(' · ')}_`);
+
+    if (item.summary) out.push('', mdText(item.summary));
+    if (playable(item)) out.push('', `[Listen](${item.audio_url})`);
+
+    out.push('');
+  }
+
+  return `${out.join('\n')}\n`;
+}
+
+/**
+ * Text that will not be read as markup.
+ *
+ * Deliberately narrow: the characters that begin an inline construct, plus the
+ * newlines that would end a paragraph early. Escaping every punctuation mark is
+ * the other common approach, and it produces a document full of backslashes for
+ * the sake of a title nobody was going to misread.
+ *
+ * @param {unknown} v
+ * @returns {string}
+ */
+function mdText(v) {
+  return String(v ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/([\\`*_[\]<>])/g, '\\$1')
+    .trim();
+}
+
+/**
+ * The date, as a date — no clock, no zone.
+ *
+ * A river read as prose is read by somebody deciding whether this is recent,
+ * and 2026-08-19 answers that where a full timestamp asks them to parse it
+ * first. Anything unparseable falls back to the raw value rather than to
+ * "Invalid Date".
+ *
+ * @param {string} iso
+ * @returns {string}
+ */
+function isoDate(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toISOString().slice(0, 10);
 }
 
 // --------------------------------------------------------------- playlists

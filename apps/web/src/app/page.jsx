@@ -1,9 +1,11 @@
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../lib/db.js';
+import { feedAlternates } from '../lib/subscribe.js';
 import { AD_TEXT, adPlan } from '../lib/ads.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
+import SubscribeLinks from './SubscribeLinks.jsx';
 import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
 import Toolbar from './Toolbar.jsx';
@@ -24,7 +26,12 @@ export const dynamic = 'force-dynamic';
  * card from opengraph-image.jsx still come from the layout and the file.
  */
 export const metadata = {
-  alternates: { canonical: '/' },
+  alternates: {
+    canonical: '/',
+    // The whole directory as a feed. A relative base here for the same reason
+    // the canonical is relative: Next resolves both against metadataBase.
+    types: feedAlternates('/feed', 'New in RSS Amplifier'),
+  },
   openGraph: {
     type: 'website',
     siteName: 'RSS Amplifier',
@@ -96,6 +103,10 @@ export default async function Home() {
        * line of type, so it costs the fold 40px rather than a 250px block.
        */}
       <Ad format={AD_TEXT} />
+
+      {/* The directory itself, as a feed: everything added to it, newest
+          first. `/feed.rss` rather than `/.rss`, which is not an address. */}
+      <SubscribeLinks base="/feed" what="the directory" />
 
       {/* The index below is everything, newest first. These are the two ways
           into it that are worth having their own page — the counts are the

@@ -796,9 +796,12 @@ export async function postsByAuthor(db, feedIds, limit = 12) {
 
   const marks = ids.map(() => '?').join(',');
   const { rows } = await db.execute({
-    sql: `select i.guid, i.title, i.url, i.published_at, i.image_url,
-                 i.audio_url, i.audio_type,
-                 f.slug as feed_slug, f.title as feed_title, f.category
+    // `summary` and the audio duration are here for the author's own feed
+    // (see lib/authorRiver.js), which renders the same rows as a document
+    // rather than as a list of links. The page ignores both.
+    sql: `select i.guid, i.title, i.url, i.summary, i.published_at, i.image_url,
+                 i.audio_url, i.audio_type, i.audio_seconds,
+                 f.slug as feed_slug, f.title as feed_title, f.category, f.feed_url
           from feed_items i
           join feeds f on f.id = i.feed_id
           where i.feed_id in (${marks})

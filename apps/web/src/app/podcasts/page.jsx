@@ -1,4 +1,5 @@
 import { siteUrl } from '../../lib/db.js';
+import { feedAlternates } from '../../lib/subscribe.js';
 import CategoryIndex, { CATEGORIES, pageNumber } from '../CategoryIndex.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,11 @@ export async function generateMetadata({ searchParams }) {
     alternates: {
       canonical:
         page === 1 ? `${siteUrl()}${CATEGORY.path}` : `${siteUrl()}${CATEGORY.path}?page=${page}`,
+      // The category's own feed: what has just been added to it. Announced on
+      // every page of the listing rather than only the first, because it is the
+      // same feed either way and a reader deep in the directory is exactly the
+      // one who wants telling when more arrives.
+      types: feedAlternates(`${siteUrl()}${CATEGORY.path}`, CATEGORY.heading),
     },
   };
 }

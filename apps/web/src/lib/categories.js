@@ -108,3 +108,17 @@ export const CATEGORIES = {
     curated: true,
   },
 };
+
+/**
+ * The path segment each category lives at, mapped back to the kind stored in
+ * the database: `podcasts` → `podcast`.
+ *
+ * Derived rather than written out again, so a category added above gets its
+ * feed without anybody remembering to come back here. The rewrite in
+ * next.config.mjs lists the same segments and cannot import this — the config
+ * is evaluated before the workspace resolves — which is the one duplication
+ * left; apps/web/test/subscribe.test.js asserts the two agree.
+ */
+export const CATEGORY_SEGMENTS = new Map(
+  Object.entries(CATEGORIES).map(([kind, meta]) => [meta.path.replace(/^\//, ''), kind]),
+);
