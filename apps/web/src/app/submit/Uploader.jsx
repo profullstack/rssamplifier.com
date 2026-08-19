@@ -67,6 +67,7 @@ export default function Uploader({ shared = '' }) {
   /**
    * @type {[null | {
    *   phase: 'reading'|'saving'|'done'|'empty'|'error',
+   *   via: 'paste'|'file',
    *   name: string,
    *   percent: number,
    *   read: number,
@@ -89,13 +90,19 @@ export default function Uploader({ shared = '' }) {
   /**
    * Drive one import from beginning to end.
    *
-   * @param {{ kind: 'opml'|'list', source: File|string, size: number, name: string, email: string }} job
+   * @param {{ via: 'paste'|'file', kind: 'opml'|'list', source: File|string, size: number, name: string, email: string }} job
    */
   async function start(job) {
     /** @type {Array<{ at: number, text: string }>} */
     const lines = [];
     let state = {
       phase: /** @type {'reading'} */ ('reading'),
+      // Which form started this, kept apart from `kind` on purpose. `kind` is
+      // what the file turned out to hold and can change under us the moment it
+      // has been sniffed — a subscription list saved as .txt is uploaded
+      // through the file form and scanned as a list — and switching the panel
+      // on it put the progress bar for a file upload underneath the paste box.
+      via: job.via,
       kind: job.kind,
       name: job.name,
       percent: 0,
@@ -228,7 +235,14 @@ export default function Uploader({ shared = '' }) {
     if (value.length < PASTE_OBVIOUS && scanUrls(value).length <= PASTE_DIRECT) return;
 
     event.preventDefault();
-    start({ kind: 'list', source: value, size: value.length, name: 'your list', email: '' });
+    start({
+      via: 'paste',
+      kind: 'list',
+      source: value,
+      size: value.length,
+      name: 'your list',
+      email: '',
+    });
   }
 
   /**
@@ -243,6 +257,10 @@ export default function Uploader({ shared = '' }) {
 
     event.preventDefault();
     start({
+      via: 'file',
+      // Provisional: `sniffKind` decides for real once the head of the file has
+      // been read, because the field takes an OPML export and a plain list of
+      // URLs alike and the name on it is not always the truth.
       kind: 'opml',
       source: file,
       size: file.size,
@@ -272,7 +290,7 @@ export default function Uploader({ shared = '' }) {
         </div>
       </form>
 
-      {run?.kind === 'list' && <Progress run={run} onReset={() => setRun(null)} />}
+      {run?.via === 'paste' && <Progress run={run} onReset={() => setRun(null)} />}
 
       <form
         className="submit-box"
@@ -281,17 +299,18 @@ export default function Uploader({ shared = '' }) {
         encType="multipart/form-data"
         onSubmit={onUpload}
       >
-        <p className="eyebrow">Or upload an OPML file</p>
+        <p className="eyebrow">Or upload a file — OPML, or one feed per line</p>
         <input
           ref={fileRef}
           type="file"
           name="opml"
           accept=".opml,.xml,.txt,text/xml,text/plain"
-          aria-label="OPML file"
+          aria-label="OPML or list of feeds"
           disabled={busy}
         />
         <p className="hint">
-          Any size. The file is read here in your browser and the feeds are sent a few thousand at a
+          An OPML export from any reader, or a plain text file with one feed URL on each line. Any
+          size: the file is read here in your browser and the feeds are sent a few thousand at a
           time, so a 100 MB subscription list imports without the upload ever timing out — you will
           see it go, and get a status page to watch the crawl.
         </p>
@@ -310,7 +329,7 @@ export default function Uploader({ shared = '' }) {
         </div>
       </form>
 
-      {run?.kind === 'opml' && <Progress run={run} onReset={() => setRun(null)} />}
+      {run?.via === 'file' && <Progress run={run} onReset={() => setRun(null)} />}
     </>
   );
 }

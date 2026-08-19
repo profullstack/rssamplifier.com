@@ -42,7 +42,14 @@ export async function GET(req, { params }) {
   // uploader made a file that size importable. Such a queue also takes days to
   // drain, so polling it every second buys no visible smoothness at all: the
   // bar advances by a fraction of a percent an hour either way.
-  const tick = pollInterval(Number(submission.queued_count ?? 0));
+  //
+  // Sized from the staged total as well as the queued one. A large import
+  // spends its first stretch entirely staged — `queued_count` is still zero —
+  // so reading that alone put the biggest uploads on the fastest tick, which is
+  // precisely backwards and is the case this whole calculation exists for.
+  const tick = pollInterval(
+    Math.max(Number(submission.queued_count ?? 0), Number(submission.entries_total ?? 0)),
+  );
 
   return stream(async (first) => {
     const [progressRow, events] = await Promise.all([
@@ -51,15 +58,20 @@ export async function GET(req, { params }) {
     ]);
 
     const frames = [];
-    const total = progressRow.queued;
+
+    // Staged entries count towards both numbers. They are feeds this import
+    // will crawl that simply have no row yet, so leaving them out reported a
+    // handover as a finished crawl — a full bar, the word "finished", and the
+    // page above it still saying how many were waiting to be added.
+    const total = progressRow.queued + progressRow.pending;
     const settled = progressRow.crawled + progressRow.failed;
-    const done = progressRow.waiting === 0;
+    const done = progressRow.waiting === 0 && progressRow.pending === 0;
 
     const progress = {
       total,
       settled,
-      // A submission with nothing queued finished the moment it was made, and
-      // an empty bar reading 0% would be a lie about that.
+      // A submission with nothing queued and nothing staged finished the moment
+      // it was made, and an empty bar reading 0% would be a lie about that.
       percent: total === 0 ? 100 : Math.floor((settled / total) * 100),
       crawled: progressRow.crawled,
       failed: progressRow.failed,

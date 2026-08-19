@@ -185,17 +185,25 @@ export function createScanner(kind) {
 /**
  * Whether a file looks like OPML or like a plain list of URLs.
  *
- * By name first, because that is what the person choosing the file meant, and
- * by content only when the name says nothing — an export saved as `feeds.txt`
- * that turns out to be XML should still import.
+ * By content first, then by name. The content test is the one that cannot be
+ * wrong: `<opml` or `<outline` in the head of a file means the file is OPML
+ * whatever it is called, and neither string occurs in a list of URLs. It used
+ * to run last, which made the extension the decider and lost exactly the case
+ * its own comment promised — a subscription export saved as `feeds.txt` was
+ * scanned for URLs, and every one of its `<outline>` tags came back as a
+ * handful of unusable tokens rather than a feed.
+ *
+ * The name still settles everything the content cannot, which is most files:
+ * only a head that positively looks like OPML skips it.
  *
  * @param {{ name?: string }} file
  * @param {string} head the first few kilobytes of it
  * @returns {'opml'|'list'}
  */
 export function sniffKind(file, head = '') {
+  if (/<\s*(opml|outline)\b/i.test(String(head))) return 'opml';
+
   const name = String(file?.name ?? '').toLowerCase();
   if (/\.(opml|xml)$/.test(name)) return 'opml';
-  if (/\.(txt|csv|list)$/.test(name)) return 'list';
-  return /<\s*(opml|outline)\b/i.test(head) ? 'opml' : 'list';
+  return 'list';
 }

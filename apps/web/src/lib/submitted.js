@@ -22,18 +22,29 @@ import { attrOf, decodeXml, outlineTags } from './opml-scan.js';
  * tighter one than it read — fifty thousand characters is only a few hundred
  * pasted URLs, so the status page called uploads truncated that were nothing of
  * the sort.
+ *
+ * Two hundred thousand rather than fifty, because fifty was below the size of
+ * the lists people actually bring here: a subscription export of a hundred and
+ * ten thousand feeds is an ordinary thing to submit, and being told that only
+ * the first fifty thousand lines were kept reads as a cap on the submission
+ * itself rather than on the copy of it stored for this page. It never was one —
+ * the ceiling on a submission is `MAX_UPLOAD_FEEDS` and it is in the tens of
+ * millions — so the number here should be large enough that a real list is
+ * recorded whole and the note about truncation is one almost nobody sees.
  */
-export const RAW_INPUT_LINE_LIMIT = 50_000;
+export const RAW_INPUT_LINE_LIMIT = 200_000;
 
 /**
  * A second cap, on bytes, for the shape the line cap cannot see.
  *
  * A minified OPML is one very long line, and plenty of exporters emit exactly
- * that — for such a file "the first fifty thousand lines" is the whole
+ * that — for such a file "the first two hundred thousand lines" is the whole
  * document, however many megabytes it runs to, and the cap would quietly do
- * nothing. Sized so it can only ever bite that degenerate case: fifty thousand
- * lines of even the longest realistic outline is comfortably under it, so a
- * normal upload is decided by the line cap alone.
+ * nothing. Sized so it can only ever bite that degenerate case, and belt and
+ * braces even then: the endpoint that stores a whole submission refuses a body
+ * over `INLINE_UPLOAD_LIMIT` (10 MB) before reading it, so nothing arriving
+ * that way can reach this at all. It stands for the writers that do not go
+ * through it — the MCP tool, and whatever comes next.
  */
 export const RAW_INPUT_BYTE_LIMIT = 16 * 1024 * 1024;
 
