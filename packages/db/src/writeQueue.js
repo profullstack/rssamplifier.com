@@ -1,6 +1,6 @@
-import { Queue, QueueEvents, Worker } from 'bullmq';
+import { Queue, QueueEvents, UnrecoverableError, Worker } from 'bullmq';
 
-import { createWriteFolder } from './writeFolder.js';
+import { createWriteFolder, isStatementError } from './writeFolder.js';
 
 /**
  * The write path, moved out of the process and into Redis.
@@ -346,19 +346,55 @@ async function releaseQueue(url, prefix) {
  * @param {{ url: string, prefix?: string, onEvent?: ((event: object) => void)|null }} opts
  * @returns {import('bullmq').Worker}
  */
+/**
+ * Run one write job, and decide whether failing it is worth another attempt.
+ *
+ * Separated from the `Worker` so it can be tested without a broker: the retry
+ * decision is the part with the judgement in it, and the BullMQ plumbing is not.
+ *
+ * **A retry is only worth a slot if the next attempt could go differently.** At
+ * concurrency 1 this is not merely wasted effort, it is head-of-line blocking:
+ * a failing job holds the *cluster's only writer* for each of its attempts, and
+ * every other write waits behind it.
+ *
+ * Both halves of that were seen in production within an hour of this queue being
+ * switched on. A `UNIQUE constraint failed: authors.slug` job retried three
+ * times and could never have succeeded -- the same statements against the same
+ * data fail identically for ever. Separately, a timing-out job ran from
+ * 21:29:27 to 21:30:29, three attempts at thirty seconds, with the writer held
+ * throughout.
+ *
+ * So a constraint or syntax error is answered with `UnrecoverableError`, which
+ * tells BullMQ not to retry: the caller learns at once and the writer is
+ * released. Transport failures and timeouts still retry, because those can
+ * genuinely go differently on the next attempt -- that is the whole reason the
+ * queue was wanted.
+ *
+ * @param {import('@libsql/client').Client} client
+ * @param {Array<{ sql: string, args?: unknown[] }>} statements
+ * @returns {Promise<unknown[]>}
+ */
+export async function runWriteJob(client, statements) {
+  if (!statements || statements.length === 0) return [];
+
+  try {
+    const results = await client.batch(statements, 'write');
+    return Array.from(results ?? []).map(encodeResult);
+  } catch (err) {
+    if (isStatementError(err)) {
+      throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
+    }
+    throw err;
+  }
+}
+
 export function createWriteWorker(client, opts) {
   const connection = connectionFor(opts.url);
   const prefix = opts.prefix ?? '{rssamplifier}';
 
   return new Worker(
     WRITE_QUEUE,
-    async (job) => {
-      const statements = (job.data.statements ?? []).map(decodeStatement);
-      if (statements.length === 0) return [];
-
-      const results = await client.batch(statements, 'write');
-      return Array.from(results ?? []).map(encodeResult);
-    },
+    (job) => runWriteJob(client, (job.data.statements ?? []).map(decodeStatement)),
     { connection, prefix, concurrency: 1 },
   );
 }
