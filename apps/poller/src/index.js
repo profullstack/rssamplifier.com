@@ -145,6 +145,14 @@ const authorVerify = env['AUTHOR_VERIFY'] === '1' || env['AUTHOR_VERIFY'] === 't
 // is the switch to reach for if a site ever objects to the extra fetches.
 const authorEnabled = env['AUTHOR_ENRICH'] !== '0' && env['AUTHOR_ENRICH'] !== 'false';
 
+// A GitHub credential, and the difference between the profile lookups working
+// and not working at all: unauthenticated, the API allows **60 requests an hour
+// per IP**, which a single batch spends. With a token it is 5,000, which is
+// more than this pass can use. Optional only in the sense that the rest of the
+// enrichment carries on without it -- profile resolution simply stops finding
+// anything once the hour's 60 are gone, and does so quietly, as a 403.
+const authorGithubToken = String(env['GITHUB_TOKEN'] ?? '').trim();
+
 // Accounts considered per alert pass, and how often a pass runs. Its own timer
 // for the same reason the card and cluster passes have one: a tick spends
 // minutes inside the crawl, and work queued behind that only happens if the
@@ -590,6 +598,7 @@ async function enrichTick() {
       verify: authorVerify,
       recheckDays: authorRecheckDays,
       concurrency: authorConcurrency,
+      githubToken: authorGithubToken,
       onEvent: publishLog ? recorder.record : null,
     });
     // Silent when nothing was due, which is the steady state once the

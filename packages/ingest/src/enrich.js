@@ -1,12 +1,18 @@
 import {
   BIO_HOSTS,
+  classifyLink,
+  credit,
+  hostIdentity,
   identityFromHtml,
+  identityFromProfile,
   identityKey,
   linksBackTo,
   linksFromBioPage,
+  looksLikePersonName,
   mergeCredits,
   normalizeIdentityUrl,
   normalizeName,
+  profileRequest,
   resolveFeed,
   safeFetch,
   uniqueSlug,
@@ -45,6 +51,16 @@ const MAX_BIO_PAGES = 1;
 
 /** Cap on rel="me" backlinks verified per author, since each is a fetch. */
 const MAX_VERIFY = 3;
+
+/**
+ * Cap on platform profiles resolved per feed.
+ *
+ * Each is one JSON request, and the yield falls off a cliff after the first:
+ * the account named by the feed's own hostname is the one that describes the
+ * publisher, and the third-best account on the page is usually a colleague, a
+ * project, or the theme's author.
+ */
+const MAX_PROFILES = 3;
 
 /**
  * Networks whose profile pages publish a rel="me" link back to the author's
@@ -230,9 +246,11 @@ export async function prepareCredits(db, feed, credits, links = []) {
  *
  * @param {Client} db
  * @param {{ id: string, slug?: string, feed_url: string, site_url?: string|null, title?: string }} feed
- * @param {{ verify?: boolean, fetch?: typeof safeFetch, resolve?: typeof resolveFeed }} [opts]
+ * @param {{ verify?: boolean, fetch?: typeof safeFetch, resolve?: typeof resolveFeed,
+ *   githubToken?: string }} [opts]
  *   `fetch` and `resolve` are injected by the tests so the pass can be
- *   exercised end to end without a network
+ *   exercised end to end without a network; `githubToken` raises the GitHub
+ *   API's 60-per-hour anonymous ceiling to 5,000
  * @returns {Promise<{ people: number, links: number, pages: number, verified: number }>}
  */
 export async function enrichFeedAuthors(db, feed, opts = {}) {
@@ -321,9 +339,102 @@ export async function enrichFeedAuthors(db, feed, opts = {}) {
     collect(linksFromBioPage(page.body, page.url || link.url));
   }
 
+  // 4. The accounts the addresses themselves name, and the profiles behind
+  // them.
+  //
+  // This is the half that reaches the publishers who marked nothing up, which
+  // is most of them. The case it was built for: felginep.github.io publishes a
+  // blog with no rel="me", no h-card and one outbound link -- to the Jekyll
+  // theme its author used. Everything above finds nobody. But the author's
+  // GitHub account is named in the hostname the feed is served from, and one
+  // request to that account returns "Pierre Felgines" and an avatar.
+  //
+  // Deriving the account is string arithmetic on URLs already in hand, so a
+  // feed on a platform we do not recognise costs nothing extra at all.
+  collect(hostIdentity(feed.feed_url, siteUrl));
+
+  let profiles = 0;
+
+  for (const account of [...links.values()]) {
+    if (profiles >= MAX_PROFILES) break;
+
+    const request = profileRequest(account, { token: opts.githubToken });
+    if (!request) continue;
+    profiles += 1;
+
+    // A 404 here is the useful negative: the hostname proposed an account that
+    // does not exist, so the derivation was wrong and nothing is stored for it.
+    const page = await fetchPage(request.url, { headers: request.headers }).catch(() => null);
+    if (!page?.ok) continue;
+    pages += 1;
+
+    let body;
+    try {
+      body = JSON.parse(page.body);
+    } catch {
+      continue;
+    }
+
+    const profile = identityFromProfile(request.network, body, account);
+
+    for (const found of profile.links) {
+      // A platform's own "website" field is a homepage, which matches none of
+      // the profile shapes -- classifyLink is right to return null for it, and
+      // it is still the single most useful link a profile carries.
+      const classified = classifyLink(found.url) ?? asWebsite(found.url);
+      if (!classified) continue;
+
+      collect([
+        {
+          ...classified,
+          source: found.source,
+          // Only the fediverse hands us a verification, and it hands us a real
+          // one: the instance already followed the link and found a rel="me"
+          // pointing back. That is the same handshake the verify pass below
+          // spends fetches on, arriving for free.
+          verified: Boolean(found.verified),
+        },
+      ]);
+
+      // The account points back at the site we are enriching. That is the
+      // IndieWeb handshake in the other direction and is proof the account
+      // belongs to this publisher, so the account link earns `verified` -- the
+      // column means "the destination links back", and here it does.
+      if (classified.network === 'website' && siteUrl && sameSite(classified.url, siteUrl)) {
+        account.verified = true;
+        verified += 1;
+      }
+    }
+
+    // An organisation is not a person. GitHub and Gitea serve both from one
+    // endpoint, so a project site on `someproject.github.io` resolves to an
+    // account whose name is a product -- publishing that as an author is the
+    // mistake identity.js's role filters exist to prevent, arriving by a
+    // different door.
+    if (profile.kind !== 'user') continue;
+    if (!looksLikePersonName(profile.name)) continue;
+
+    credits.push(
+      credit({
+        name: profile.name,
+        url: account.url,
+        avatar: profile.avatar,
+        bio: profile.bio,
+        role: 'author',
+        source: `${request.network}-profile`,
+        // Above the publishing floor, and deliberately only just. The blog is
+        // served from this account's own pages and the account is a person
+        // whose name reads as one -- but nobody has said in so many words that
+        // they wrote it, which is what the stronger sources have. A confirmed
+        // backlink lifts it to where a rel="me" pair sits.
+        confidence: account.verified ? 0.9 : account.source === 'host-derived' ? 0.7 : 0.65,
+      }),
+    );
+  }
+
   const merged = mergeCredits(credits.filter(Boolean));
 
-  // 4. The IndieWeb handshake, for the accounts that answer it. Only worth
+  // 5. The IndieWeb handshake, for the accounts that answer it. Only worth
   // spending requests on when there is a site to link back to, and only when
   // the caller asked — the pass over 52,000 feeds does not, a re-check of one
   // feed does.
@@ -407,7 +518,10 @@ const PER_HOST = 3;
  * @param {Client} db
  * @param {number} [batchSize]
  * @param {{ verify?: boolean, recheckDays?: number, onEvent?: ((event: object) => void)|null,
- *   concurrency?: number, fetch?: typeof safeFetch, resolve?: typeof resolveFeed }} [opts]
+ *   concurrency?: number, fetch?: typeof safeFetch, resolve?: typeof resolveFeed,
+ *   githubToken?: string }} [opts] `githubToken` is not optional in practice:
+ *   the unauthenticated GitHub API allows 60 requests an hour per IP, which one
+ *   batch exhausts, so a pass without it resolves almost no profiles
  * @returns {Promise<{ feeds: number, people: number, links: number, hosts: number }>}
  */
 export async function enrichDue(db, batchSize = 10, opts = {}) {
@@ -442,6 +556,7 @@ export async function enrichDue(db, batchSize = 10, opts = {}) {
             verify: opts.verify,
             fetch: opts.fetch,
             resolve: opts.resolve,
+            githubToken: opts.githubToken,
           });
           feeds += 1;
           people += result.people;
@@ -579,5 +694,50 @@ function report(onEvent, feed, started, outcome) {
     });
   } catch {
     // A broken listener loses its line and nothing else.
+  }
+}
+
+/**
+ * A bare homepage as a link row.
+ *
+ * `classifyLink` returns null for anything that is not a recognised profile
+ * shape, which is correct for a link found loose in a page -- it would
+ * otherwise file every outbound link as somebody's website. A URL taken out of
+ * a *profile field* is different: the person put it there to say "this is my
+ * site", so it is the one place the fallback is warranted.
+ *
+ * @param {unknown} value
+ * @returns {{ network: string, url: string, handle: string }|null}
+ */
+function asWebsite(value) {
+  const raw = normalizeIdentityUrl(value);
+  if (!raw) return null;
+
+  try {
+    return { network: 'website', url: raw, handle: new URL(raw).hostname };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Do two URLs name the same site?
+ *
+ * Compared on host alone, with `www.` folded away: a profile that links
+ * `https://example.com` and a feed that declares `https://www.example.com/blog/`
+ * are the same publisher, and requiring the paths to match would refuse every
+ * real backlink.
+ *
+ * @param {unknown} a
+ * @param {unknown} b
+ * @returns {boolean}
+ */
+function sameSite(a, b) {
+  try {
+    const host = (u) => new URL(String(u)).hostname.toLowerCase().replace(/^www\./, '');
+    const left = host(a);
+    return Boolean(left) && left === host(b);
+  } catch {
+    return false;
   }
 }

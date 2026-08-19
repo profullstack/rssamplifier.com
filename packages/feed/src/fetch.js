@@ -102,7 +102,8 @@ export async function isPublicHost(hostname) {
  * keep revalidating against a stale one for ever.
  *
  * @param {string} url
- * @param {{ etag?: string|null, lastModified?: string|null }} [conditional]
+ * @param {{ etag?: string|null, lastModified?: string|null,
+ *   headers?: Record<string, string> }} [conditional]
  * @returns {Promise<{ ok: boolean, status: number, contentType: string, body: string, url: string, notModified?: boolean, etag?: string|null, lastModified?: string|null, error?: string }>}
  */
 export async function safeFetch(url, conditional = {}) {
@@ -131,6 +132,18 @@ export async function safeFetch(url, conditional = {}) {
     const headers = { 'user-agent': USER_AGENT, accept: '*/*' };
     if (conditional?.etag) headers['if-none-match'] = String(conditional.etag);
     if (conditional?.lastModified) headers['if-modified-since'] = String(conditional.lastModified);
+
+    // Caller-supplied headers, for the JSON APIs the author enrichment asks
+    // about a person. They go through this function rather than around it so
+    // an API host is still checked against the private-address guard and still
+    // bounded by the same timeout -- a profile URL is built from a hostname we
+    // read out of somebody else's feed, so it is exactly as untrusted as a
+    // page URL. The user-agent stays ours and cannot be overridden.
+    for (const [key, value] of Object.entries(conditional?.headers ?? {})) {
+      const name = String(key).toLowerCase();
+      if (name === 'user-agent') continue;
+      headers[name] = String(value);
+    }
 
     const res = await fetch(normalized, {
       headers,

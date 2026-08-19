@@ -78,3 +78,4 @@ export {
   personalEmail,
   splitBylines,
 } from './src/identity.js';
+export { hostIdentity, identityFromProfile, profileRequest } from './src/platforms.js';
