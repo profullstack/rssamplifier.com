@@ -214,6 +214,30 @@ export function playableMedia(post) {
 
   return {
     kind,
-    src: kind === 'peertube' ? peertubeEmbed(post) : String(post.audio_url),
+    src: secureMedia(kind === 'peertube' ? peertubeEmbed(post) : String(post.audio_url)),
   };
+}
+
+/**
+ * The enclosure over TLS, because over plain http it does not play at all.
+ *
+ * A player is a subresource of a page served from https, so an http source is
+ * mixed content: the browser blocks it, and our own `media-src` lists https
+ * only, so it never even gets that far. The reader saw a transport with a
+ * dead play button and no explanation — the enclosure was fine, the scheme
+ * was not.
+ *
+ * Upgrading is the only move that can work here. There is no version of this
+ * where http plays: allowing it in the policy would not help, since a browser
+ * blocks mixed media whatever the policy says. A host without TLS is no worse
+ * off than before — the player was already blocked — and the large majority of
+ * feeds still printing http:// enclosures are served by hosts that have had
+ * certificates for years.
+ *
+ * @param {string|null} src
+ * @returns {string|null}
+ */
+function secureMedia(src) {
+  if (!src) return null;
+  return src.startsWith('http://') ? `https://${src.slice('http://'.length)}` : src;
 }
