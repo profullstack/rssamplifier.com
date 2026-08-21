@@ -310,8 +310,9 @@ export default function RootLayout({ children }) {
               <code>{`curl -fsSL ${siteUrl()}/install.sh | sh`}</code>
             </p>
             <p>
-              <a href="/about">About</a> · <a href="/contact">Contact</a> ·{' '}
-              <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> ·{' '}
+              <a href="/about">About</a> · <a href="/advertise">Advertise</a> ·{' '}
+              <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
+              <a href="/terms">Terms</a> ·{' '}
               <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
                 Source on GitHub
               </a>
