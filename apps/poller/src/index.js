@@ -13,7 +13,7 @@ import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 import { findFeedCard } from '@rssamplifier/feed';
 import { deliverAlerts, vapidConfig } from '@rssamplifier/notify';
 
-import { createRecorder, toEntry } from './log.js';
+import { createRecorder, toEntry, writeFailure } from './log.js';
 
 /**
  * Feed crawler daemon.
@@ -762,12 +762,14 @@ const writeWorker = redisUrl
 if (writeWorker) {
   // A job that failed every attempt is a write that did not happen, which is
   // exactly the class of failure this daemon exists to make visible.
+  //
+  // BullMQ emits `failed` once per *attempt*, though, and this handler used to
+  // treat all three alike — so the retries that were about to succeed were the
+  // loudest thing on the status page. `writeFailure` holds that judgement, and
+  // its comment holds the measurements behind it.
   writeWorker.on('failed', (job, err) => {
-    log('write-failed', {
-      id: job?.id ?? null,
-      attempts: job?.attemptsMade ?? 0,
-      message: String(err?.message ?? err),
-    });
+    const { event, fields } = writeFailure(job, err);
+    log(event, fields);
   });
   writeWorker.on('error', (err) => {
     log('write-worker-error', { message: String(err?.message ?? err) });

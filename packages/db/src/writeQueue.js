@@ -201,7 +201,7 @@ export function connectionFor(url) {
  * client in a Proxy throws the moment anything reads one.
  *
  * @param {import('@libsql/client').Client} client
- * @param {{ url: string, prefix?: string, attempts?: number }} opts
+ * @param {{ url: string, prefix?: string, attempts?: number, backoffMs?: number, maxStatements?: number }} opts
  * @returns {import('@libsql/client').Client & { closeWriteQueue: () => Promise<void> }}
  */
 export function queueWrites(client, opts) {
@@ -224,7 +224,23 @@ export function queueWrites(client, opts) {
         attempts: opts.attempts ?? 3,
         // A transport failure wants a moment before the retry; a contended
         // write wants rather more. Exponential covers both without a knob.
-        backoff: { type: 'exponential', delay: 500 },
+        //
+        // The base was 500ms, which is the right delay for the failure this
+        // was written for — a dropped connection — and the wrong one for the
+        // failure that actually happens. In production essentially every
+        // retried job is `TURSO_REQUEST_TIMEOUT_MS` expiring, so the first
+        // attempt establishes that the database has been too busy to answer
+        // for thirty seconds, and a retry 500ms later asks the same
+        // still-busy database the same question. At a worker concurrency of
+        // one — which is not negotiable, SQLite has one writer — each of
+        // those attempts spends thirty seconds of the *cluster's* only write
+        // capacity, so a doomed job costs ninety seconds that every other
+        // write waits through.
+        //
+        // Five seconds is still prompt against a thirty-second deadline and
+        // gives a contended primary a chance to drain first, which is the
+        // only thing that makes the next attempt differ from the last.
+        backoff: { type: 'exponential', delay: opts.backoffMs ?? 5_000 },
         removeOnComplete: true,
         // Kept, because a write that failed every attempt is the thing you go
         // looking for afterwards. Bounded so the list cannot become the leak.
@@ -256,11 +272,16 @@ export function queueWrites(client, opts) {
 /**
  * How many statements one queued transaction may carry.
  *
- * Its own knob rather than `TURSO_WRITE_GROUP_STATEMENTS`, because that one is
- * set to 1 in production -- folding off -- for the in-process path, where a
- * five-crawl group was once measured to exceed the 30-second request deadline.
- * On the queued path folding is not an optimisation, it is the difference
- * between a working queue and a 2.7-writes-a-second ceiling, so it defaults on.
+ * Its own knob rather than `TURSO_WRITE_GROUP_STATEMENTS`, so that the queued
+ * path and the in-process fallback can be tuned against each other: the
+ * in-process one has to survive the 30-second request deadline from inside a
+ * crawl worker, where a five-crawl group was once measured to exceed it. On the
+ * queued path folding is not an optimisation, it is the difference between a
+ * working queue and a 2.7-writes-a-second ceiling, so it defaults on.
+ *
+ * (This once said `TURSO_WRITE_GROUP_STATEMENTS` "is set to 1 in production".
+ * It is set to 50 there and has been for some time; the two knobs being
+ * separate is the durable reason, not whatever either is set to this week.)
  *
  * Fifty is deliberately modest: one crawl's worth of statements, so a group is
  * a handful of callers rather than a transaction big enough to hit the deadline

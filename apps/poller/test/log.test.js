@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { createRecorder, toEntry } from '../src/log.js';
+import { createRecorder, toEntry, writeFailure } from '../src/log.js';
 
 test("a tick's fields become columns, and the rest rides along as JSON", () => {
   const entry = toEntry('crawl', { crawled: 25, failed: 1, items: 12, ms: 4200, due: 400 });
@@ -120,4 +120,61 @@ test('shutting down writes what is left and then stops accepting lines', async (
 
   recorder.record({ event: 'feed', subject: 'too late' });
   assert.equal(recorder.pending(), 0);
+});
+
+test('a retry still to come is not yet a failure', () => {
+  // The shape BullMQ hands the `failed` listener on the first of three attempts.
+  // 81 of the 149 jobs that hit this in one production day went on to succeed,
+  // so calling it a failed write is wrong twice over: it is not a failure, and
+  // saying so buries the ones that are.
+  const { event, fields } = writeFailure(
+    { id: '57186', attemptsMade: 1, opts: { attempts: 3 } },
+    new Error('The operation was aborted due to timeout'),
+  );
+
+  assert.equal(event, 'write-retried');
+  assert.equal(fields.attempt, 1);
+  assert.equal(fields.of, 3);
+  assert.equal(fields.message, undefined, 'no message, so toEntry does not mark it an error');
+
+  const entry = toEntry(event, fields);
+  assert.equal(entry.status, null, 'and it stays out of the operational error panel');
+  assert.match(JSON.parse(entry.detail).reason, /aborted due to timeout/, 'while still saying why');
+});
+
+test('the attempt that exhausts the job is the write that did not happen', () => {
+  const { event, fields } = writeFailure(
+    { id: '57877', attemptsMade: 3, opts: { attempts: 3 } },
+    new Error('The operation was aborted due to timeout'),
+  );
+
+  assert.equal(event, 'write-failed');
+  assert.equal(fields.attempts, 3);
+
+  const entry = toEntry(event, fields);
+  assert.equal(entry.status, 'error', 'this one is worth showing on the status page');
+  assert.equal(entry.detail, 'The operation was aborted due to timeout');
+});
+
+test('a job with no retries left to configure fails on its first attempt', () => {
+  // How an UnrecoverableError arrives — a constraint violation, which `runWriteJob`
+  // refuses to retry because the same statements against the same data fail
+  // identically for ever. The first attempt is also the last.
+  const { event, fields } = writeFailure(
+    { id: '9', attemptsMade: 1, opts: { attempts: 1 } },
+    new Error('UNIQUE constraint failed: authors.slug'),
+  );
+
+  assert.equal(event, 'write-failed');
+  assert.equal(fields.attempts, 1);
+});
+
+test('a failure with no job at all is still reported', () => {
+  // BullMQ can emit `failed` with no job when it could not load one. Treating
+  // that as a retry would drop the only notice of it.
+  const { event, fields } = writeFailure(undefined, new Error('missing job'));
+
+  assert.equal(event, 'write-failed');
+  assert.equal(fields.id, null);
+  assert.equal(fields.message, 'missing job');
 });

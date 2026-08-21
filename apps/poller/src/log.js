@@ -15,6 +15,49 @@
 export const FLUSH_MS = 2000;
 
 /**
+ * What to log when the write worker fails an attempt.
+ *
+ * BullMQ emits `failed` once per *attempt*, not once per job, and the poller
+ * used to log all of them identically as `write-failed`. That is the difference
+ * between a log and an alarm. Over one day in production 149 jobs failed at
+ * least once and produced 317 lines, of which only 68 were a write that
+ * actually did not happen — the other 81 jobs succeeded on a later attempt,
+ * which is the queue working exactly as designed.
+ *
+ * It mattered because `crawlOperationalErrors` shows the twenty most recent
+ * error rows and nothing else. Seven doomed jobs fill the panel, so a 0.099%
+ * permanent failure rate read from the status page as "all writes are failing",
+ * and the retries that were about to succeed were the loudest thing on it.
+ *
+ * So an attempt with a retry still coming gets its own event, and deliberately
+ * carries no `message` field: `toEntry` marks a line as an error precisely when
+ * it has one. The retry stays in the stream and in Railway, where somebody
+ * looking for a pattern can find it, and out of the panel whose job is to
+ * answer "is anything broken".
+ *
+ * Separated from the worker so the judgement can be tested without a broker,
+ * the same way `runWriteJob` separates the retry decision from BullMQ.
+ *
+ * @param {{ id?: unknown, attemptsMade?: unknown, opts?: { attempts?: unknown } }|null|undefined} job
+ * @param {unknown} err
+ * @returns {{ event: 'write-retried'|'write-failed', fields: object }}
+ */
+export function writeFailure(job, err) {
+  const attempts = Number(job?.attemptsMade ?? 0);
+  const allowed = Number(job?.opts?.attempts ?? 1);
+  const reason = String(/** @type {any} */ (err)?.message ?? err);
+  const id = job?.id ?? null;
+
+  // `attempts > 0` guards the shape BullMQ uses for a job that failed before it
+  // ever ran — there is no attempt still to come, so it is a plain failure.
+  if (attempts > 0 && attempts < allowed) {
+    return { event: 'write-retried', fields: { id, attempt: attempts, of: allowed, reason } };
+  }
+
+  return { event: 'write-failed', fields: { id, attempts, message: reason } };
+}
+
+/**
  * Lines held before the oldest start being dropped.
  *
  * A cap rather than an unbounded queue: if Turso is unreachable the crawl keeps
