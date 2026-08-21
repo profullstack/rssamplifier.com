@@ -5,6 +5,7 @@ import { SIGNED_IN_HINT_COOKIE } from '../lib/session-hint.js';
 import DockPlayer from './DockPlayer.jsx';
 import ServiceWorker from './ServiceWorker.jsx';
 import Script from "next/script";
+import { jsonLdScript } from '../lib/jsonld.js';
 
 export const metadata = {
   metadataBase: new URL(siteUrl()),
@@ -148,7 +149,7 @@ export default function RootLayout({ children }) {
       <body>
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(siteJsonLd()) }}
+          dangerouslySetInnerHTML={{ __html: jsonLdScript(siteJsonLd()) }}
         />
 
         {/* Ahead of the masthead, and synchronous, so a signed-in reader never

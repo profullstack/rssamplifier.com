@@ -11,6 +11,7 @@ import SubscribeLinks from '../../SubscribeLinks.jsx';
 import { CATEGORIES } from '../../CategoryIndex.jsx';
 import ListFilter from '../../ListFilter.jsx';
 import { FILTER_FROM } from '../../../lib/listFilter.js';
+import { jsonLdScript } from '../../../lib/jsonld.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,7 +112,7 @@ export default async function AuthorPage({ params }) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       <p className="eyebrow">

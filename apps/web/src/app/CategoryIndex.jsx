@@ -10,6 +10,7 @@ import SubscribeLinks from './SubscribeLinks.jsx';
 import { FILTER_FROM } from '../lib/listFilter.js';
 import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
+import { jsonLdScript } from '../lib/jsonld.js';
 
 /** Feeds per category page. Matches the home page's run length. */
 export const PAGE_SIZE = 60;
@@ -68,7 +69,7 @@ export default async function CategoryIndex({ kind, page = 1 }) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       <h1>{category.heading}</h1>

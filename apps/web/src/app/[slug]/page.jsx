@@ -30,6 +30,7 @@ import SubscribeLinks from '../SubscribeLinks.jsx';
 import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
+import { jsonLdScript } from '../../lib/jsonld.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -222,7 +223,7 @@ export default async function FeedPage({ params }) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       {/* The eyebrow is a link, not a label: it is the only place on a feed's

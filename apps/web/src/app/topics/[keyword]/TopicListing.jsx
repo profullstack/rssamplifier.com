@@ -14,6 +14,7 @@ import { FILTER_FROM } from '../../../lib/listFilter.js';
 import Share from '../../Share.jsx';
 import { Avatar } from '../../Thumb.jsx';
 import { feedImage } from '../../../lib/thumbs.js';
+import { jsonLdScript } from '../../../lib/jsonld.js';
 
 /** Feeds per page. Matches the category pages. */
 export const PAGE_SIZE = 60;
@@ -149,7 +150,7 @@ export default async function TopicListing({ topic, counts, group = null, page =
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       <p className="eyebrow">
