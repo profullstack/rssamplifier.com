@@ -1,26 +1,42 @@
-import { q } from '@rssamplifier/db';
+import { q, alerts, remember } from '@rssamplifier/db';
 
 import { db } from './db.js';
 
 /**
- * The slow half of /crawlstats, cached in the process.
+ * The slow half of /crawlstats, cached in Redis.
  *
  * The status numbers on that page have to be current to the second — a stalled
  * crawler that reads "healthy" because the answer came from a cache is the one
  * failure the page exists to catch. The breakdowns below are the opposite kind
- * of number: a directory of 48k feeds does not change shape between two
- * fifteen-second refreshes, and recomputing a group-by over every feed on each
- * one bills a full table scan for an answer that is the same all morning.
+ * of number: a directory of half a million feeds does not change shape between
+ * two fifteen-second refreshes, and recomputing a group-by over every feed on
+ * each one bills a full table scan for an answer that is the same all morning.
  *
- * So they are cached, separately, for as long as each is actually still true:
+ * ## Why this moved out of the process
  *
- * - the hourly rollup is a handful of rows and moves within the hour, so a
- *   minute is plenty of staleness to accept for it;
- * - the category breakdown is two scans of `feeds` and moves at the speed of
- *   the crawler finding new blogs, which is nothing like every fifteen seconds.
+ * These caches used to live in module scope, which was right as far as it went
+ * and had two holes. It died with the process, so every deploy re-paid the full
+ * cost on the next request; and it was per instance, so nothing was shared.
  *
- * Per process and dying with it, matching `popularLanguages` in ./languages.js:
- * a deploy or a restart is exactly when it is worth looking again.
+ * The second hole is the one that bit. `categoryStats` stopped merely being
+ * slow and started *failing* — measured 2026-08-21, it does not finish inside
+ * the client's 30s deadline against 476,715 feeds — and a cache that only
+ * stores successes never stores anything. So every request paid 30 seconds, for
+ * ever, and `/api/crawlstats` answered in 118. Redis plus serve-stale-on-failure
+ * means one success, any time, is enough for every later reader.
+ *
+ * Redis also adds no writes to Turso, which matters more than usual here: the
+ * write path is this database's binding constraint, so a rollup table would put
+ * the fix on the hot side of it.
+ *
+ * ## What is cached, and what is derived
+ *
+ * Facts are cached; anything computed against "now" is derived at serve time.
+ * An hour label or an idle-minutes count baked into a cached blob is frozen,
+ * and a frozen liveness number is exactly the lie this page must not tell. So
+ * `queueHistory` caches the sparse rows and fills the window on the way out,
+ * and `crawlStats` (in the route) re-derives `idleMinutes` from the cached
+ * `lastSuccessAt` timestamp.
  */
 
 /** How long an hourly rollup read is trusted. */
@@ -28,6 +44,21 @@ const HISTORY_TTL_MS = 60 * 1000;
 
 /** How long a category breakdown is trusted. */
 const CATEGORY_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * How stale a breakdown may get before a reader waits for a fresh one.
+ *
+ * Generous on purpose. These are shape-of-the-directory numbers, and the whole
+ * reason the window is wide is that the alternative — when the underlying read
+ * is failing — is no chart at all rather than a slightly old one.
+ */
+const CHART_MAX_STALE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Shorter than the client's own 30s deadline, so a read that is going to hang
+ * gives the page back before the browser gives up on it.
+ */
+const CHART_TIMEOUT_MS = 20 * 1000;
 
 /** How much history the charts draw. */
 export const HISTORY_HOURS = 24;
@@ -43,15 +74,6 @@ export const GROWTH_DAYS = 30;
  */
 export const QUEUE_HOURS = 48;
 
-/** @type {{ at: number, value: Awaited<ReturnType<typeof q.indexingHistory>> }|null} */
-let historyCache = null;
-
-/** @type {{ at: number, value: Awaited<ReturnType<typeof q.categoryStats>> }|null} */
-let categoryCache = null;
-
-/** @type {{ at: number, value: { hours: string[], series: Record<string, Array<number|null>> } }|null} */
-let queueCache = null;
-
 /**
  * Crawler throughput, hour by hour.
  *
@@ -64,15 +86,12 @@ let queueCache = null;
  * @returns {Promise<Awaited<ReturnType<typeof q.indexingHistory>>>}
  */
 export async function indexingHistory() {
-  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache.value;
-
-  try {
-    const value = await q.indexingHistory(db(), HISTORY_HOURS);
-    historyCache = { at: Date.now(), value };
-    return value;
-  } catch {
-    return [];
-  }
+  const value = await remember(
+    'indexingHistory',
+    { ttlMs: HISTORY_TTL_MS, maxStaleMs: CHART_MAX_STALE_MS, timeoutMs: CHART_TIMEOUT_MS, fallback: [] },
+    () => q.indexingHistory(db(), HISTORY_HOURS),
+  );
+  return value ?? [];
 }
 
 /**
@@ -85,6 +104,10 @@ export async function indexingHistory() {
  * has would show.
  *
  * So this fills the window and leaves `null` where nothing was written down.
+ * The fill happens *after* the cache rather than before it: the hour labels are
+ * built from the current time, so a cached dense array would still be carrying
+ * yesterday's axis tomorrow. The sparse rows are the fact worth keeping.
+ *
  * Empty rather than throwing, on the same reasoning as `indexingHistory`: the
  * poller owns migration, so there is a deploy window where `queue_hourly` does
  * not exist yet and losing a chart must not take the page with it.
@@ -92,155 +115,193 @@ export async function indexingHistory() {
  * @returns {Promise<{ hours: string[], series: Record<string, Array<number|null>> }>}
  */
 export async function queueHistory() {
-  if (queueCache && Date.now() - queueCache.at < HISTORY_TTL_MS) return queueCache.value;
+  const rows = await remember(
+    'queueHistory',
+    { ttlMs: HISTORY_TTL_MS, maxStaleMs: CHART_MAX_STALE_MS, timeoutMs: CHART_TIMEOUT_MS, fallback: null },
+    () => q.queueHistory(db(), QUEUE_HOURS),
+  );
 
-  try {
-    const rows = await q.queueHistory(db(), QUEUE_HOURS);
-    const byHour = new Map(rows.map((r) => [r.hour, r]));
+  if (!rows) return { hours: [], series: {} };
 
-    const hours = [];
-    const now = Date.now();
-    for (let i = QUEUE_HOURS - 1; i >= 0; i--) {
-      hours.push(new Date(now - i * 3_600_000).toISOString().slice(0, 13));
-    }
+  const byHour = new Map(rows.map((r) => [r.hour, r]));
 
-    const pick = (key) => hours.map((h) => (byHour.has(h) ? Number(byHour.get(h)[key]) : null));
-
-    const value = {
-      hours,
-      series: {
-        due: pick('due'),
-        firstCrawl: pick('firstCrawl'),
-        cards: pick('cards'),
-        authors: pick('authors'),
-      },
-    };
-
-    queueCache = { at: Date.now(), value };
-    return value;
-  } catch {
-    return { hours: [], series: {} };
+  const hours = [];
+  const now = Date.now();
+  for (let i = QUEUE_HOURS - 1; i >= 0; i--) {
+    hours.push(new Date(now - i * 3_600_000).toISOString().slice(0, 13));
   }
+
+  const pick = (key) => hours.map((h) => (byHour.has(h) ? Number(byHour.get(h)[key]) : null));
+
+  return {
+    hours,
+    series: {
+      due: pick('due'),
+      firstCrawl: pick('firstCrawl'),
+      cards: pick('cards'),
+      authors: pick('authors'),
+    },
+  };
 }
 
 /**
  * The directory by category, with each category's growth curve.
  *
- * Same bargain as above: a status page missing its breakdown is worth more than
- * a status page that 500s.
+ * The slowest read on the page and the reason this module exists. It wants five
+ * columns per feed (category, status, created_at, last_success_at, item_count)
+ * and three of them are rewritten on every crawl, so an index wide enough to
+ * cover it would cost more on the write path than the read is worth. Measured
+ * against production it no longer completes at all: a bare `count(*)` of
+ * `feeds` is 6.9s and `select category, count(*) … group by category` exceeds
+ * the 30s client deadline. Removing its conditional aggregates — the fix that
+ * worked for `crawlStats` in PR #96 — does not help, because the cost is
+ * visiting every row for a column no index covers.
+ *
+ * Which is why it is served stale for up to a day rather than recomputed:
+ * five minutes and five minutes plus a failed thirty-second scan are the same
+ * answer, and a day-old breakdown beats the empty one this returned before.
  *
  * @returns {Promise<Awaited<ReturnType<typeof q.categoryStats>>>}
  */
 export async function categoryStats() {
-  const fresh = categoryCache && Date.now() - categoryCache.at < CATEGORY_TTL_MS;
-  if (fresh) return categoryCache.value;
+  const value = await remember(
+    'categoryStats',
+    {
+      ttlMs: CATEGORY_TTL_MS,
+      maxStaleMs: CHART_MAX_STALE_MS,
+      timeoutMs: CHART_TIMEOUT_MS,
+      fallback: null,
+    },
+    () => q.categoryStats(db(), GROWTH_DAYS),
+  );
 
-  // Expired but present: hand back the old answer and refresh behind it.
-  //
-  // This read is the slowest thing left on the page — 6.1 seconds against
-  // production, because it wants five columns per feed (category, status,
-  // created_at, last_success_at, item_count) and three of them are rewritten on
-  // every crawl, so an index wide enough to cover it would cost more on the
-  // write path than the read is worth. A plain TTL therefore does not make the
-  // page fast, it makes one reader in every five minutes wait six seconds for a
-  // breakdown that was already almost right.
-  //
-  // Serving stale while revalidating is the honest trade for this particular
-  // number: it is a shape-of-the-directory figure that moves at the speed of
-  // the crawler finding new blogs, so five minutes and five minutes plus six
-  // seconds are the same answer.
-  if (categoryCache) {
-    if (!categoryRefreshing) {
-      categoryRefreshing = true;
-      refreshCategories().finally(() => {
-        categoryRefreshing = false;
-      });
-    }
-    return categoryCache.value;
-  }
-
-  // Nothing cached at all — the first request after a deploy has to wait.
-  return (await refreshCategories()) ?? { total: 0, days: [], categories: [] };
+  return value ?? { total: 0, days: [], categories: [] };
 }
 
-/** Guards against a slow refresh being started once per concurrent request. */
-let categoryRefreshing = false;
+/**
+ * How long the liveness numbers are trusted.
+ *
+ * Ten seconds against a page that refreshes every fifteen, so a reader is never
+ * looking at anything meaningfully older than the last refresh, and a burst of
+ * concurrent readers costs one read rather than one each.
+ */
+const STATS_TTL_MS = 10 * 1000;
 
 /**
- * Re-read the breakdown and store it, returning null rather than throwing.
+ * The status numbers, cached briefly — and the derivation that makes that safe.
  *
- * @returns {Promise<Awaited<ReturnType<typeof q.categoryStats>>|null>}
+ * `crawlStats` was deliberately never cached, because a stalled crawler reading
+ * "healthy" is the one failure /crawlstats exists to catch. That reasoning is
+ * right about `idleMinutes` and wrong about everything else on the object: the
+ * counts are counts, but `idleMinutes` is computed as `now - lastSuccessAt` at
+ * the moment the query runs, so caching the object *freezes it*. A crawler that
+ * died would go on reporting the same cheerful number until the entry expired.
+ *
+ * So the fact is cached and the derivation is redone here. `lastSuccessAt` is a
+ * timestamp — it does not go stale, it just gets further away — and recomputing
+ * the gap against the current clock gives a number that keeps climbing while
+ * the crawler is down, which is exactly the alarm that must not be cacheable.
+ * `generatedAt` is left as the moment the read actually happened, so the page
+ * can be honest about how old the counts beside it are.
+ *
+ * The read itself measured 4,975ms against production, which is why it is worth
+ * doing at all.
+ *
+ * @returns {Promise<Awaited<ReturnType<typeof q.crawlStats>>>}
  */
-async function refreshCategories() {
-  try {
-    const value = await q.categoryStats(db(), GROWTH_DAYS);
-    categoryCache = { at: Date.now(), value };
-    return value;
-  } catch {
-    // A failed refresh leaves the previous answer in place and is retried on
-    // the next request, which is the whole point of keeping the old value.
-    return null;
-  }
+export async function liveStats() {
+  const stats = await remember(
+    'crawlStats',
+    {
+      ttlMs: STATS_TTL_MS,
+      // Minutes, not hours: these are the numbers that must not drift far, and
+      // if they cannot be read at all the page should say so by other means.
+      maxStaleMs: 2 * 60 * 1000,
+      timeoutMs: CHART_TIMEOUT_MS,
+      fallback: null,
+    },
+    () => q.crawlStats(db()),
+  );
+
+  if (!stats) return await q.crawlStats(db());
+
+  const lastSuccessAt = stats.lastSuccessAt ? String(stats.lastSuccessAt) : null;
+  return {
+    ...stats,
+    idleMinutes: lastSuccessAt
+      ? Math.max(0, Math.round((Date.now() - Date.parse(lastSuccessAt)) / 60_000))
+      : null,
+  };
+}
+
+/**
+ * The feeds failing hardest, for the table at the bottom of the page.
+ *
+ * 5,172ms against production: it sorts the whole error population. A minute old
+ * is fine — a feed that has failed eleven times has not stopped failing since
+ * the last refresh, and this list is read to find a pattern, not to catch an
+ * event.
+ *
+ * Keyed by limit, because the page asks for 50 and the JSON endpoint for 20 --
+ * one key would hand whichever asked second the wrong-length list.
+ *
+ * @param {number} [limit]
+ * @returns {Promise<Awaited<ReturnType<typeof q.failingFeeds>>>}
+ */
+export async function failingFeeds(limit = 20) {
+  const value = await remember(
+    `failingFeeds:${limit}`,
+    { ttlMs: 60 * 1000, maxStaleMs: 6 * 60 * 60 * 1000, timeoutMs: CHART_TIMEOUT_MS, fallback: [] },
+    () => q.failingFeeds(db(), limit),
+  );
+  return value ?? [];
+}
+
+/**
+ * How many accounts have alerts configured.
+ *
+ * Only tells a sender with nobody to serve from one that has stopped, so it
+ * moves at the speed of people signing up and can be an hour old without
+ * anybody being misled.
+ *
+ * @returns {Promise<number>}
+ */
+export async function alertingAccounts() {
+  const value = await remember(
+    'alertingAccounts',
+    { ttlMs: 5 * 60 * 1000, maxStaleMs: CHART_MAX_STALE_MS, timeoutMs: CHART_TIMEOUT_MS, fallback: 0 },
+    () => alerts.alertingAccountCount(db()),
+  );
+  return Number(value ?? 0);
 }
 
 /** How long a job-board read is trusted. */
 const JOBS_TTL_MS = 60 * 1000;
 
-/** @type {{ at: number, value: Awaited<ReturnType<typeof q.jobBacklogs>> }|null} */
-let jobsCache = null;
-
-/** Guards against a slow refresh being started once per concurrent request. */
-let jobsRefreshing = false;
-
 /**
  * The job board's backlogs, cached and served stale while it refreshes.
  *
- * This was the last uncached scan of `feeds` on the page, and it is a scan
- * however well it is written: counting the directory by status, by card state
- * and by never-crawled means visiting every row, and there are 369,030 of them.
- * On an idle database that is 398ms, which is why it shipped uncached. Under
- * the crawler's write load the same statement measured **16.9 seconds** -- and
- * the page pays it on every request, because /crawlstats is deliberately
- * `force-dynamic`.
+ * A scan of `feeds` however well it is written: counting the directory by
+ * status, by card state and by never-crawled means visiting every row, and
+ * there are 476,715 of them. On an idle database that is 398ms, which is why it
+ * shipped uncached; under the crawler's write load the same statement measured
+ * 16.9 seconds, and 11.3 in the timing that prompted this change.
  *
  * A minute of staleness costs nothing here. These are backlogs of hundreds of
  * thousands of feeds draining at a few hundred an hour; they do not
  * meaningfully move between two views of a page that refreshes itself every
- * fifteen seconds. The health badge and the live figures beside it are read
- * separately and stay current to the second -- see `crawlStats`, which is the
- * one thing on this page that must never be served from a cache, because a
- * stalled crawler reading "healthy" is the failure the page exists to catch.
+ * fifteen seconds.
+ *
+ * Null rather than zeroes when there is nothing to serve: a job board showing
+ * "0 waiting" because the read failed reads as "all caught up", where a missing
+ * board is merely missing.
  *
  * @returns {Promise<Awaited<ReturnType<typeof q.jobBacklogs>>|null>}
  */
 export async function jobBacklogs() {
-  if (jobsCache && Date.now() - jobsCache.at < JOBS_TTL_MS) return jobsCache.value;
-
-  if (jobsCache) {
-    if (!jobsRefreshing) {
-      jobsRefreshing = true;
-      refreshJobs().finally(() => {
-        jobsRefreshing = false;
-      });
-    }
-    return jobsCache.value;
-  }
-
-  return refreshJobs();
-}
-
-/**
- * @returns {Promise<Awaited<ReturnType<typeof q.jobBacklogs>>|null>}
- */
-async function refreshJobs() {
-  try {
-    const value = await q.jobBacklogs(db());
-    jobsCache = { at: Date.now(), value };
-    return value;
-  } catch {
-    // The previous answer if there is one, null if there is not. Zeroes would
-    // be a lie: a job board showing "0 waiting" because the read failed reads
-    // as "all caught up", where a missing board is merely missing.
-    return jobsCache?.value ?? null;
-  }
+  return remember(
+    'jobBacklogs',
+    { ttlMs: JOBS_TTL_MS, maxStaleMs: 6 * 60 * 60 * 1000, timeoutMs: CHART_TIMEOUT_MS, fallback: null },
+    () => q.jobBacklogs(db()),
+  );
 }

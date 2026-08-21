@@ -1,7 +1,14 @@
-import { q, discovery, alerts } from '@rssamplifier/db';
+import { q, discovery } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
-import { categoryStats, indexingHistory, jobBacklogs } from '../../../lib/crawlstats.js';
+import {
+  categoryStats,
+  indexingHistory,
+  jobBacklogs,
+  liveStats,
+  failingFeeds,
+  alertingAccounts,
+} from '../../../lib/crawlstats.js';
 import { toLine } from '../../../lib/crawlLog.js';
 import { jobRows } from '../../../lib/jobs.js';
 
@@ -15,10 +22,15 @@ export const dynamic = 'force-dynamic';
  * backlog that should drain within a tick or two, `stale` is active feeds the
  * crawler has not successfully read in a day.
  *
- * Deliberately uncached — a status endpoint that answers from a cache reports
- * that everything was fine a minute ago, which is the one thing it must not do.
- * The two additions that are cached, briefly, are the ones nothing would alert
- * on: the hourly history and the category breakdown. See lib/crawlstats.js.
+ * Every read here is cached, and the distinction that keeps that honest is
+ * between a fact and a derivation. A count is a fact and may be ten seconds
+ * old; `idleMinutes` is `now - lastSuccessAt`, so caching it would freeze the
+ * one number a monitor alerts on. `liveStats` caches the timestamp and redoes
+ * the subtraction — see lib/crawlstats.js.
+ *
+ * Before this, the endpoint answered in 118 seconds: `categoryStats` no longer
+ * completes inside the client's 30s deadline, and since a cache that only
+ * stores successes never stored it, every request paid the full timeout.
  */
 export async function GET() {
   const client = db();
@@ -36,8 +48,8 @@ export async function GET() {
     alertAccounts,
     operationalErrors,
   ] = await Promise.all([
-    q.crawlStats(client),
-    q.failingFeeds(client, 20),
+    liveStats(),
+    failingFeeds(),
     q.recentlyCrawled(client, 20),
     discovery.countQueuedCandidates(client),
     discovery.countQueuedKeywords(client),
@@ -57,7 +69,7 @@ export async function GET() {
     q.logActivity(client, 1),
     // See the page: this only tells a sender with nobody to serve from one that
     // has stopped, which the log alone cannot say.
-    alerts.alertingAccountCount(client),
+    alertingAccounts(),
     q.crawlOperationalErrors(client, { limit: 20, hours: 24 }),
   ]);
 
