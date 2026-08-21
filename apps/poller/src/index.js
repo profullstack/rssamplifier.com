@@ -807,7 +807,25 @@ async function queueTick() {
   } catch (err) {
     // A missed sample is a gap in a chart, which the chart draws as a gap. It
     // is not a reason to make noise in a log that is read for crawl failures.
-    log('queue-sample-error', { message: String(err?.message ?? err) });
+    //
+    // That was already the intent and the line did the opposite of it, twice
+    // over: `toEntry` marks a row as an error when the event name ends in
+    // "error" *or* when the fields carry a `message`, and this had both. So a
+    // burndown-chart sample that could not be taken went straight onto the
+    // panel whose entire job is "is anything broken", next to writes that
+    // genuinely did not happen.
+    //
+    // It is the same mistake as logging every retry attempt as a failed write,
+    // and it has the same fix: name it for what it is and carry the reason in a
+    // field that is not `message`. The line stays in the stream and in Railway
+    // for anyone reading a pattern, and out of the alarm.
+    //
+    // Worth knowing if this ever needs chasing: since the write moved into the
+    // queue it is the *reads* that time out here — four conditional aggregates
+    // over 476k feeds, ~1.4s idle, which a busy crawl can push past the
+    // 30-second deadline. Nothing is broken when that happens; the chart just
+    // misses a point.
+    log('queue-sample-missed', { reason: String(err?.message ?? err) });
   } finally {
     sampling = false;
   }

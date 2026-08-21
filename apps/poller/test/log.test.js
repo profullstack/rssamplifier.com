@@ -169,6 +169,20 @@ test('a job with no retries left to configure fails on its first attempt', () =>
   assert.equal(fields.attempts, 1);
 });
 
+test('a missed chart sample is not an alarm', () => {
+  // `toEntry` marks a row as an error two ways — an event name ending in
+  // "error", or any `message` field — and the queue sample used to trip both,
+  // so a burndown point that could not be taken landed on the panel that
+  // answers "is anything broken" beside writes that genuinely did not happen.
+  const entry = toEntry('queue-sample-missed', { reason: 'The operation was aborted due to timeout' });
+
+  assert.equal(entry.status, null, 'a gap in a chart is not a failure');
+  assert.match(JSON.parse(entry.detail).reason, /aborted due to timeout/, 'and it still says why');
+
+  // The shape it replaced, kept here so the distinction cannot quietly rot.
+  assert.equal(toEntry('queue-sample-error', { message: 'x' }).status, 'error');
+});
+
 test('a failure with no job at all is still reported', () => {
   // BullMQ can emit `failed` with no job when it could not load one. Treating
   // that as a retry would drop the only notice of it.
