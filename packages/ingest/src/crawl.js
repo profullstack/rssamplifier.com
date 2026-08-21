@@ -322,7 +322,6 @@ export async function crawlFeed(db, feed, opts = {}) {
   // same set without the read-after-write that used to force a second
   // transaction.
   let storedItems = [];
-  let existingTopics = 1;
   let hasAuthors = true;
   /** @type {Array<{ slug: string, keyword: string, words: number, count: number, source: string }>} */
   let storedTopics = [];
@@ -335,14 +334,32 @@ export async function crawlFeed(db, feed, opts = {}) {
       q.feedKeywordRows(db, id).catch(() => []),
       authors.feedHasAuthors(db, id).catch(() => true),
     ]);
-    existingTopics = storedTopics.length;
   }
 
-  // Topics, when the feed has published something or has none yet.
+  // Topics, re-derived on every crawl.
+  //
+  // This used to be gated on `publishedSomethingNew || existingTopics === 0`,
+  // which asked the wrong question. Topics come from `topicsFrom(feed, items)`
+  // -- the *channel's* own categories, title and description as well as the
+  // items -- so a publisher who retags their feed, renames it, or rewrites its
+  // description has changed its topics without publishing anything at all. The
+  // old guard could not see that, and a feed that went quiet was pinned to
+  // whatever it was about on the last day it posted. `feeds.category` has
+  // always been re-derived on every successful crawl for exactly this reason
+  // (`upsertFeed` writes it unconditionally); topics now agree with it.
+  //
+  // This is affordable because of the diff below, not in spite of it. The three
+  // reads it needs are already issued above whenever auxiliary writes are on,
+  // so re-deriving adds no round trip -- `topicsFrom` is pure computation and
+  // `keywordDiffStatements` returns an empty array when the extracted set
+  // matches what is stored, which for a quiet feed is every time. The cost that
+  // forced `CRAWL_AUXILIARY_WRITES=0` is *first* crawls, where every topic is a
+  // genuine insert and no diff can help; that is a property of the backlog and
+  // is unchanged by this.
   let topics = 0;
   /** @type {Array<{ sql: string, args: unknown[] }>} */
   let topicStatements = [];
-  if (AUXILIARY_WRITES && (publishedSomethingNew || existingTopics === 0)) {
+  if (AUXILIARY_WRITES) {
     try {
       const extracted = topicsFrom(resolved.feed, storedItems);
       // A diff rather than a replace. Most re-crawls extract the topics the
