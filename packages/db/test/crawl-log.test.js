@@ -152,6 +152,31 @@ test('the prune keeps the window and drops what is behind it', async () => {
   assert.ok(left.some((r) => String(r.subject) === 'this morning'));
 });
 
+test('the prune takes a slice, so a lapsed sweep cannot become one huge delete', async () => {
+  // The failure this guards against: the sweep stopped being reached, the table
+  // grew to 64 hours of a 12-hour window, and an unbounded catch-up delete is
+  // ~120,000 rows in one statement against a 30-second deadline — which times
+  // out, and times out again every hour, never shrinking the arrears that made
+  // it too big.
+  const old = nowIso(-13 * 3_600_000);
+  await q.appendCrawlLog(
+    db,
+    Array.from({ length: 12 }, (_, i) => ({ event: 'feed', at: old, subject: `old-${i}` })),
+  );
+
+  const first = await q.pruneCrawlLog(db, 12, 5);
+  assert.equal(first, 5, 'one slice, not the whole backlog');
+
+  const second = await q.pruneCrawlLog(db, 12, 5);
+  assert.equal(second, 5, 'and the next slice takes the next five');
+
+  const third = await q.pruneCrawlLog(db, 12, 5);
+  assert.ok(third < 5, 'a short slice is how the caller knows it has caught up');
+
+  const left = await q.crawlLog(db, { since: 0, limit: 1000 });
+  assert.ok(!left.some((r) => String(r.subject).startsWith('old-')), 'all of it went eventually');
+});
+
 test('a caller cannot ask for the whole table', async () => {
   // The stream passes a limit through from a query string, so the ceiling is
   // load-bearing rather than decorative.

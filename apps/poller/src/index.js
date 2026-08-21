@@ -511,8 +511,22 @@ async function purgeTick() {
     if (queueHours) log('purged-queue-rollup', { rows: queueHours });
 
     // The live log takes a row per feed crawled, so it is the one table here
-    // that would grow by six figures a week if nobody swept it.
-    const lines = await q.pruneCrawlLog(db);
+    // that would grow by six figures a week if nobody swept it — and it has
+    // been growing, because this sweep sat behind `catchupOnly` and stopped
+    // being reached. Clearing 64 hours of arrears is ~120,000 rows.
+    //
+    // Slices rather than one statement, and several slices rather than one:
+    // each delete stays small enough to finish inside the request deadline
+    // while holding the cluster's only writer, and a run still takes a real
+    // bite out of the arrears instead of trimming an hour's worth per hour and
+    // never catching up. It stops early the moment a slice comes back short,
+    // which is what "there is nothing older than the window" looks like.
+    let lines = 0;
+    for (let slice = 0; slice < 20; slice += 1) {
+      const removed = await q.pruneCrawlLog(db);
+      lines += removed;
+      if (removed < 5000) break;
+    }
     if (lines) log('purged-log', { rows: lines });
 
     // What has already been alerted about. A working set, not a history —

@@ -2129,14 +2129,33 @@ export async function crawlOperationalErrors(db, { limit = 20, hours = 24 } = {}
  * retention would be a quarter of a million rows to hold a log nobody scrolls
  * back through. Railway keeps the durable copy of the same lines.
  *
+ * **Bounded, because the first sweep after a lapse is the dangerous one.** This
+ * ran unbounded for as long as it was reached every hour, when the arrears were
+ * an hour of crawling and the delete was small. It stopped being reached — it
+ * sat below `catchupOnly` in the poller's tick — and the table grew to 64 hours
+ * of a 12-hour window. An unbounded catch-up delete is then ~120,000 rows in one
+ * statement, against a database whose request deadline is thirty seconds and
+ * whose single writer is already the constraint. It would time out, and time out
+ * again every hour after that, never getting far enough to shrink the arrears
+ * that made it too big. A sweep that cannot run is how the table got here.
+ *
+ * So it takes a slice and says how much it took. The caller runs hourly and the
+ * arrears shrink a slice at a time until the delete is once again the small one
+ * this was written for. `id in (select ... limit ?)` rather than
+ * `delete ... limit ?`, which needs a compile-time option SQLite is not
+ * guaranteed to have been built with.
+ *
  * @param {Client} db
  * @param {number} [hours]
+ * @param {number} [max] rows to remove in one statement
  * @returns {Promise<number>} rows removed
  */
-export async function pruneCrawlLog(db, hours = 12) {
+export async function pruneCrawlLog(db, hours = 12, max = 5000) {
   const { rowsAffected } = await db.execute({
-    sql: 'delete from crawl_log where at < ?',
-    args: [nowIso(-hours * 3_600_000)],
+    sql: `delete from crawl_log where id in (
+            select id from crawl_log where at < ? limit ?
+          )`,
+    args: [nowIso(-hours * 3_600_000), Math.max(1, Math.floor(max))],
   });
   return Number(rowsAffected ?? 0);
 }
