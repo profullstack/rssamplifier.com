@@ -1,4 +1,4 @@
-import { q, discovery, alerts } from '@rssamplifier/db';
+import { q, discovery } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import {
@@ -6,6 +6,9 @@ import {
   indexingHistory,
   jobBacklogs,
   queueHistory,
+  liveStats,
+  failingFeeds,
+  alertingAccounts,
   GROWTH_DAYS,
 } from '../../lib/crawlstats.js';
 import { describe, toLine } from '../../lib/crawlLog.js';
@@ -62,8 +65,8 @@ export default async function CrawlStatsPage() {
     operationalErrors,
     queues,
   ] = await Promise.all([
-    q.crawlStats(client),
-    q.failingFeeds(client, 50),
+    liveStats(),
+    failingFeeds(50),
     q.recentlyCrawled(client, 15),
     discovery.countQueuedCandidates(client),
     discovery.countQueuedKeywords(client),
@@ -90,7 +93,7 @@ export default async function CrawlStatsPage() {
     // Only to tell a sender with nothing to do from one that has stopped: the
     // alert pass writes no log line at all when nobody is subscribed, and a
     // silent job is otherwise indistinguishable from a dead one.
-    alerts.alertingAccountCount(client),
+    alertingAccounts(),
     // Kept separately from the rolling live-log window. At crawler throughput,
     // 400 successful feed lines can evict an operational failure in minutes.
     q.crawlOperationalErrors(client, { limit: 20, hours: 24 }),
