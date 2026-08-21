@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { connect, migrate, newId, q } from '@rssamplifier/db';
 
-import { crawlFeed, nextIntervalMinutes } from '../src/crawl.js';
+import { crawlFeed, nextIntervalMinutes, topicsFrom } from '../src/crawl.js';
 
 /**
  * What a re-crawl reports, and what the crawler does about it.
@@ -518,4 +518,64 @@ test('a feed that fills up after being empty is noticed at once', async () => {
   assert.equal(res.newItems, 5, 'the posts land');
   const after = await q.feedBySlug(db, 'quiet');
   assert.equal(JSON.parse(after.change_log).length, 2, 'and it is recorded as a change');
+});
+
+test('a feed that is retagged without publishing still has its topics revised', async () => {
+  // The case the old guard could not see.
+  //
+  // Topics were recomputed only when the feed had published something new, or
+  // had none yet. But `topicsFrom` reads the *channel's* own categories, title
+  // and description as well as its items, so a publisher can change what their
+  // feed is about without posting: retag it, rename it, rewrite the standfirst.
+  // For a blog that then goes quiet, the old condition was never true again and
+  // the directory filed it under whatever it happened to be about on the last
+  // day it posted.
+  //
+  // `feeds.category` never had this problem -- `upsertFeed` re-derives it on
+  // every successful crawl. This asserts the topics now agree with it.
+  const retagged = async () => ({
+    ok: true,
+    feed: { ...DOCUMENT.feed, categories: ['astronomy'] },
+  });
+
+  const feed = await seed();
+  await crawlFeed(db, feed, { resolve });
+
+  const before = (await q.feedKeywordRows(db, feed.id)).map((r) => String(r.slug));
+  assert.ok(before.includes('writing'), `the first crawl files the tag it was given: ${before}`);
+
+  // The same five posts, same dates, nothing new to store -- only the channel's
+  // tag has changed. This is the crawl the old code skipped.
+  const res = await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: retagged });
+  assert.equal(res.newItems, 0, 'nothing new was published');
+
+  const after = (await q.feedKeywordRows(db, feed.id)).map((r) => String(r.slug));
+  assert.ok(after.includes('astronomy'), `the new tag is filed: ${after}`);
+});
+
+test('a quiet feed that has not changed writes no topic rows at all', async () => {
+  // The other half of the trade, and the reason re-deriving every crawl is
+  // affordable: `keywordDiffStatements` compares the extracted set against the
+  // stored one and emits nothing when they match. Re-deriving costs computation
+  // on a document already parsed and reads already issued -- not writes.
+  //
+  // The diff is the witness. `feed_keywords` carries no timestamp, so asserting
+  // on the rows cannot distinguish "rewritten to the same values" from "left
+  // alone" -- which is the exact indistinguishability that hid this cost in the
+  // first place. Asking `keywordDiffStatements` what it would emit is the
+  // claim itself, not a proxy for it.
+  const feed = await seed();
+  await crawlFeed(db, feed, { resolve });
+
+  const stored = await q.feedKeywordRows(db, feed.id);
+  assert.ok(stored.length > 0, 'the first crawl filed some topics');
+
+  // Exactly what the crawl recomputes on the next pass: the same document
+  // against the items now stored for it.
+  const again = topicsFrom(DOCUMENT.feed, await q.itemsForKeywords(db, feed.id));
+  assert.deepEqual(
+    q.keywordDiffStatements(feed.id, again, stored),
+    [],
+    'an unchanged re-crawl emits no topic write at all',
+  );
 });
