@@ -268,6 +268,29 @@ function cacheKey(key) {
   return `rsa:stats:${key}`;
 }
 
+/**
+ * Store a value under `key` as though a reader had just computed it.
+ *
+ * For work that cannot be done on a request: the category breakdown takes ~59
+ * seconds, so no page can wait for it and a cache that only fills from readers
+ * never fills at all. A background job computes it on a patient connection and
+ * primes the same key, and every reader is then served from Redis.
+ *
+ * Goes through `writeEntry` rather than reimplementing the envelope, so the
+ * warmer and the reader cannot drift apart on the format.
+ *
+ * @param {string} key
+ * @param {unknown} value
+ * @param {{ client?: any, maxStaleMs?: number }} [opts]
+ * @returns {Promise<boolean>} whether it was stored
+ */
+export async function primeCache(key, value, opts = {}) {
+  const client = opts.client !== undefined ? opts.client : await redisClient();
+  if (!client) return false;
+  await writeEntry(client, key, value, opts.maxStaleMs ?? 24 * 60 * 60 * 1000);
+  return true;
+}
+
 /** Test seam: forget the in-flight refreshes between cases. */
 export function resetCacheState() {
   inFlight.clear();

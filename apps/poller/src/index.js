@@ -1,4 +1,13 @@
-import { connect, createWriteWorker, migrate, q, accounts, alerts, takeWriteTally } from '@rssamplifier/db';
+import {
+  connect,
+  createWriteWorker,
+  migrate,
+  q,
+  accounts,
+  alerts,
+  takeWriteTally,
+  warmStatsCache,
+} from '@rssamplifier/db';
 import {
   crawlDue,
   enrichDue,
@@ -134,6 +143,16 @@ const authorIntervalMs = (Number(env['AUTHOR_INTERVAL_SECONDS']) || 60) * 1000;
 // wasteful and is not: it means the current hour's point is never more than ten
 // minutes stale on a page that refreshes every fifteen seconds.
 const queueSampleMs = (Number(env['QUEUE_SAMPLE_SECONDS']) || 600) * 1000;
+
+// How often the category breakdown is recomputed into Redis for /crawlstats.
+//
+// It is a ~59-second read of every feed, which is why it cannot live on a
+// request: with a 30-second deadline in front of it, it could only ever fail,
+// so the cache it was supposed to fill stayed empty and every visitor paid the
+// full timeout. Five minutes is far more often than the number moves -- it is
+// the shape of a directory of half a million feeds -- and the point is only
+// that Redis is never empty, not that it is current to the second.
+const statsWarmMs = (Number(env['STATS_WARM_SECONDS']) || 300) * 1000;
 
 // Where the write queue lives. Absent, `connect()` falls back to the
 // in-process serialiser and this daemon starts no worker — the system as it
@@ -831,6 +850,34 @@ async function queueTick() {
   }
 }
 
+/** Guards against a warm that outruns its interval starting a second one. */
+let warming = false;
+
+/**
+ * Recompute the category breakdown into Redis, so no page has to.
+ *
+ * This read takes about a minute against half a million feeds and cannot be
+ * made cheap: the columns it groups by are rewritten on every crawl, so an
+ * index covering them would be paid for on the write path, which is the one
+ * thing this system has none of to spare. Doing it here instead costs the
+ * crawler nothing -- it is a read, and reads do not queue behind the single
+ * writer everything else contends for.
+ *
+ * `warmStatsCache` never throws; the result is logged rather than acted on,
+ * because there is nothing to do about a warm that did not happen except serve
+ * the previous answer, which is what the cache already does.
+ */
+async function statsTick() {
+  if (warming) return;
+  warming = true;
+  try {
+    const result = await warmStatsCache({ log });
+    if (!result.ok) return;
+  } finally {
+    warming = false;
+  }
+}
+
 /**
  * The one process that actually writes to Turso.
  *
@@ -881,6 +928,7 @@ const cardTimer = setInterval(cardTick, cardIntervalMs);
 const alertTimer = setInterval(alertTick, alertIntervalMs);
 const enrichTimer = setInterval(enrichTick, authorIntervalMs);
 const queueTimer = setInterval(queueTick, queueSampleMs);
+const statsTimer = setInterval(statsTick, statsWarmMs);
 const searchTimer = setInterval(searchTick, searchIntervalMs);
 // Same cadence as the queue sample: long enough that the line is a summary
 // rather than a stream, short enough to bracket an experiment against.
@@ -891,6 +939,9 @@ void cardTick();
 void alertTick();
 void enrichTick();
 void queueTick();
+// Run once at boot, so a deploy does not leave the page slow until the first
+// interval comes round.
+void statsTick();
 
 log('started', {
   intervalSeconds: intervalMs / 1000,
@@ -922,6 +973,7 @@ function shutdown(signal) {
   clearInterval(enrichTimer);
   clearInterval(alertTimer);
   clearInterval(queueTimer);
+  clearInterval(statsTimer);
   clearInterval(searchTimer);
   clearInterval(tallyTimer);
 

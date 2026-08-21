@@ -15,7 +15,13 @@ import { queueWrites } from './writeQueue.js';
  * A `file:` URL needs no auth token, which is what makes local development and
  * the test suite work without a Turso account.
  *
- * @param {{ url?: string, authToken?: string, redisUrl?: string, queue?: boolean }} [opts]
+ * `timeoutMs` overrides the per-request deadline for this connection alone.
+ * The default is right for anything serving a page, and wrong for the one
+ * background job that recomputes the category breakdown: that read takes ~59
+ * seconds against half a million feeds, so on the default it can only ever
+ * fail. See `warmStatsCache` in ./statsWarmer.js.
+ *
+ * @param {{ url?: string, authToken?: string, redisUrl?: string, queue?: boolean, timeoutMs?: number }} [opts]
  * @returns {import('@libsql/client').Client}
  */
 export function connect(opts = {}) {
@@ -26,7 +32,9 @@ export function connect(opts = {}) {
   if (!url) throw new Error('TURSO_DATABASE_URL must be set');
 
   const client = createClient(
-    url.startsWith('file:') ? { url } : { url, authToken, fetch: withTimeout(requestTimeoutMs()) },
+    url.startsWith('file:')
+      ? { url }
+      : { url, authToken, fetch: withTimeout(opts.timeoutMs ?? requestTimeoutMs()) },
   );
 
   // Redis moves the write queue out of the process, which is the only way to

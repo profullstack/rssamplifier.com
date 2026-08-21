@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, beforeEach } from 'node:test';
 
-import { remember, resetCacheState } from '../src/cache.js';
+import { remember, primeCache, resetCacheState } from '../src/cache.js';
 
 /**
  * A Redis stand-in.
@@ -194,6 +194,29 @@ test('a failed computation with nothing cached returns the fallback, not a throw
     throw new Error('nope');
   });
   assert.deepEqual(got, {}, 'callers treat this as "unavailable", so it must not throw');
+});
+
+test('a primed value is served to readers without them computing anything', async () => {
+  // The warmer's whole contract. `categoryStats` takes ~59s, so no reader can
+  // fill this key; a background job fills it and readers must find it there.
+  const client = fakeRedis();
+
+  const stored = await primeCache('categoryStats', { total: 476_715 }, { client });
+  assert.equal(stored, true);
+
+  let ran = 0;
+  const got = await remember('categoryStats', { ttlMs: 5 * 60_000, client }, async () => {
+    ran += 1;
+    throw new Error('a reader must never have to run this');
+  });
+
+  assert.deepEqual(got, { total: 476_715 });
+  assert.equal(ran, 0, 'the reader did not touch the database');
+});
+
+test('priming without a client is a no-op rather than a crash', async () => {
+  // The poller runs with no REDIS_URL locally and in the test suite.
+  assert.equal(await primeCache('k', { a: 1 }, { client: null }), false);
 });
 
 test('bigint counts survive the round trip', async () => {
