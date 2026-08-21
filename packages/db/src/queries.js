@@ -897,6 +897,35 @@ export function keywordStatements(feedId, keywords) {
 }
 
 /**
+ * A feed's stored topics, in full, so a crawl can write only what changed.
+ *
+ * Replaces the bare count this used to fetch. The count answered exactly one
+ * question — "has this ever been extracted?" — and the crawl then threw away
+ * every row and wrote the whole set back, whether or not a single value in it
+ * differed. Six rows deleted and six written, per crawl, per feed, forever.
+ *
+ * Reading the rows instead costs the same round trip on the same index and
+ * turns that into a diff. `keywordDiffStatements` does the comparing.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @returns {Promise<Array<{ slug: string, keyword: string, words: number, count: number, source: string }>>}
+ */
+export async function feedKeywordRows(db, feedId) {
+  const { rows } = await db.execute({
+    sql: 'select slug, keyword, words, count, source from feed_keywords where feed_id = ?',
+    args: [feedId],
+  });
+  return rows.map((r) => ({
+    slug: String(r.slug),
+    keyword: String(r.keyword),
+    words: Number(r.words ?? 1),
+    count: Number(r.count ?? 0),
+    source: String(r.source ?? 'content'),
+  }));
+}
+
+/**
  * How many topics a feed has — the cheap "has this ever been extracted?" test.
  *
  * @param {Client} db
@@ -909,6 +938,92 @@ export async function countFeedKeywords(db, feedId) {
     args: [feedId],
   });
   return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * The smallest set of writes that turns the stored topics into the new ones.
+ *
+ * `keywordStatements` above replaces the lot: one delete of every row the feed
+ * has, then an insert per extracted topic. It is correct and it is what a first
+ * extraction wants. It is also what every *re-*crawl was doing, and the cost of
+ * that is not obvious until you meter it — the directory was writing about
+ * 945,000 rows a day to keep roughly the same six topics per feed on file, and
+ * rows written is what Turso bills. Combining them into fewer statements saves
+ * nothing at all: the meter counts rows, not statements or transactions.
+ *
+ * So this compares instead. A topic whose every column matches is left alone; a
+ * topic the feed has stopped writing about is deleted; a new one is inserted;
+ * one whose count has drifted is updated in place.
+ *
+ * **Behaviour is identical to a full replace.** That is the point of comparing
+ * every column rather than just the slug: `count` and `source` order the feeds
+ * inside a topic page (`order by source, count desc`), so a guard that ignored
+ * them would quietly freeze that ranking. The rows this skips are the ones a
+ * replace would have rewritten to the values they already held.
+ *
+ * @param {string} feedId
+ * @param {Array<{ slug: string, keyword: string, words?: number, count?: number, source?: string }>} extracted
+ * @param {Array<{ slug: string, keyword: string, words: number, count: number, source: string }>} stored
+ * @returns {Array<{ sql: string, args: unknown[] }>} empty when nothing differs
+ */
+export function keywordDiffStatements(feedId, extracted, stored) {
+  const want = new Map();
+  for (const k of extracted ?? []) {
+    if (!k?.slug) continue;
+    want.set(String(k.slug), {
+      slug: String(k.slug),
+      keyword: String(k.keyword ?? k.slug),
+      words: Number(k.words ?? 1),
+      count: Number(k.count ?? 0),
+      source: String(k.source ?? 'content'),
+    });
+  }
+
+  const have = new Map((stored ?? []).map((k) => [String(k.slug), k]));
+
+  /** @type {Array<{ sql: string, args: unknown[] }>} */
+  const out = [];
+
+  for (const [slug, row] of have) {
+    if (!want.has(slug)) {
+      out.push({
+        sql: 'delete from feed_keywords where feed_id = ? and slug = ?',
+        args: [feedId, slug],
+      });
+    }
+  }
+
+  for (const [slug, k] of want) {
+    const old = have.get(slug);
+
+    if (!old) {
+      out.push({
+        sql: `insert into feed_keywords (feed_id, slug, keyword, words, count, source)
+              values (?, ?, ?, ?, ?, ?)
+              on conflict (feed_id, slug) do nothing`,
+        args: [feedId, k.slug, k.keyword, k.words, k.count, k.source],
+      });
+      continue;
+    }
+
+    const same =
+      old.keyword === k.keyword &&
+      Number(old.words) === k.words &&
+      Number(old.count) === k.count &&
+      String(old.source) === k.source;
+
+    // The whole saving lives in this branch: the row is already right, so the
+    // replace that used to happen here wrote it back unchanged.
+    if (same) continue;
+
+    out.push({
+      sql: `update feed_keywords set keyword = ?, words = ?, count = ?, source = ?
+            where feed_id = ? and slug = ?`,
+      args: [k.keyword, k.words, k.count, k.source, feedId, slug],
+    });
+  }
+
+  return out;
 }
 
 /**

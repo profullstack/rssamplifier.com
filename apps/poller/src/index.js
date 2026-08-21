@@ -1,4 +1,4 @@
-import { connect, createWriteWorker, migrate, q, accounts, alerts } from '@rssamplifier/db';
+import { connect, createWriteWorker, migrate, q, accounts, alerts, takeWriteTally } from '@rssamplifier/db';
 import {
   crawlDue,
   enrichDue,
@@ -362,6 +362,12 @@ async function tick() {
       log('notify-error', { message: String(err?.message ?? err) });
     }
 
+    // Retention sweeps run on both sides of the return, deliberately. Catch-up
+    // mode defers work that can be caught up; a retention window cannot be —
+    // skipping it does not postpone the deletes, it keeps the rows. See
+    // `purgeTick`, which found crawl_log holding 64 hours of a 12-hour window.
+    await purgeTick();
+
     // All work below is resumable enrichment or housekeeping. In recovery mode
     // the deep first-crawl queue is the job, and returning here lets the next
     // minute tick begin immediately instead of waiting behind unrelated writes.
@@ -428,34 +434,95 @@ async function tick() {
       log('topics', { topics, ms: Date.now() - lastTopics });
     }
 
-    if (Date.now() - lastPurge > 3_600_000) {
-      lastPurge = Date.now();
-      const purged = await accounts.purgeExpired(db);
-      if (purged) log('purged', { rows: purged });
-
-      // The throughput rollup grows by 24 rows a day forever otherwise, and no
-      // chart on the site looks back further than a month.
-      const hours = await q.pruneCrawlHours(db);
-      if (hours) log('purged-rollup', { rows: hours });
-
-      // The queue samples, on the same terms and for the same reason.
-      const queueHours = await q.pruneQueueHours(db);
-      if (queueHours) log('purged-queue-rollup', { rows: queueHours });
-
-      // The live log takes a row per feed crawled, so it is the one table here
-      // that would grow by six figures a week if nobody swept it.
-      const lines = await q.pruneCrawlLog(db);
-      if (lines) log('purged-log', { rows: lines });
-
-      // What has already been alerted about. A working set, not a history —
-      // nothing consults a row past the re-alert window.
-      const told = await alerts.pruneAlertSent(db);
-      if (told) log('purged-alerts', { rows: told });
-    }
   } catch (err) {
     log('crawl-error', { message: String(err?.message ?? err) });
   } finally {
     running = false;
+  }
+}
+
+/**
+ * Sweep the tables that grow by themselves.
+ *
+ * Hoisted out of the bottom of `tick()`, where it sat below
+ * `if (catchupOnly) return`. `CRAWL_CATCHUP=1` is set in production, so it had
+ * not run in as long as catch-up has been on, and the consequence is not a
+ * tidier backlog for later — these are retention windows, and a retention
+ * window that stops running is not deferred, it is abandoned. `crawl_log` is
+ * written to prune at twelve hours and production was holding **sixty-four**,
+ * which is 5x the rows the design intends, on the table that takes a row per
+ * feed crawled.
+ *
+ * That is the general shape of the mistake catch-up mode invites: it is right
+ * that discovery and imports can wait, and wrong that anything on a clock can.
+ * Deletes are also writes, and Turso bills rows written either way, so letting
+ * a sweep lapse does not even save the quota it appears to.
+ *
+ * Cheap enough to sit in front of the return: five deletes over indexed
+ * columns, gated to once an hour, against a tick that runs every minute.
+ */
+/**
+ * Say where the written rows went.
+ *
+ * The account was at 110M rows written for a month in which the directory
+ * stored 3.3M posts, and nothing in the system could attribute the other 107M.
+ * Working it out by reading code and multiplying estimates produced two
+ * different wrong answers, which is what an unmeasured quantity does.
+ *
+ * So the write worker tallies `rowsAffected` per statement shape, and this
+ * empties the tally onto the log every ten minutes. The line is a small JSON
+ * object rather than one line per shape, so a quiet directory costs one log row
+ * and a busy one still costs one.
+ *
+ * Two numbers matter and the second is the interesting one: `rows` is what the
+ * statements themselves report, and the difference between that and Turso's own
+ * meter is everything the triggers and indexes wrote underneath them — which,
+ * with six FTS triggers in this schema, is the part nobody could see.
+ */
+function tallyTick() {
+  if (!writeWorker) return;
+
+  const tally = takeWriteTally();
+  if (tally.totalRows === 0 && tally.totalCalls === 0) return;
+
+  log('write-tally', {
+    rows: tally.totalRows,
+    statements: tally.totalCalls,
+    // Bounded: the long tail is noise next to the shapes doing the damage.
+    top: tally.byShape.slice(0, 8).map((s) => `${s.shape}=${s.rows}/${s.calls}`).join(' '),
+  });
+}
+
+async function purgeTick() {
+  if (Date.now() - lastPurge < 3_600_000) return;
+  lastPurge = Date.now();
+
+  try {
+    const purged = await accounts.purgeExpired(db);
+    if (purged) log('purged', { rows: purged });
+
+    // The throughput rollup grows by 24 rows a day forever otherwise, and no
+    // chart on the site looks back further than a month.
+    const hours = await q.pruneCrawlHours(db);
+    if (hours) log('purged-rollup', { rows: hours });
+
+    // The queue samples, on the same terms and for the same reason.
+    const queueHours = await q.pruneQueueHours(db);
+    if (queueHours) log('purged-queue-rollup', { rows: queueHours });
+
+    // The live log takes a row per feed crawled, so it is the one table here
+    // that would grow by six figures a week if nobody swept it.
+    const lines = await q.pruneCrawlLog(db);
+    if (lines) log('purged-log', { rows: lines });
+
+    // What has already been alerted about. A working set, not a history —
+    // nothing consults a row past the re-alert window.
+    const told = await alerts.pruneAlertSent(db);
+    if (told) log('purged-alerts', { rows: told });
+  } catch (err) {
+    // A missed sweep is a table that stays large for another hour, which is not
+    // a reason to fail a crawl or to shout in a log read for crawl failures.
+    log('purge-error', { message: String(err?.message ?? err) });
   }
 }
 
@@ -783,6 +850,9 @@ const alertTimer = setInterval(alertTick, alertIntervalMs);
 const enrichTimer = setInterval(enrichTick, authorIntervalMs);
 const queueTimer = setInterval(queueTick, queueSampleMs);
 const searchTimer = setInterval(searchTick, searchIntervalMs);
+// Same cadence as the queue sample: long enough that the line is a summary
+// rather than a stream, short enough to bracket an experiment against.
+const tallyTimer = setInterval(tallyTick, queueSampleMs);
 void tick();
 void backfillTick();
 void cardTick();
@@ -821,6 +891,7 @@ function shutdown(signal) {
   clearInterval(alertTimer);
   clearInterval(queueTimer);
   clearInterval(searchTimer);
+  clearInterval(tallyTimer);
 
   // Closed gracefully, which for BullMQ means "finish the job in hand, take no
   // more". A write half-applied because the container went away is the one

@@ -400,13 +400,102 @@ export async function runWriteJob(client, statements) {
 
   try {
     const results = await client.batch(statements, 'write');
-    return Array.from(results ?? []).map(encodeResult);
+    const encoded = Array.from(results ?? []).map(encodeResult);
+    recordWrites(statements, encoded);
+    return encoded;
   } catch (err) {
     if (isStatementError(err)) {
       throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
     }
     throw err;
   }
+}
+
+/**
+ * What each kind of statement is actually costing, in rows.
+ *
+ * Turso bills rows written, and until now nothing in this system could say
+ * which statements those rows belonged to. Working it out from the outside is
+ * guesswork — the account was at 110M rows for a month in which the directory
+ * stored 3.3M posts, and narrowing a 30x gap by reading code and multiplying
+ * estimates produced two different wrong answers before this existed.
+ *
+ * Keyed by statement *shape* rather than text: the leading verb and table, with
+ * the parameters and whitespace gone, so a million crawls collapse into one
+ * line instead of a million.
+ *
+ * **It counts what the statements report, not what the database charges.**
+ * `rowsAffected` is the rows the statement touched; it does not include the
+ * work its triggers did, and this schema has six FTS triggers that each write
+ * several rows into a shadow table per document. That gap is the point: the
+ * difference between this total and Turso's own figure *is* the trigger and
+ * index amplification, which is precisely the quantity nothing could see.
+ *
+ * @type {Map<string, { rows: number, calls: number }>}
+ */
+const writeTally = new Map();
+
+/**
+ * Reduce a statement to the shape it shares with every other one like it.
+ *
+ * @param {unknown} statement
+ * @returns {string}
+ */
+export function statementShape(statement) {
+  const sql = String(
+    typeof statement === 'string' ? statement : (statement ?? {}).sql ?? '',
+  )
+    .replace(/--[^\n]*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  const verb = /^(insert|update|delete|replace)/.exec(sql)?.[1] ?? 'other';
+  const table =
+    /^insert\s+(?:or\s+\w+\s+)?into\s+([a-z_]+)/.exec(sql)?.[1] ??
+    /^update\s+([a-z_]+)/.exec(sql)?.[1] ??
+    /^delete\s+from\s+([a-z_]+)/.exec(sql)?.[1] ??
+    /^replace\s+into\s+([a-z_]+)/.exec(sql)?.[1] ??
+    '?';
+
+  return `${verb} ${table}`;
+}
+
+/**
+ * @param {Array<{ sql: string }>} statements
+ * @param {Array<{ rowsAffected?: number }>} results
+ */
+function recordWrites(statements, results) {
+  for (let i = 0; i < statements.length; i += 1) {
+    const shape = statementShape(statements[i]);
+    const rows = Number(results[i]?.rowsAffected ?? 0);
+    const seen = writeTally.get(shape) ?? { rows: 0, calls: 0 };
+    seen.rows += rows;
+    seen.calls += 1;
+    writeTally.set(shape, seen);
+  }
+}
+
+/**
+ * The tally so far, biggest first, and reset.
+ *
+ * Read-and-clear so a caller logging it on a timer reports the interval rather
+ * than an ever-growing total nobody can difference by eye.
+ *
+ * @returns {{ totalRows: number, totalCalls: number, byShape: Array<{ shape: string, rows: number, calls: number }> }}
+ */
+export function takeWriteTally() {
+  const byShape = [...writeTally.entries()]
+    .map(([shape, v]) => ({ shape, rows: v.rows, calls: v.calls }))
+    .sort((a, b) => b.rows - a.rows);
+
+  writeTally.clear();
+
+  return {
+    totalRows: byShape.reduce((n, s) => n + s.rows, 0),
+    totalCalls: byShape.reduce((n, s) => n + s.calls, 0),
+    byShape,
+  };
 }
 
 export function createWriteWorker(client, opts) {

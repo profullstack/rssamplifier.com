@@ -324,12 +324,18 @@ export async function crawlFeed(db, feed, opts = {}) {
   let storedItems = [];
   let existingTopics = 1;
   let hasAuthors = true;
+  /** @type {Array<{ slug: string, keyword: string, words: number, count: number, source: string }>} */
+  let storedTopics = [];
   if (AUXILIARY_WRITES) {
-    [storedItems, existingTopics, hasAuthors] = await Promise.all([
+    // The topics come back in full rather than as a count, so the write below
+    // can be a diff instead of a wholesale replace. Same round trip, same
+    // index; see `keywordDiffStatements` for what it saves.
+    [storedItems, storedTopics, hasAuthors] = await Promise.all([
       q.itemsForKeywords(db, id).catch(() => []),
-      q.countFeedKeywords(db, id).catch(() => 0),
+      q.feedKeywordRows(db, id).catch(() => []),
       authors.feedHasAuthors(db, id).catch(() => true),
     ]);
+    existingTopics = storedTopics.length;
   }
 
   // Topics, when the feed has published something or has none yet.
@@ -339,7 +345,10 @@ export async function crawlFeed(db, feed, opts = {}) {
   if (AUXILIARY_WRITES && (publishedSomethingNew || existingTopics === 0)) {
     try {
       const extracted = topicsFrom(resolved.feed, storedItems);
-      topicStatements = q.keywordStatements(id, extracted);
+      // A diff rather than a replace. Most re-crawls extract the topics the
+      // feed already has, and rewriting six rows to the values they already
+      // hold is the single largest avoidable write in the crawl.
+      topicStatements = q.keywordDiffStatements(id, extracted, storedTopics);
       topics = extracted.length;
     } catch {
       // Topics are a browsing aid. Failing to extract them must not fail the
