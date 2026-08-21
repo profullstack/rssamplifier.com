@@ -12,6 +12,38 @@ import { newId, nowIso } from './client.js';
  * @typedef {import('@libsql/client').Client} Client
  */
 
+/**
+ * Run one write through whatever serialisation the client has.
+ *
+ * `queueWrites` and `serializeWrites` both override exactly one method —
+ * `client.batch` — because that is the one that opens a transaction. Nothing
+ * touches `client.execute`. That is right for reads, which must never queue
+ * behind a crawl, and it quietly excused every *write* issued as a single
+ * statement: those go straight at the database, so instead of taking their turn
+ * with the queued writes they compete with them for the one lock SQLite has.
+ *
+ * The daemon's bookkeeping is all of that shape and some of it is hot. The crawl
+ * log flushes every two seconds; the throughput and queue rollups land on their
+ * own timers; the log prune runs hourly. Measured on production, the queue
+ * sample failed on **every single tick** — 08:12:57, 08:22:57, 08:32:57 — always
+ * with the 30-second deadline, while the reads feeding it all returned inside
+ * 1.4 seconds. It was not slow. It was starving: a one-row upsert that could not
+ * get the lock between two queued transactions, and gave up.
+ *
+ * A single-statement batch is the same statement with a turn in the queue. It
+ * waits `WAIT_MS` rather than the request deadline, which is the difference
+ * between waiting and failing, and it stops these writes making the contention
+ * they were dying of.
+ *
+ * @param {Client} db
+ * @param {{ sql: string, args?: unknown[] }} statement
+ * @returns {Promise<{ rowsAffected?: number, rows?: unknown[] }>}
+ */
+async function writeOne(db, statement) {
+  const [result] = await db.batch([statement], 'write');
+  return /** @type {any} */ (result ?? { rowsAffected: 0, rows: [] });
+}
+
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
 // The scheduling signals on the last line are not read by any page, and they are
 // here anyway. `crawlFeed` takes a feed row and decides from these four columns
@@ -1828,7 +1860,10 @@ export async function crawlStats(db) {
 export async function recordCrawlHour(db, counts, at = nowIso()) {
   const hour = at.slice(0, 13);
 
-  await db.execute({
+  // Through the queue, like the other rollups — and this one accumulates rather
+  // than overwriting, so a tick lost to a lock it could not get is a hole in the
+  // throughput chart that nothing later fills in.
+  await writeOne(db, {
     sql: `insert into crawl_hourly (hour, ticks, fetched, succeeded, failed, items)
           values (?, 1, ?, ?, ?, ?)
           on conflict (hour) do update set
@@ -1861,7 +1896,9 @@ export async function recordCrawlHour(db, counts, at = nowIso()) {
  * @returns {Promise<void>}
  */
 export async function recordQueueHour(db, depths, at = nowIso()) {
-  await db.execute({
+  // Through the queue: this fired every ten minutes and failed every time, not
+  // for being slow but for never getting the lock. See `writeOne`.
+  await writeOne(db, {
     sql: `insert into queue_hourly (hour, at, due, first_crawl, cards, authors)
           values (?, ?, ?, ?, ?, ?)
           on conflict (hour) do update set
@@ -2044,6 +2081,21 @@ export async function appendCrawlLog(db, entries) {
     entry.ms == null ? null : Number(entry.ms),
   ]);
 
+  // Deliberately *not* through the queue, unlike the rollups and the prune.
+  //
+  // This is the hottest of the daemon's unqueued writes — the recorder flushes
+  // on a two-second timer — so it is also the largest single contributor to the
+  // lock contention those other writes were dying of, and moving it looks like
+  // the obvious win. It is not, and `crawl-log.test.js` says so with a client
+  // whose `batch` throws: the log is the channel that reports on the write
+  // queue, and a diagnostic that queues behind the thing it diagnoses goes
+  // quiet exactly when it is needed.
+  //
+  // It can afford to lose. `log()` writes stdout first and unconditionally, so
+  // Railway keeps every line regardless; this copy exists only so /crawlstats
+  // can show a log from a process it does not share a machine with. A flush
+  // that fails drops lines and says so (`log-dropped`), which is a gap in a
+  // panel rather than a gap in the record.
   await db.execute({
     sql: `insert into crawl_log (at, event, status, subject, slug, amount, detail, ms)
           values ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
@@ -2151,7 +2203,7 @@ export async function crawlOperationalErrors(db, { limit = 20, hours = 24 } = {}
  * @returns {Promise<number>} rows removed
  */
 export async function pruneCrawlLog(db, hours = 12, max = 5000) {
-  const { rowsAffected } = await db.execute({
+  const { rowsAffected } = await writeOne(db, {
     sql: `delete from crawl_log where id in (
             select id from crawl_log where at < ? limit ?
           )`,

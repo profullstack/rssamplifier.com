@@ -44,6 +44,37 @@ test('a log flush is one autocommit statement, not a write transaction', async (
   assert.equal(calls[0].args.length, 16);
 });
 
+test('the rollups and the prune DO take their turn in the queue', async () => {
+  // The other half of the rule above, and the reason it is worth a test of its
+  // own: only `client.batch` is serialised, so a write issued through
+  // `execute` does not queue behind the crawl's writes, it competes with them
+  // for the single lock SQLite has. The queue sample failed on every tick in
+  // production — always the 30-second deadline, while every read feeding it
+  // returned inside 1.4s. It was starving, not slow.
+  //
+  // The log is exempt because it reports on the queue. Nothing else is.
+  const seen = [];
+  const client = {
+    execute: async () => {
+      throw new Error('a bookkeeping write must not race the queue it should be in');
+    },
+    batch: async (statements, mode) => {
+      seen.push({ sql: statements[0].sql, mode });
+      return [{ rowsAffected: 1, rows: [] }];
+    },
+  };
+
+  await q.recordQueueHour(client, { due: 1, firstCrawl: 2, cards: 3, authors: 4 });
+  await q.recordCrawlHour(client, { fetched: 1, succeeded: 1, failed: 0, items: 5 });
+  await q.pruneCrawlLog(client, 12, 100);
+
+  assert.equal(seen.length, 3, 'all three went through batch');
+  assert.ok(seen.every((s) => s.mode === 'write'), "and asked for the write path");
+  assert.match(seen[0].sql, /insert into queue_hourly/);
+  assert.match(seen[1].sql, /insert into crawl_hourly/);
+  assert.match(seen[2].sql, /delete from crawl_log/);
+});
+
 test('a line keeps the fields a reader needs and nothing is invented', async () => {
   const written = await q.appendCrawlLog(db, [
     {
