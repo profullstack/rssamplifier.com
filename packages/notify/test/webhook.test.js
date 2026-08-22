@@ -68,7 +68,8 @@ const VIA_TOPIC = { kind: 'topic', title: 'gardening', href: '/topics/gardening'
 
 test('an item carries the follow that pulled it in', () => {
   const byFeed = alertItem(ROW, VIA_FEED, 'https://x.test');
-  assert.equal(byFeed.url, 'https://blog.example.com/post', 'the publisher’s URL, not ours');
+  assert.equal(byFeed.url, 'https://blog.example.com/post', 'the publisher’s URL is still carried');
+  assert.equal(byFeed.readerUrl, 'https://x.test/garden-blog/read?p=g1', 'alongside our page for it');
   assert.equal(byFeed.feed.url, 'https://x.test/garden-blog');
   assert.equal(byFeed.summary, 'Tomatoes, mostly.');
   assert.equal(byFeed.via.title, 'The Garden Blog', 'a blog alert is attributed to the blog');
@@ -87,6 +88,39 @@ test('one post makes a named subject; several make a count', () => {
 
   const many = renderEmail([one, one, one], { origin: 'https://x.test' });
   assert.equal(many.subject, '3 new posts from what you follow');
+});
+
+test('a digest links to our reader page, not straight out to the publisher', () => {
+  const item = alertItem(ROW, VIA_FEED, 'https://x.test');
+  const { text } = renderEmail([item], { origin: 'https://x.test' });
+
+  assert.match(text, /https:\/\/x\.test\/garden-blog\/read\?p=g1/);
+  assert.equal(
+    text.includes('https://blog.example.com/post'),
+    false,
+    'the original is a click away on that page, not the link in the mail',
+  );
+});
+
+test('a post with no guid still gets a link', () => {
+  // Nothing in the schema promises a guid, and a mail whose only actionable
+  // line is missing is worse than one that points at the publisher.
+  const item = alertItem({ ...ROW, guid: '' }, VIA_FEED, 'https://x.test');
+  assert.equal(item.readerUrl, 'https://blog.example.com/post');
+
+  const bare = alertItem({ ...ROW, guid: '', url: '' }, VIA_FEED, 'https://x.test');
+  assert.equal(bare.readerUrl, 'https://x.test/garden-blog', 'and failing that, the blog');
+});
+
+test('a guid that is a URL survives the round trip into a link', () => {
+  // Plenty of feeds use the post's own URL as its guid, and an unescaped one
+  // truncates the query at its first &.
+  const item = alertItem({ ...ROW, guid: 'https://blog.example.com/p?a=b&c=d' }, VIA_FEED, 'https://x.test');
+
+  assert.equal(
+    item.readerUrl,
+    `https://x.test/garden-blog/read?p=${encodeURIComponent('https://blog.example.com/p?a=b&c=d')}`,
+  );
 });
 
 test('a push for one post opens that post; a push for several opens the river', () => {

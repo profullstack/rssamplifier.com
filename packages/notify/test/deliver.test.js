@@ -180,7 +180,8 @@ test('a post published after the watermark is alerted, once', async () => {
   assert.equal(first.items, 1);
   assert.equal(sent.email.length, 1);
   assert.match(sent.email[0].subject, /A fresh post — Live Blog/);
-  assert.match(sent.email[0].text, /https:\/\/example\.com\/fresh/);
+  // Our page for the post, not the publisher's — see renderEmail.
+  assert.match(sent.email[0].text, /https:\/\/x\.test\/live-blog\/read\?p=fresh/);
 
   // The same pass again. Nothing new has been published, and nothing may be
   // sent — this is the case a moved watermark alone would get right and a

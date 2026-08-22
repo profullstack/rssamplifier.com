@@ -29,20 +29,31 @@ export function siteOrigin(env = process.env) {
  * @param {{ kind: string, title: string, href: string }} via
  * @param {string} [origin]
  * @returns {{
- *   title: string, url: string, summary: string, publishedAt: string|null,
+ *   title: string, url: string, readerUrl: string, summary: string,
+ *   publishedAt: string|null,
  *   feed: { slug: string, title: string, url: string },
  *   via: { kind: string, title: string, url: string },
  * }}
  */
 export function alertItem(row, via, origin = siteOrigin()) {
   const feedSlug = String(row.feed_slug ?? '');
+  const guid = String(row.guid ?? '');
 
   return {
     title: String(row.title ?? 'Untitled'),
-    // The publisher's own URL, not ours. An alert is an invitation to go and
-    // read the thing, and bouncing it through the directory first would be the
-    // directory putting itself in front of the writing it exists to point at.
+    // The publisher's own URL. Kept as the canonical identity of the post —
+    // it is what a webhook consumer needs, and it is where the reader page
+    // ultimately sends anyone who wants the original.
     url: String(row.url ?? ''),
+    // Our page for the same post, which is where a person should land. The
+    // reader frames or renders the post with the toolbar still on screen, so
+    // the archive, the translation and the next post are one click away
+    // instead of a round trip back through the directory. The original is a
+    // link on that page, so nothing is taken away by going through it.
+    readerUrl:
+      feedSlug && guid
+        ? `${origin}/${feedSlug}/read?p=${encodeURIComponent(guid)}`
+        : String(row.url ?? '') || `${origin}/${feedSlug}`,
     summary: trim(String(row.summary ?? ''), 300),
     publishedAt: row.published_at ? String(row.published_at) : null,
     feed: {
@@ -100,7 +111,13 @@ export function renderEmail(items, opts = {}) {
   const blocks = items.map((item) => {
     const lines = [item.title, `  ${item.feed.title}${viaSuffix(item)}`];
     if (item.summary) lines.push(`  ${item.summary}`);
-    if (item.url) lines.push(`  ${item.url}`);
+    // Our reader page rather than the publisher's URL. A digest is the one
+    // channel where the link is the whole interaction, and a reader who lands
+    // on the raw post has left the directory for good — no archive, no
+    // translation, no next post, nowhere to say they liked it. The reader page
+    // carries all of that and puts the original one click away.
+    const href = item.readerUrl || item.url;
+    if (href) lines.push(`  ${href}`);
     return lines.join('\n');
   });
 
