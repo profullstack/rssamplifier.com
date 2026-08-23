@@ -8,6 +8,7 @@ import {
   liveStats,
   failingFeeds,
   alertingAccounts,
+  panel,
 } from '../../../lib/crawlstats.js';
 import { toLine } from '../../../lib/crawlLog.js';
 import { jobRows } from '../../../lib/jobs.js';
@@ -50,9 +51,9 @@ export async function GET() {
   ] = await Promise.all([
     liveStats(),
     failingFeeds(),
-    q.recentlyCrawled(client, 20),
-    discovery.countQueuedCandidates(client),
-    discovery.countQueuedKeywords(client),
+    panel(q.recentlyCrawled(client, 20), []),
+    panel(discovery.countQueuedCandidates(client), null),
+    panel(discovery.countQueuedKeywords(client), null),
     indexingHistory(),
     categoryStats(),
     // The cached reader, which is what the page has always used. This route
@@ -66,11 +67,11 @@ export async function GET() {
     // -- `crawlStats` and `logActivity` below are still read fresh, so this
     // endpoint can still never claim a dead crawler is alive.
     jobBacklogs(),
-    q.logActivity(client, 1),
+    panel(q.logActivity(client, 1), {}),
     // See the page: this only tells a sender with nobody to serve from one that
     // has stopped, which the log alone cannot say.
     alertingAccounts(),
-    q.crawlOperationalErrors(client, { limit: 20, hours: 24 }),
+    panel(q.crawlOperationalErrors(client, { limit: 20, hours: 24 }), []),
   ]);
 
   const jobs = jobRows({

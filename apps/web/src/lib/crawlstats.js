@@ -326,3 +326,36 @@ export async function jobBacklogs() {
     () => q.jobBacklogs(db()),
   );
 }
+
+/**
+ * One panel's read, which must not be able to take a whole status page down.
+ *
+ * /crawlstats and /api/crawlstats each run their reads in a single
+ * `Promise.all`. Most of them come from this module and so already survive a
+ * failure, because `remember` returns its fallback rather than throwing. The
+ * rest go straight to the database — and any one of those exceeding the
+ * client's 30s deadline rejected the whole `Promise.all`, so the page rendered
+ * nothing and the endpoint answered nothing.
+ *
+ * That is the wrong way round for these two in particular. They exist to be
+ * read when the crawler is in trouble, and "the crawler is in trouble" is
+ * exactly when a read against a contended database times out — so they failed
+ * at the only moment anyone wanted them, and said nothing about why.
+ *
+ * The caller supplies the value its panel already renders for "nothing here":
+ * an empty list where a list is mapped, `{}` for the activity map that is
+ * indexed by event name, and `null` — never `0` — for a queue depth, because
+ * "0 waiting" reads as "all caught up" and would be a lie about a number we
+ * failed to read. Same distinction `jobBacklogs` above documents.
+ *
+ * Deliberately not a cache. These are the fresh half of the page: a stale "last
+ * ran at" is how a dead worker looks alive, so missing beats wrong here.
+ *
+ * @template T
+ * @param {Promise<T>} read
+ * @param {T} fallback
+ * @returns {Promise<T>}
+ */
+export function panel(read, fallback) {
+  return read.catch(() => fallback);
+}

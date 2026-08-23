@@ -9,6 +9,7 @@ import {
   liveStats,
   failingFeeds,
   alertingAccounts,
+  panel,
   GROWTH_DAYS,
 } from '../../lib/crawlstats.js';
 import { describe, toLine } from '../../lib/crawlLog.js';
@@ -67,15 +68,15 @@ export default async function CrawlStatsPage() {
   ] = await Promise.all([
     liveStats(),
     failingFeeds(50),
-    q.recentlyCrawled(client, 15),
-    discovery.countQueuedCandidates(client),
-    discovery.countQueuedKeywords(client),
+    panel(q.recentlyCrawled(client, 15), []),
+    panel(discovery.countQueuedCandidates(client), null),
+    panel(discovery.countQueuedKeywords(client), null),
     indexingHistory(),
     categoryStats(),
     // Rendered into the log so the panel arrives with history rather than
     // waiting for the crawler's next line, and so the log is not blank for a
     // reader with JavaScript off.
-    q.crawlLogTail(client, 40),
+    panel(q.crawlLogTail(client, 40), []),
     // The two halves of the jobs board: what each kind of work has waiting, and
     // what each has been doing.
     //
@@ -89,14 +90,14 @@ export default async function CrawlStatsPage() {
     // whether a worker is *alive*, and that comes from `logActivity` and
     // `crawlStats`, both of which are still read fresh on every request.
     jobBacklogs(),
-    q.logActivity(client, 1),
+    panel(q.logActivity(client, 1), {}),
     // Only to tell a sender with nothing to do from one that has stopped: the
     // alert pass writes no log line at all when nobody is subscribed, and a
     // silent job is otherwise indistinguishable from a dead one.
     alertingAccounts(),
     // Kept separately from the rolling live-log window. At crawler throughput,
     // 400 successful feed lines can evict an operational failure in minutes.
-    q.crawlOperationalErrors(client, { limit: 20, hours: 24 }),
+    panel(q.crawlOperationalErrors(client, { limit: 20, hours: 24 }), []),
     // Sampled by the poller rather than counted here: these are the same
     // expensive counts the jobs board caches, and the chart wants them as a
     // history anyway.
