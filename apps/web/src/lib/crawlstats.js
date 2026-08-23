@@ -42,8 +42,29 @@ import { db } from './db.js';
 /** How long an hourly rollup read is trusted. */
 const HISTORY_TTL_MS = 60 * 1000;
 
-/** How long a category breakdown is trusted. */
-const CATEGORY_TTL_MS = 5 * 60 * 1000;
+/**
+ * How long a category breakdown is trusted.
+ *
+ * Matched to the poller's `STATS_WARM_SECONDS`, and that pairing is the whole
+ * point rather than a coincidence. Past this age `remember` fires a background
+ * `refresh()`, and on this key the refresh is a `categoryStats` full scan that
+ * takes 86–150 seconds against half a million feeds — it cannot finish inside
+ * `CHART_TIMEOUT_MS` and never once has. So a reader arriving after the TTL
+ * lapsed was starting a doomed 20-second scan on the one instance the warmer
+ * was already scanning, and throwing the result away. (`remember` dedupes to
+ * one in-flight refresh per key, so this was one wasted scan at a time, not
+ * one per reader — still one too many.)
+ *
+ * Five minutes made that certain: the warmer is abandoned at its own 150s
+ * ceiling roughly a third of the time, and each time it was, the entry went
+ * stale and the web service picked up the same scan the poller had just given
+ * up on. An hour means the warmer refreshes it before a reader ever asks.
+ *
+ * Safe because the value is served stale for a day anyway
+ * (`CHART_MAX_STALE_MS`): the honest ceiling on how old this may get was never
+ * the TTL.
+ */
+const CATEGORY_TTL_MS = 60 * 60 * 1000;
 
 /**
  * How stale a breakdown may get before a reader waits for a fresh one.

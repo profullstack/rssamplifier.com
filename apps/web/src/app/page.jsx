@@ -1,6 +1,5 @@
-import { q } from '@rssamplifier/db';
-
-import { db, siteUrl } from '../lib/db.js';
+import { siteUrl } from '../lib/db.js';
+import { directoryIndex } from '../lib/directory.js';
 import { feedAlternates } from '../lib/subscribe.js';
 import { AD_TEXT, adPlan } from '../lib/ads.js';
 import Ad from './Ad.jsx';
@@ -46,12 +45,10 @@ export const metadata = {
  * Directory index: newest blogs first, with the submit box up top.
  */
 export default async function Home() {
-  const client = db();
-  const [rows, total, byKind] = await Promise.all([
-    q.listFeeds(client, { limit: 60 }),
-    q.countFeeds(client),
-    q.countFeedsByKind(client),
-  ]);
+  // Cached in Redis and served stale on failure. Two of these three reads are
+  // whole-table work at half a million feeds, and uncached they answered this
+  // URL with a 500 whenever the database was busy — see ../lib/directory.js.
+  const { rows, total, byKind } = await directoryIndex();
 
   // The index is a long scan, so ads go *between* rows rather than around the
   // list. First one is deep enough that the fold is all directory, and there
