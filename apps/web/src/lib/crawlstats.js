@@ -149,6 +149,29 @@ const CATEGORY_TIMEOUT_MS = 2 * 1000;
  */
 const PRIMED_TTL_MS = 90 * 60 * 1000;
 
+/**
+ * How long an uncached panel read may take before the page gives up on it.
+ *
+ * `panel()` was written to stop one failing read taking the status page down,
+ * and it caught the wrong half of that. It catches *rejection*; it does nothing
+ * about a read that simply never answers — and on this database a libSQL request
+ * demonstrably can never answer. An empty write transaction probed from outside
+ * did not return in 280 seconds, and `warmStatsCache` gets `fetch failed` after
+ * 300 rather than a timeout.
+ *
+ * Measured 2026-08-25: with every cached panel primed and `/api/crawlstats`
+ * answering in **2.39 s**, the page itself sent **zero bytes in 120 s**. Not a
+ * slow render and not a post-flush throw — the single `await` never settled, and
+ * the only things in it without a deadline of their own were these six reads.
+ * The cached readers all bound themselves through `remember`; these did not.
+ *
+ * Five seconds is deliberately far above what they cost — the slowest,
+ * `recentlyCrawled(15)`, measured 572 ms, and the rest are 90–300 ms — so this
+ * never trims a working read. It exists only to convert "hangs for ever" into
+ * "that panel is missing", which is the whole promise `panel()` was making.
+ */
+const PANEL_TIMEOUT_MS = 5 * 1000;
+
 /** How much history the charts draw. */
 export const HISTORY_HOURS = 24;
 export const GROWTH_DAYS = 30;
@@ -483,13 +506,26 @@ export async function jobBacklogs() {
  * Deliberately not a cache. These are the fresh half of the page: a stale "last
  * ran at" is how a dead worker looks alive, so missing beats wrong here.
  *
+ * Bounded as well as caught: see `PANEL_TIMEOUT_MS`. Catching a rejection is
+ * only half of "one bad read must not take the page", because a read that never
+ * answers never rejects either.
+ *
  * @template T
  * @param {Promise<T>} read
  * @param {T} fallback
+ * @param {number} [ms]
  * @returns {Promise<T>}
  */
-export function panel(read, fallback) {
-  return read.catch(() => fallback);
+export function panel(read, fallback, ms = PANEL_TIMEOUT_MS) {
+  return Promise.race([
+    read.catch(() => fallback),
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(fallback), ms);
+      // Node keeps the process alive for a pending timer; this one must never be
+      // the reason a serverless invocation lingers after the page is sent.
+      timer.unref?.();
+    }),
+  ]);
 }
 
 /**
