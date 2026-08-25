@@ -48,6 +48,9 @@ const WARM_TIMEOUT_MS = 150_000;
 /** How much growth history the breakdown carries; matches the web's GROWTH_DAYS. */
 const GROWTH_DAYS = 30;
 
+/** How many blogs the directory index lists; matches the web's `INDEX_LIMIT`. */
+const INDEX_LIMIT = 60;
+
 /**
  * Compute the category breakdown on a patient connection and cache it.
  *
@@ -83,6 +86,74 @@ export async function warmStatsCache(opts = {}) {
     // whose name ends in "error" as an alarm. A missed warm is not one.
     const reason = error instanceof Error ? error.message : String(error);
     log('stats-warm-skipped', { ms, reason });
+    return { ok: false, ms, cached: false, error: reason };
+  } finally {
+    try { db?.close(); } catch { /* closing a broken client is not a failure */ }
+  }
+}
+
+/**
+ * The same treatment for the homepage's three reads.
+ *
+ * ## Why this has to exist, and not just a wider staleness window
+ *
+ * `remember` fills its own cache from readers: past the TTL a reader triggers
+ * `refresh()`, which recomputes behind them. That works only if the computation
+ * can finish inside the timeout the *page* is willing to wait — and for this key
+ * it cannot. `countFeedsByKind` is a `group by category` over 476,000 rows with
+ * no covering index, so every refresh is abandoned at 20 seconds and the entry
+ * is never renewed.
+ *
+ * Which leaves the entry ageing out with nothing able to replace it. Widening
+ * `INDEX_MAX_STALE_MS` bought time and not a fix: once Redis dropped the key the
+ * homepage had nothing to serve, waited its 20 seconds for a computation that
+ * was always going to fail, and rendered the empty-directory branch — a
+ * directory of 476,000 feeds reporting itself as having none. That is worse than
+ * the slow page it replaced, and it is what production did on 2026-08-25 within
+ * minutes of the staleness change deploying.
+ *
+ * So the writer moves here, where a 150-second deadline is allowed and the read
+ * actually completes. The web side keeps `remember` exactly as it is: it finds a
+ * warm entry and serves it, and its own doomed refreshes become harmless.
+ *
+ * Priming on the same tick as the category breakdown is deliberate — both are
+ * whole-table reads and running them together keeps the number of full scans
+ * this database sees to one burst an hour rather than two.
+ *
+ * @param {{ log?: (event: string, fields?: object) => void, client?: any }} [opts]
+ * @returns {Promise<{ ok: boolean, ms: number, cached: boolean, error?: string }>}
+ */
+export async function warmDirectoryCache(opts = {}) {
+  const started = Date.now();
+  const log = opts.log ?? (() => {});
+
+  /** @type {import('@libsql/client').Client|null} */
+  let db = null;
+  try {
+    db = connect({ timeoutMs: WARM_TIMEOUT_MS, queue: false });
+
+    // Shape and key must match `apps/web/src/lib/directory.js` exactly: it
+    // destructures all three, and a mismatch here is an empty homepage that no
+    // error anywhere would explain.
+    const [rows, total, byKind] = await Promise.all([
+      q.listFeeds(db, { limit: INDEX_LIMIT }),
+      q.countFeeds(db),
+      q.countFeedsByKind(db),
+    ]);
+    const cached = await primeCache('directoryIndex', { rows, total, byKind }, {
+      client: opts.client,
+    });
+
+    const ms = Date.now() - started;
+    log('directory-warmed', { ms, total, rows: rows?.length ?? 0, cached });
+    return { ok: true, ms, cached };
+  } catch (error) {
+    const ms = Date.now() - started;
+    // `…-skipped` rather than `…-error`, for the reason above: the page has a
+    // cached answer and the operational-error panel treats a trailing "error"
+    // as an alarm.
+    const reason = error instanceof Error ? error.message : String(error);
+    log('directory-warm-skipped', { ms, reason });
     return { ok: false, ms, cached: false, error: reason };
   } finally {
     try { db?.close(); } catch { /* closing a broken client is not a failure */ }

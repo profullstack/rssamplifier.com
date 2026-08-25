@@ -7,6 +7,7 @@ import {
   alerts,
   takeWriteTally,
   warmStatsCache,
+  warmDirectoryCache,
 } from '@rssamplifier/db';
 import {
   crawlDue,
@@ -872,6 +873,21 @@ async function statsTick() {
   warming = true;
   try {
     const result = await warmStatsCache({ log });
+
+    // The homepage's counts, warmed on the same tick and for the same reason.
+    // Its `remember` entry can only ever be written from here: a reader's own
+    // background refresh is capped at the 20 seconds the page will wait, and
+    // `countFeedsByKind` needs far longer, so without this the entry ages out
+    // and the directory renders itself as empty.
+    //
+    // Deliberately after the category warm rather than beside it: both are
+    // whole-table reads, and running them in sequence keeps one long scan on
+    // this connection at a time instead of two competing for the same instance.
+    // Not gated on `result.ok` either — the two keys fail independently, and a
+    // category breakdown that timed out says nothing about whether the counts
+    // will.
+    await warmDirectoryCache({ log });
+
     if (!result.ok) return;
   } finally {
     warming = false;
