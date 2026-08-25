@@ -72,8 +72,21 @@ const CATEGORY_TTL_MS = 60 * 60 * 1000;
  * Generous on purpose. These are shape-of-the-directory numbers, and the whole
  * reason the window is wide is that the alternative — when the underlying read
  * is failing — is no chart at all rather than a slightly old one.
+ *
+ * Widened from a day to a month on 2026-08-25, because a day was not a ceiling
+ * on staleness so much as a delayed trap. Past `maxStaleMs`, `remember` stops
+ * serving the entry and makes the reader wait out `CHART_TIMEOUT_MS` instead —
+ * and then, when the recompute fails, returns *that same expired entry* from
+ * its catch. `categoryStats` takes 86–150 seconds and so fails every time, so
+ * the twenty seconds bought the reader precisely nothing and left the entry
+ * just as unrenewable for the next one. The identical cliff pinned `/` at
+ * 20.35 s on every request until `directory.js` was widened the same way.
+ *
+ * Nothing guarded by this constant is a liveness signal — those are `liveStats`
+ * and `logActivity`, which keep their own short ceilings a few lines down and
+ * are what stops this page claiming a dead crawler is alive.
  */
-const CHART_MAX_STALE_MS = 24 * 60 * 60 * 1000;
+const CHART_MAX_STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Shorter than the client's own 30s deadline, so a read that is going to hang
@@ -244,7 +257,27 @@ export async function liveStats() {
     () => q.crawlStats(db()),
   );
 
-  if (!stats) return await q.crawlStats(db());
+  // Nothing cached *and* the cached attempt failed, so this is the last resort:
+  // read it fresh rather than let the page render nothing. Deliberately still
+  // uncached — the liveness numbers are the one thing this page must never
+  // serve from a cache — but bounded, which it was not.
+  //
+  // Unbounded, this line was what actually took /crawlstats down on 2026-08-25.
+  // `remember` had already spent CHART_TIMEOUT_MS failing at exactly this query,
+  // and this re-ran it with no deadline of its own: the libSQL client retries a
+  // timed-out request three times at TURSO_REQUEST_TIMEOUT_MS, so the page sat
+  // for ~90 s having read half a million rows twice, long past the point Next
+  // had flushed the streamed shell and could still answer with a status. The
+  // reader got a dead connection — `curl` reports `000`, no HTTP code at all —
+  // and the second scan was pure quota: it was never going to succeed where the
+  // first had just failed.
+  //
+  // 45 s rather than CHART_TIMEOUT_MS because the two attempts are not asking
+  // the same question. The first is "is this cheap enough for a page to wait
+  // on"; this one is "can it be read at all before the reader gives up". The
+  // read measured 4,975 ms healthy, so 45 s still succeeds on a merely slow
+  // database and only gives up on a wedged one.
+  if (!stats) return await withDeadline(() => q.crawlStats(db()), 45_000);
 
   const lastSuccessAt = stats.lastSuccessAt ? String(stats.lastSuccessAt) : null;
   return {
@@ -358,4 +391,38 @@ export async function jobBacklogs() {
  */
 export function panel(read, fallback) {
   return read.catch(() => fallback);
+}
+
+/**
+ * Run `read`, rejecting if it has not answered within `ms`.
+ *
+ * `remember` has one of these of its own, private to that module because a
+ * cache that can hang is not a cache. This is the same shape for the one read
+ * on this page that deliberately does *not* go through the cache, so it is
+ * duplicated rather than exported: the two bounds are set for different reasons
+ * and should be free to move apart.
+ *
+ * The underlying read keeps running — there is no cancellation in the libSQL
+ * client — but nobody is waiting on it any more, which is the half that decides
+ * whether the reader gets a page.
+ *
+ * @template T
+ * @param {() => Promise<T>} read
+ * @param {number} ms
+ * @returns {Promise<T>}
+ */
+function withDeadline(read, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`crawlStats timed out after ${ms}ms`)), ms);
+    read().then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }

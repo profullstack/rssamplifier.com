@@ -123,6 +123,53 @@ test('a value past maxStale is still returned when it cannot be recomputed', asy
   assert.deepEqual(got, { blogs: 7 }, 'a very old answer beats no answer');
 });
 
+test('past maxStale the reader pays the whole timeout for the same answer', async () => {
+  // The cost of the branch above, which is the part that is easy to miss when
+  // choosing a `maxStaleMs`: crossing it does not change *what* comes back, only
+  // how long it takes. Both reads below return the identical cached value; one
+  // returns it at once and the other sits out the full timeout first, because
+  // `remember` tries to recompute before falling back to its catch.
+  //
+  // That is why this is not a safety net but a cliff, and why it took
+  // rssamplifier's homepage down on 2026-08-25: once the entry aged past a
+  // 24-hour ceiling and `countFeedsByKind` could no longer finish inside the
+  // timeout, every single request waited 20 s and was then handed the same
+  // expired value it could have had immediately — and the entry could never be
+  // renewed, so the next reader paid it too. Widening the ceiling is what fixed
+  // it; keep any new `maxStaleMs` far larger than the refresh can plausibly be
+  // behind, unless the value is a liveness signal that must not be served old.
+  const hangs = () => new Promise(() => {});
+
+  const withinCeiling = fakeRedis();
+  await remember('cat', { ttlMs: 10, client: withinCeiling }, async () => ({ blogs: 7 }));
+  age(withinCeiling, 'cat', 48 * 60 * 60 * 1000);
+
+  let started = Date.now();
+  const served = await remember(
+    'cat',
+    { ttlMs: 10, maxStaleMs: 30 * 24 * 60 * 60 * 1000, timeoutMs: 100, client: withinCeiling },
+    hangs,
+  );
+  const servedMs = Date.now() - started;
+
+  const pastCeiling = fakeRedis();
+  await remember('cat', { ttlMs: 10, client: pastCeiling }, async () => ({ blogs: 7 }));
+  age(pastCeiling, 'cat', 48 * 60 * 60 * 1000);
+
+  started = Date.now();
+  const blocked = await remember(
+    'cat',
+    { ttlMs: 10, maxStaleMs: 60_000, timeoutMs: 100, client: pastCeiling },
+    hangs,
+  );
+  const blockedMs = Date.now() - started;
+
+  assert.deepEqual(served, { blogs: 7 }, 'inside the ceiling: the cached answer');
+  assert.deepEqual(blocked, { blogs: 7 }, 'outside it: the very same cached answer');
+  assert.ok(servedMs < 50, `inside the ceiling it is immediate, took ${servedMs}ms`);
+  assert.ok(blockedMs >= 90, `outside it the reader waits out the timeout, took ${blockedMs}ms`);
+});
+
 test('a slow computation is abandoned at the timeout rather than held', async () => {
   const client = fakeRedis();
   const started = Date.now();

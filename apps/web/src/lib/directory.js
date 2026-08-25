@@ -51,20 +51,53 @@ import { db } from './db.js';
 /**
  * How long the index is trusted before a refresh is started behind the reader.
  *
- * A minute, matching `HISTORY_TTL_MS` next door. "Recently added" is a list
- * that changes when the crawler admits a feed, not something a visitor is
- * watching tick over, and a burst of readers should cost one scan rather than
- * one each.
+ * An hour, matching `CATEGORY_TTL_MS` next door, and raised from a minute on
+ * 2026-08-25 because a minute was costing far more than it bought.
+ *
+ * Two of the three reads behind this key visit every row of a 476,000-feed
+ * table, so each refresh is ~0.5M rows read. At a one-minute TTL that is a full
+ * scan every minute of every day, whether or not anybody asked for one — and
+ * `robots.txt` deliberately welcomes every AI crawler, so somebody always is.
+ * That is how the org reached 83.8 *billion* rows read in a month (84% of the
+ * Turso quota) and 123% of the write quota, which wedged the write path and
+ * stopped the crawler dead for 38 hours.
+ *
+ * An hour is honest about what the numbers do rather than generous: the
+ * directory took on 320,000 feeds in a day back in August, but discovery has
+ * since settled to **single digits per day**. A count that moves by ten a day
+ * does not need re-deriving sixty times an hour, and "recently added" is a list
+ * a visitor reads, not one they watch tick over.
  */
-const INDEX_TTL_MS = 60 * 1000;
+const INDEX_TTL_MS = 60 * 60 * 1000;
 
 /**
  * How stale it may get before a reader waits for a fresh one.
  *
- * A day, for the reason `CHART_MAX_STALE_MS` is a day: when the underlying read
- * is failing the alternative is not a fresher page, it is no page.
+ * Effectively never, and that is a deliberate change from a day.
+ *
+ * `maxStaleMs` reads like a safety net and behaves like a cliff. Past it,
+ * `remember` takes its "nothing usable cached" branch: the reader blocks for
+ * the whole of `INDEX_TIMEOUT_MS`, the recompute fails — `countFeedsByKind` is
+ * a `group by` over every row and cannot finish inside twenty seconds — and the
+ * catch then returns `entry.value`, *the same expired value it would have
+ * served instantly*. So the wait buys the reader nothing and cannot ever renew
+ * the entry, which means the next reader pays it too. Measured 2026-08-25: `/`
+ * answered 200 in 20.35 s on five consecutive requests, for ever.
+ *
+ * The three numbers here are a directory count, a per-category breakdown and a
+ * list of recent blogs. None of them is a liveness signal — nothing here can
+ * make a dead crawler look alive, which is the one thing `crawlstats.js` guards
+ * with a short ceiling. So an old answer served now is strictly better than the
+ * same old answer served twenty seconds from now, however old it gets.
+ *
+ * A month rather than `Infinity` on purpose: `writeEntry` stores with
+ * `PX: maxStaleMs * 2`, and `Infinity` is not a value Redis will accept — the
+ * `set` would throw, be swallowed by that function's catch, and the entry would
+ * never be stored at all, which is the exact failure this constant exists to
+ * prevent. Redis is the real ceiling anyway: a background `refresh` writes with
+ * a 48-hour expiry, so "a month" means "for as long as Redis still has it".
  */
-const INDEX_MAX_STALE_MS = 24 * 60 * 60 * 1000;
+const INDEX_MAX_STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Shorter than the client's own 30 s deadline, so a read that is going to hang
