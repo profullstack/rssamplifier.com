@@ -9,6 +9,7 @@ import {
   warmStatsCache,
   warmDirectoryCache,
   warmLiveStatsCache,
+  warmPanelCaches,
 } from '@rssamplifier/db';
 import {
   crawlDue,
@@ -892,6 +893,7 @@ async function statsTick() {
     // None is gated on the one before. They fail independently, and a breakdown
     // that timed out says nothing about whether the counts will.
     await warmLiveStatsCache({ log });
+    await warmPanelCaches({ log });
     await warmDirectoryCache({ log });
     await warmStatsCache({ log });
   } finally {

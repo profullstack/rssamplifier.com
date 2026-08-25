@@ -216,6 +216,79 @@ export async function warmDirectoryCache(opts = {}) {
  * @param {{ log?: (event: string, fields?: object) => void, client?: any }} [opts]
  * @returns {Promise<{ ok: boolean, ms: number, cached: boolean, error?: string }>}
  */
+/**
+ * The two remaining panels on /crawlstats that no reader can prime.
+ *
+ * ## Why these two, measured rather than guessed
+ *
+ * With the liveness numbers and the directory counts warm, /crawlstats still
+ * answered in exactly 20.2s — one `CHART_TIMEOUT_MS`, so something was still
+ * waiting one out. Timing each panel against production on 2026-08-25 found two,
+ * not the one I had assumed:
+ *
+ *     failingFeeds(50)      126,600ms
+ *     jobBacklogs            66,792ms
+ *     indexingHistory(24)       555ms
+ *     queueHistory(48)          110ms
+ *
+ * The charts were never the problem. Both of these are far over the twenty
+ * seconds a reader waits, so their entries can never be written from a page and
+ * age out with nothing able to replace them — the same hole the directory index
+ * had. They run in `Promise.all`, which is why two blocked panels still cost one
+ * timeout rather than two.
+ *
+ * ## Why each key gets its own try
+ *
+ * `failingFeeds` is keyed by limit — the page asks for 50 and the JSON endpoint
+ * for 20 — so both need priming or whichever asked second is back to waiting.
+ * Three independent keys, three independent failures: one that cannot be read
+ * must not cost the others their turn, which is the mistake that put `crawlStats`
+ * behind the directory counts in the first place.
+ *
+ * @param {{ log?: (event: string, fields?: object) => void, client?: any }} [opts]
+ * @returns {Promise<{ ok: boolean, ms: number, warmed: string[] }>}
+ */
+export async function warmPanelCaches(opts = {}) {
+  const started = Date.now();
+  const log = opts.log ?? (() => {});
+
+  /** @type {import('@libsql/client').Client|null} */
+  let db = null;
+  /** @type {string[]} */
+  const warmed = [];
+
+  try {
+    db = connect({ timeoutMs: WARM_TIMEOUT_MS, queue: false });
+
+    /** @param {string} key @param {() => Promise<unknown>} read */
+    const one = async (key, read) => {
+      const at = Date.now();
+      try {
+        const value = await read();
+        await primeCache(key, value, { client: opts.client });
+        warmed.push(key);
+        log('panel-warmed', { key, ms: Date.now() - at });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        log('panel-warm-skipped', { key, ms: Date.now() - at, reason });
+      }
+    };
+
+    // Cheapest first, same as the tick itself.
+    await one('jobBacklogs', () => q.jobBacklogs(db));
+    await one('failingFeeds:50', () => q.failingFeeds(db, 50));
+    await one('failingFeeds:20', () => q.failingFeeds(db, 20));
+
+    return { ok: warmed.length > 0, ms: Date.now() - started, warmed };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    log('panel-warm-skipped', { key: 'connect', ms: Date.now() - started, reason });
+    return { ok: false, ms: Date.now() - started, warmed };
+  } finally {
+    try { db?.close(); } catch { /* closing a broken client is not a failure */ }
+  }
+}
+
 export async function warmLiveStatsCache(opts = {}) {
   const started = Date.now();
   const log = opts.log ?? (() => {});
