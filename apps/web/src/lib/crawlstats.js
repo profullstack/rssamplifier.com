@@ -248,9 +248,26 @@ export async function liveStats() {
     'crawlStats',
     {
       ttlMs: STATS_TTL_MS,
-      // Minutes, not hours: these are the numbers that must not drift far, and
-      // if they cannot be read at all the page should say so by other means.
-      maxStaleMs: 2 * 60 * 1000,
+      // Two hours, raised from two minutes on 2026-08-25, and it is worth being
+      // exact about what that does and does not loosen.
+      //
+      // It does not loosen the alarm. `idleMinutes` is never stored — it is
+      // re-derived below from the cached `lastSuccessAt` against the current
+      // clock, so it climbs while the crawler is down however old this entry is.
+      // A stalled crawler cannot read as healthy from here at any staleness.
+      //
+      // What may now be up to two hours old are the counts, which the page
+      // already labels with `generatedAt` for exactly this reason. Two hours
+      // because the poller primes this key once an hour: a shorter ceiling than
+      // the priming interval means the primed value is never usable, and the
+      // reader falls through to the 20s timeout — which is the trap that pinned
+      // the homepage, one file over.
+      //
+      // The alternative is not fresher numbers, it is no page: with the read
+      // failing, the old ceiling made /crawlstats answer 500 after 65 seconds,
+      // failing precisely when the crawler was in the trouble it exists to
+      // report.
+      maxStaleMs: 2 * 60 * 60 * 1000,
       timeoutMs: CHART_TIMEOUT_MS,
       fallback: null,
     },

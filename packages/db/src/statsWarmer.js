@@ -45,6 +45,29 @@ import * as q from './queries.js';
 /** Long enough for the ~59s read, with room for a bad day. */
 const WARM_TIMEOUT_MS = 150_000;
 
+/**
+ * The directory counts get longer than that, because 150 s was not enough.
+ *
+ * Measured in production 2026-08-25: `directory-warm-skipped ms=150002`, abandoned
+ * at the ceiling on the very first tick. `countFeeds` alone is 49 s against
+ * 476,000 rows and `countFeedsByKind` is a `group by category` no index covers,
+ * so the pair does not reliably fit in two and a half minutes on a database this
+ * size — and an abandoned warm is worse than a slow one, because the entry it
+ * was supposed to write is the only thing standing between a reader and an empty
+ * homepage.
+ *
+ * Ten minutes is affordable in a way it would never be on a request path. This
+ * runs once an hour and it is a read: the whole warm is ~1.5M rows, about 36M a
+ * day, against the ~16,200M still left in the month's quota. The per-request
+ * scans it replaces were costing far more than that — 83.8 *billion* rows read
+ * in a month is how the quota got to 84% in the first place.
+ *
+ * The hourly interval, not this number, is what bounds the job: `statsTick`
+ * holds a `warming` flag, so a slow warm delays the next tick rather than
+ * stacking up beside itself.
+ */
+const DIRECTORY_WARM_TIMEOUT_MS = 600_000;
+
 /** How much growth history the breakdown carries; matches the web's GROWTH_DAYS. */
 const GROWTH_DAYS = 30;
 
@@ -130,7 +153,7 @@ export async function warmDirectoryCache(opts = {}) {
   /** @type {import('@libsql/client').Client|null} */
   let db = null;
   try {
-    db = connect({ timeoutMs: WARM_TIMEOUT_MS, queue: false });
+    db = connect({ timeoutMs: DIRECTORY_WARM_TIMEOUT_MS, queue: false });
 
     // Shape and key must match `apps/web/src/lib/directory.js` exactly: it
     // destructures all three, and a mismatch here is an empty homepage that no
@@ -154,6 +177,63 @@ export async function warmDirectoryCache(opts = {}) {
     // as an alarm.
     const reason = error instanceof Error ? error.message : String(error);
     log('directory-warm-skipped', { ms, reason });
+    return { ok: false, ms, cached: false, error: reason };
+  } finally {
+    try { db?.close(); } catch { /* closing a broken client is not a failure */ }
+  }
+}
+
+/**
+ * The status page's own counts.
+ *
+ * ## Why this is not the caching `liveStats` forbids
+ *
+ * What that function guards is a frozen *alarm*, and the alarm is not stored
+ * here. `idleMinutes` is re-derived on every request from the cached
+ * `lastSuccessAt` against the current clock, so it goes on climbing while the
+ * crawler is down however old this entry is — a stalled crawler cannot read as
+ * healthy from a primed value at any staleness. What is cached are counts, and
+ * the page already prints `generatedAt` beside them precisely so it can say how
+ * old they are.
+ *
+ * ## Why it is worth priming at all
+ *
+ * Uncached, /crawlstats is the one page guaranteed to fail exactly when it is
+ * wanted — the same reasoning that produced `panel()` on the web side. On
+ * 2026-08-25 it answered 500 after 65 seconds: 20 for the cached attempt, then
+ * 45 for the uncached last resort, both against a read the database could no
+ * longer finish.
+ *
+ * ## Why it is separate from the directory warm
+ *
+ * `crawlStats` is comparatively cheap — 4,975 ms measured healthy, against a
+ * `group by category` over every row for the directory counts. Running them in
+ * one function meant the expensive pair could time out and take this one down
+ * with it, leaving the status page unprimed for the sake of a breakdown it does
+ * not even use. They fail independently, so they are warmed independently.
+ *
+ * @param {{ log?: (event: string, fields?: object) => void, client?: any }} [opts]
+ * @returns {Promise<{ ok: boolean, ms: number, cached: boolean, error?: string }>}
+ */
+export async function warmLiveStatsCache(opts = {}) {
+  const started = Date.now();
+  const log = opts.log ?? (() => {});
+
+  /** @type {import('@libsql/client').Client|null} */
+  let db = null;
+  try {
+    db = connect({ timeoutMs: WARM_TIMEOUT_MS, queue: false });
+
+    const value = await q.crawlStats(db);
+    const cached = await primeCache('crawlStats', value, { client: opts.client });
+
+    const ms = Date.now() - started;
+    log('livestats-warmed', { ms, total: value?.total ?? null, cached });
+    return { ok: true, ms, cached };
+  } catch (error) {
+    const ms = Date.now() - started;
+    const reason = error instanceof Error ? error.message : String(error);
+    log('livestats-warm-skipped', { ms, reason });
     return { ok: false, ms, cached: false, error: reason };
   } finally {
     try { db?.close(); } catch { /* closing a broken client is not a failure */ }

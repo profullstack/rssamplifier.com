@@ -8,6 +8,7 @@ import {
   takeWriteTally,
   warmStatsCache,
   warmDirectoryCache,
+  warmLiveStatsCache,
 } from '@rssamplifier/db';
 import {
   crawlDue,
@@ -872,23 +873,27 @@ async function statsTick() {
   if (warming) return;
   warming = true;
   try {
-    const result = await warmStatsCache({ log });
-
-    // The homepage's counts, warmed on the same tick and for the same reason.
-    // Its `remember` entry can only ever be written from here: a reader's own
-    // background refresh is capped at the 20 seconds the page will wait, and
-    // `countFeedsByKind` needs far longer, so without this the entry ages out
-    // and the directory renders itself as empty.
+    // Cheapest first, and that ordering is the point rather than tidiness.
     //
-    // Deliberately after the category warm rather than beside it: both are
-    // whole-table reads, and running them in sequence keeps one long scan on
-    // this connection at a time instead of two competing for the same instance.
-    // Not gated on `result.ok` either — the two keys fail independently, and a
-    // category breakdown that timed out says nothing about whether the counts
-    // will.
+    // Each of these is the only writer of its cache key: a reader's own
+    // background refresh is capped at the 20 seconds its page will wait, and
+    // none of these reads fits in that, so an entry nobody primes here simply
+    // ages out and the page renders its empty branch.
+    //
+    // They are run in sequence, never concurrently -- they are whole-table
+    // reads and overlapping them just makes each slower -- and in increasing
+    // order of cost, so the cheap ones are already banked if a later one hangs.
+    // `crawlStats` is ~5s healthy and is what /crawlstats needs to render at
+    // all; the directory counts are a `group by` over every row; the category
+    // breakdown is the one that has been abandoned at its 150s ceiling on every
+    // tick for days. Warming that last means its failure no longer costs the
+    // other two their turn.
+    //
+    // None is gated on the one before. They fail independently, and a breakdown
+    // that timed out says nothing about whether the counts will.
+    await warmLiveStatsCache({ log });
     await warmDirectoryCache({ log });
-
-    if (!result.ok) return;
+    await warmStatsCache({ log });
   } finally {
     warming = false;
   }
