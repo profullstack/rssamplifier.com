@@ -94,6 +94,30 @@ const CHART_MAX_STALE_MS = 30 * 24 * 60 * 60 * 1000;
  */
 const CHART_TIMEOUT_MS = 20 * 1000;
 
+/**
+ * What a reader waits for the category breakdown when nothing is cached.
+ *
+ * Two seconds, and deliberately nothing like the others. This is the one read on
+ * the page we have direct evidence cannot be computed at all right now: warmed
+ * on its own connection with a ten-minute deadline it ran for **300.7 seconds**
+ * and came back `fetch failed` — not a timeout, the connection died under it.
+ * `categoryStats` is nine conditional aggregates over 476,000 rows and no index
+ * covers the columns it groups by.
+ *
+ * So the twenty seconds a reader used to spend here were spent learning
+ * something already known, and ending in the same fallback either way — the same
+ * shape of waste as the `maxStaleMs` cliff this file and `directory.js` were
+ * widened to remove. /crawlstats answered 200 in 20.3s with every other panel
+ * primed and fast; this was the whole of it.
+ *
+ * Safe because a reader is not the writer here. When the entry *is* warm it is
+ * served from Redis and this number is never consulted; when the database
+ * recovers it is `warmStatsCache` on its patient connection that refills the
+ * key, not a refresh started from a page. All this bounds is how long the page
+ * waits before drawing the chart's own empty state.
+ */
+const CATEGORY_TIMEOUT_MS = 2 * 1000;
+
 /** How much history the charts draw. */
 export const HISTORY_HOURS = 24;
 export const GROWTH_DAYS = 30;
@@ -203,7 +227,7 @@ export async function categoryStats() {
     {
       ttlMs: CATEGORY_TTL_MS,
       maxStaleMs: CHART_MAX_STALE_MS,
-      timeoutMs: CHART_TIMEOUT_MS,
+      timeoutMs: CATEGORY_TIMEOUT_MS,
       fallback: null,
     },
     () => q.categoryStats(db(), GROWTH_DAYS),
