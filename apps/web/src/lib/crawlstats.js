@@ -322,7 +322,10 @@ export async function liveStats() {
 export async function failingFeeds(limit = 20) {
   const value = await remember(
     `failingFeeds:${limit}`,
-    { ttlMs: 60 * 1000, maxStaleMs: 6 * 60 * 60 * 1000, timeoutMs: CHART_TIMEOUT_MS, fallback: [] },
+    // `CHART_MAX_STALE_MS` rather than its own six hours, for the reason given
+    // there: a ceiling is not a bound on staleness when the recompute fails, it
+    // is a delayed 20-second wait ending in the same stale answer.
+    { ttlMs: 60 * 1000, maxStaleMs: CHART_MAX_STALE_MS, timeoutMs: CHART_TIMEOUT_MS, fallback: [] },
     () => q.failingFeeds(db(), limit),
   );
   return value ?? [];
@@ -372,7 +375,11 @@ const JOBS_TTL_MS = 60 * 1000;
 export async function jobBacklogs() {
   return remember(
     'jobBacklogs',
-    { ttlMs: JOBS_TTL_MS, maxStaleMs: 6 * 60 * 60 * 1000, timeoutMs: CHART_TIMEOUT_MS, fallback: null },
+    // Widened with `failingFeeds` above and for the same reason. This one is
+    // the more likely of the two to need it: it measured 11–27.9s, so its own
+    // background refresh does not reliably fit inside CHART_TIMEOUT_MS and the
+    // entry cannot count on renewing itself.
+    { ttlMs: JOBS_TTL_MS, maxStaleMs: CHART_MAX_STALE_MS, timeoutMs: CHART_TIMEOUT_MS, fallback: null },
     () => q.jobBacklogs(db()),
   );
 }

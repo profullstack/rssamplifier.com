@@ -42,31 +42,32 @@ import * as q from './queries.js';
  * 20 seconds and then given up is served from Redis instead.
  */
 
-/** Long enough for the ~59s read, with room for a bad day. */
-const WARM_TIMEOUT_MS = 150_000;
-
 /**
- * The directory counts get longer than that, because 150 s was not enough.
+ * How long any of these warms may take before it is abandoned.
  *
- * Measured in production 2026-08-25: `directory-warm-skipped ms=150002`, abandoned
- * at the ceiling on the very first tick. `countFeeds` alone is 49 s against
- * 476,000 rows and `countFeedsByKind` is a `group by category` no index covers,
- * so the pair does not reliably fit in two and a half minutes on a database this
- * size — and an abandoned warm is worse than a slow one, because the entry it
- * was supposed to write is the only thing standing between a reader and an empty
- * homepage.
+ * Ten minutes, and it was 150 seconds until production kept refusing to fit in
+ * that. `stats-warm-skipped ms=150010` had been logged on every tick for days,
+ * and `directory-warm-skipped ms=150002` landed on the very first tick after the
+ * directory warm shipped. Raised to 600 s, that same directory warm completed in
+ * **175 s** — it was never far over the line, but it was over it, and the whole
+ * value of a warm is the entry it writes. An abandoned one writes nothing while
+ * still paying for every row it read.
  *
- * Ten minutes is affordable in a way it would never be on a request path. This
- * runs once an hour and it is a read: the whole warm is ~1.5M rows, about 36M a
- * day, against the ~16,200M still left in the month's quota. The per-request
- * scans it replaces were costing far more than that — 83.8 *billion* rows read
- * in a month is how the quota got to 84% in the first place.
+ * The numbers are simply large: `countFeeds` alone is 49 s against 476,000 rows,
+ * `countFeedsByKind` is a `group by category` no index covers, and
+ * `categoryStats` is heavier than either.
  *
- * The hourly interval, not this number, is what bounds the job: `statsTick`
- * holds a `warming` flag, so a slow warm delays the next tick rather than
- * stacking up beside itself.
+ * Affordable here in a way it never would be on a request path. These run once
+ * an hour and they are reads: the whole tick is a few million rows, tens of
+ * millions a day, against the ~16,200M left in the month's quota. The
+ * per-request scans they replace are what spent 83.8 *billion* rows and took the
+ * quota to 84% in the first place.
+ *
+ * The hourly interval, not this number, bounds the job: `statsTick` holds a
+ * `warming` flag, so a slow warm delays the next tick rather than stacking up
+ * beside itself.
  */
-const DIRECTORY_WARM_TIMEOUT_MS = 600_000;
+const WARM_TIMEOUT_MS = 600_000;
 
 /** How much growth history the breakdown carries; matches the web's GROWTH_DAYS. */
 const GROWTH_DAYS = 30;
@@ -153,7 +154,7 @@ export async function warmDirectoryCache(opts = {}) {
   /** @type {import('@libsql/client').Client|null} */
   let db = null;
   try {
-    db = connect({ timeoutMs: DIRECTORY_WARM_TIMEOUT_MS, queue: false });
+    db = connect({ timeoutMs: WARM_TIMEOUT_MS, queue: false });
 
     // Shape and key must match `apps/web/src/lib/directory.js` exactly: it
     // destructures all three, and a mismatch here is an empty homepage that no
