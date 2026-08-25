@@ -857,6 +857,25 @@ async function queueTick() {
 let warming = false;
 
 /**
+ * Ticks still to skip before the category breakdown is attempted again.
+ *
+ * `categoryStats` does not merely run slowly against 476,000 feeds — given a
+ * ten-minute deadline it ran for 300.7 s and came back `fetch failed`, the
+ * connection dying under it. Retrying that every hour is five minutes of
+ * whole-table scanning, for nothing, on a database whose load is already the
+ * problem: every other page slows down while it runs, and the read quota it
+ * spends is the one this whole branch exists to protect.
+ *
+ * So a failure buys a cooldown. It is still retried, because the query will
+ * start completing again once the write quota is restored and the crawler is not
+ * fighting it — this is a backoff, not a removal.
+ */
+let categoryWarmCooldown = 0;
+
+/** How many ticks to wait after a failed category warm. Hourly ticks, so ~6h. */
+const CATEGORY_WARM_COOLDOWN_TICKS = 5;
+
+/**
  * Recompute the category breakdown into Redis, so no page has to.
  *
  * This read takes about a minute against half a million feeds and cannot be
@@ -895,7 +914,18 @@ async function statsTick() {
     await warmLiveStatsCache({ log });
     await warmPanelCaches({ log });
     await warmDirectoryCache({ log });
-    await warmStatsCache({ log });
+
+    // The category breakdown last, and not on every tick once it starts
+    // failing. See `categoryWarmCooldown`: this one read is five of the
+    // fourteen minutes a full tick spends scanning, and while it scans every
+    // other page on the site slows down with it.
+    if (categoryWarmCooldown > 0) {
+      categoryWarmCooldown -= 1;
+      log('stats-warm-deferred', { ticksLeft: categoryWarmCooldown });
+    } else {
+      const category = await warmStatsCache({ log });
+      categoryWarmCooldown = category.ok ? 0 : CATEGORY_WARM_COOLDOWN_TICKS;
+    }
   } finally {
     warming = false;
   }
