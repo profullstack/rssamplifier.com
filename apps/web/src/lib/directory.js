@@ -62,13 +62,21 @@ import { db } from './db.js';
  * Turso quota) and 123% of the write quota, which wedged the write path and
  * stopped the crawler dead for 38 hours.
  *
- * An hour is honest about what the numbers do rather than generous: the
+ * Ninety minutes is honest about what the numbers do rather than generous: the
  * directory took on 320,000 feeds in a day back in August, but discovery has
  * since settled to **single digits per day**. A count that moves by ten a day
  * does not need re-deriving sixty times an hour, and "recently added" is a list
  * a visitor reads, not one they watch tick over.
+ *
+ * Ninety and not sixty because the poller warms this key hourly, and a TTL equal
+ * to the warm interval is stale-by-design: the entry expires just before each
+ * warm lands, so readers spend that gap starting `refresh()` calls against a
+ * 175–195 s read. Whatever the warm interval is, this must be longer. See
+ * `PRIMED_TTL_MS` in `crawlstats.js`, which is the same rule stated once for the
+ * keys next door — /crawlstats went from 20.2 s to 99–104 s by getting this
+ * wrong on three of them at once.
  */
-const INDEX_TTL_MS = 60 * 60 * 1000;
+const INDEX_TTL_MS = 90 * 60 * 1000;
 
 /**
  * How stale it may get before a reader waits for a fresh one.

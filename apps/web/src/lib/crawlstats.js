@@ -118,6 +118,37 @@ const CHART_TIMEOUT_MS = 20 * 1000;
  */
 const CATEGORY_TIMEOUT_MS = 2 * 1000;
 
+/**
+ * The TTL for any key the poller warms, and it must exceed the warm interval.
+ *
+ * ## The trap this exists to close
+ *
+ * `remember` starts a background `refresh()` for any entry older than its TTL.
+ * While a key has *nothing* cached that branch is unreachable — the reader takes
+ * the blocking path instead — so an unprimed expensive key generates no
+ * background load at all. Priming it changes that: from the first warm onwards
+ * every reader past the TTL fires a refresh, deduped to one in flight per key
+ * but immediately restarted by the next reader when it finishes.
+ *
+ * With the old TTLs that turned three of these into a permanent loop. Measured
+ * 2026-08-25, the reads behind them are `crawlStats` 57–77 s, `jobBacklogs`
+ * 60–67 s and `failingFeeds` 96–127 s, against TTLs of ten and sixty seconds —
+ * so the web service was running all three back to back, for ever, from its own
+ * request path. /crawlstats went from 20.2 s before priming to **99–104 s and
+ * timeouts after**, on an idle tick. Priming made it worse, which is the
+ * opposite of the point.
+ *
+ * ## Why ninety minutes
+ *
+ * The poller warms hourly, and the TTL has to be longer than that or the entry
+ * is stale-by-design before the next warm lands and readers refresh it anyway.
+ * Ninety minutes leaves half an hour of slack for a warm that runs long — and
+ * they do run long here: the directory warm alone takes 175–195 s.
+ *
+ * The warmer is the writer for these keys. A reader's job is to be served.
+ */
+const PRIMED_TTL_MS = 90 * 60 * 1000;
+
 /** How much history the charts draw. */
 export const HISTORY_HOURS = 24;
 export const GROWTH_DAYS = 30;
@@ -239,11 +270,18 @@ export async function categoryStats() {
 /**
  * How long the liveness numbers are trusted.
  *
- * Ten seconds against a page that refreshes every fifteen, so a reader is never
- * looking at anything meaningfully older than the last refresh, and a burst of
- * concurrent readers costs one read rather than one each.
+ * Ten seconds was right when a reader was the only thing that ever wrote this
+ * key: it cost one read per fifteen-second page refresh, and the read was five
+ * seconds. It became wrong the moment the poller started priming it, because a
+ * ten-second TTL against a read that now takes 57–77 s means every reader
+ * restarts it the instant the last one finishes. See `PRIMED_TTL_MS`.
+ *
+ * What that costs in freshness is counts, not the alarm — `idleMinutes` is
+ * re-derived from the cached `lastSuccessAt` on every request, so a stalled
+ * crawler cannot read as healthy however old this entry is, and `generatedAt` is
+ * printed beside the numbers so the page says how old they are.
  */
-const STATS_TTL_MS = 10 * 1000;
+const STATS_TTL_MS = PRIMED_TTL_MS;
 
 /**
  * The status numbers, cached briefly — and the derivation that makes that safe.
@@ -349,7 +387,14 @@ export async function failingFeeds(limit = 20) {
     // `CHART_MAX_STALE_MS` rather than its own six hours, for the reason given
     // there: a ceiling is not a bound on staleness when the recompute fails, it
     // is a delayed 20-second wait ending in the same stale answer.
-    { ttlMs: 60 * 1000, maxStaleMs: CHART_MAX_STALE_MS, timeoutMs: CHART_TIMEOUT_MS, fallback: [] },
+    // `PRIMED_TTL_MS`, not a minute: the poller warms both limits of this key,
+    // and at 96–127 s a reader-triggered refresh never stops running.
+    {
+      ttlMs: PRIMED_TTL_MS,
+      maxStaleMs: CHART_MAX_STALE_MS,
+      timeoutMs: CHART_TIMEOUT_MS,
+      fallback: [],
+    },
     () => q.failingFeeds(db(), limit),
   );
   return value ?? [];
@@ -373,8 +418,14 @@ export async function alertingAccounts() {
   return Number(value ?? 0);
 }
 
-/** How long a job-board read is trusted. */
-const JOBS_TTL_MS = 60 * 1000;
+/**
+ * How long a job-board read is trusted.
+ *
+ * `PRIMED_TTL_MS` since the poller warms this key: at 60–67 s the read is longer
+ * than the minute it used to be trusted for, so every reader started a refresh
+ * that was still running when the next one arrived.
+ */
+const JOBS_TTL_MS = PRIMED_TTL_MS;
 
 /**
  * The job board's backlogs, cached and served stale while it refreshes.
