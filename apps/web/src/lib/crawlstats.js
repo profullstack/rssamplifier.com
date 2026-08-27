@@ -169,6 +169,14 @@ const PRIMED_TTL_MS = 90 * 60 * 1000;
  * `recentlyCrawled(15)`, measured 572 ms, and the rest are 90–300 ms — so this
  * never trims a working read. It exists only to convert "hangs for ever" into
  * "that panel is missing", which is the whole promise `panel()` was making.
+ *
+ * The timer is deliberately **not** `unref`'d, and clearing it on the read is
+ * what replaces that. Unreffing looked like the tidy way to stop a pending
+ * timer holding the process open, and it quietly broke the guarantee: with the
+ * read hung and nothing else on the loop, Node is free to exit before the timer
+ * fires, so the fallback never arrives. That is precisely the case this exists
+ * for, and it turned up as `cancelledByParent` in CI while passing locally —
+ * the difference being whether anything else happened to keep the loop alive.
  */
 const PANEL_TIMEOUT_MS = 5 * 1000;
 
@@ -517,15 +525,20 @@ export async function jobBacklogs() {
  * @returns {Promise<T>}
  */
 export function panel(read, fallback, ms = PANEL_TIMEOUT_MS) {
-  return Promise.race([
-    read.catch(() => fallback),
-    new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(fallback), ms);
-      // Node keeps the process alive for a pending timer; this one must never be
-      // the reason a serverless invocation lingers after the page is sent.
-      timer.unref?.();
-    }),
-  ]);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+
+    read.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(fallback);
+      },
+    );
+  });
 }
 
 /**
