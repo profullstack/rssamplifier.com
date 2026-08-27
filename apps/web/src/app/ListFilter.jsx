@@ -116,7 +116,9 @@ export default function ListFilter({
       <p className="filter-count" role="status">
         {filtering ? (
           <>
-            {counts.shown} of {counts.total} {counts.shown === 1 ? noun : many} on this page
+            {/* "1 of 300 topics" — the noun agrees with the number next to it,
+                which is the total, not the number that matched. */}
+            {counts.shown} of {counts.total} {counts.total === 1 ? noun : many} on this page
             {counts.shown > 0 && ' '}
             {counts.shown > 0 && (
               <button type="button" className="linkish" onClick={() => setQuery('')}>
