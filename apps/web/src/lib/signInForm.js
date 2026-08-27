@@ -42,12 +42,38 @@ export function magicReturnPath(from) {
 }
 
 /**
+ * How long to wait, in words a person can act on.
+ *
+ * Seconds are what the throttle deals in and the wrong unit to show: "retry
+ * after 3600" reads as a number to be worked around, "in about an hour" reads
+ * as an answer.
+ *
+ * @param {unknown} seconds
+ * @returns {string}
+ */
+function waitFor(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) return 'in a moment';
+  if (n < 90) return `in ${Math.max(1, Math.round(n))} seconds`;
+  if (n < 5400) return `in about ${Math.round(n / 60)} minutes`;
+  if (n < 86_400) return `in about ${Math.round(n / 3600)} hours`;
+  return 'tomorrow';
+}
+
+/**
  * Turn an error code from the sign-in routes into something worth reading.
  *
  * @param {unknown} code
+ * @param {unknown} [retry] seconds to wait, when the code carries one
  * @returns {string}
  */
-export function explainSignInError(code) {
+export function explainSignInError(code, retry) {
+  if (code === 'too-many') {
+    // Deliberately says what to do rather than what happened. Whoever this is
+    // aimed at will not read it, and the one person who sees it by accident is
+    // a reader who pressed the button too often.
+    return `Too many sign-in attempts from your connection. Try again ${waitFor(retry)}.`;
+  }
   if (code === 'invalid-or-expired') {
     return 'That link has expired or was already used. Ask for a new one.';
   }
