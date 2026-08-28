@@ -88,31 +88,60 @@ test('Secure follows the scheme the reader is actually on', () => {
  * from lib. Reading the file is what keeps this test honest: a second copy here
  * would go on passing after the real one was edited.
  */
+function proxySource() {
+  return readFileSync(fileURLToPath(new URL('../src/proxy.js', import.meta.url)), 'utf8');
+}
+
 function matcherFromSource() {
-  const source = readFileSync(
-    fileURLToPath(new URL('../src/proxy.js', import.meta.url)),
-    'utf8',
-  );
-  const [, literal] = source.match(/matcher: \[\s*'((?:[^'\\]|\\.)*)'/) ?? [];
+  const [, literal] = proxySource().match(/matcher: \[\s*'((?:[^'\\]|\\.)*)'/) ?? [];
   assert.ok(literal, 'proxy.js still exports a config.matcher as a single-quoted literal');
 
   // The file holds the *source* of the string, so the escapes are still text.
   return JSON.parse(`"${literal.replace(/"/g, '\\"')}"`);
 }
 
-test('the matcher skips what has no masthead to fix', () => {
+/** The masthead predicate, likewise read back rather than copied. */
+function mastheadFromSource() {
+  const [, literal] = proxySource().match(/const WANTS_MASTHEAD\s*=\s*\/([\s\S]*?)\/;/) ?? [];
+  assert.ok(literal, 'proxy.js still declares WANTS_MASTHEAD as a regex literal');
+  return new RegExp(literal);
+}
+
+test('the matcher covers everything the throttle has to see', () => {
+  // Widened when the crawl throttle moved in: the load is on the API, the feed
+  // files and the framing proxy, and a limiter that cannot see them is a
+  // limiter over the cheap half of the site.
   const pattern = matcherFromSource();
   const matches = (path) => new RegExp(`^${pattern}$`).test(path);
 
   assert.ok(matches('/'), 'a page is looked at');
-  assert.ok(matches('/account'));
-  assert.ok(matches('/some-blog/read'));
-  assert.ok(matches('/search'));
+  assert.ok(matches('/some-blog/read'), 'the most expensive route in the app');
+  assert.ok(matches('/api/frame'), 'and the second most expensive');
+  assert.ok(matches('/api/search'));
+  assert.ok(matches('/topics/physics.rss'), 'a feed costs the same to serve as a page');
+  assert.ok(matches('/topics/jazz/audio.m3u'));
 
-  assert.ok(!matches('/api/search'), 'an API answers machines, which have no nav');
-  assert.ok(!matches('/_next/static/chunks/main.js'), 'and a chunk is not a page');
-  assert.ok(!matches('/auth/magic'), 'sign-in sets both cookies itself a moment later');
-  assert.ok(!matches('/logo.png'));
-  assert.ok(!matches('/robots.txt'));
-  assert.ok(!matches('/topics/physics.rss'), 'a feed is subscribed to, not read in a browser');
+  assert.ok(!matches('/_next/static/chunks/main.js'), 'a chunk never reaches the app');
+  assert.ok(!matches('/icons/favicon-32.png'), 'and an icon is not worth a strike');
+  assert.ok(!matches('/sw.js'));
+  assert.ok(!matches('/manifest.webmanifest'));
+  assert.ok(!matches('/robots.txt'), 'the file that invites them is never rationed');
+});
+
+test('the masthead repair still skips what has no masthead to fix', () => {
+  // Unchanged from when this was the matcher: widening the surface above must
+  // not start writing cookies onto feeds and API answers.
+  const wants = mastheadFromSource();
+
+  assert.ok(wants.test('/'), 'a page is looked at');
+  assert.ok(wants.test('/account'));
+  assert.ok(wants.test('/some-blog/read'));
+  assert.ok(wants.test('/search'));
+
+  assert.ok(!wants.test('/api/search'), 'an API answers machines, which have no nav');
+  assert.ok(!wants.test('/_next/static/chunks/main.js'), 'and a chunk is not a page');
+  assert.ok(!wants.test('/auth/magic'), 'sign-in sets both cookies itself a moment later');
+  assert.ok(!wants.test('/logo.png'));
+  assert.ok(!wants.test('/robots.txt'));
+  assert.ok(!wants.test('/topics/physics.rss'), 'a feed is subscribed to, not read in a browser');
 });
