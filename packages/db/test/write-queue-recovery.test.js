@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { isWaitTimeout, recoverFinished } from '../src/writeQueue.js';
+import { isWaitTimeout, recoverFinished, settleJob } from '../src/writeQueue.js';
 
 /**
  * The outage these tests are written from, 2026-08-27 20:48 to 2026-08-28 14:11.
@@ -107,4 +107,75 @@ test('only the wait timeout opens the recovery path', async () => {
   assert.equal(isWaitTimeout(new Error('The operation was aborted due to timeout')), false);
   assert.equal(isWaitTimeout(new Error('UNIQUE constraint failed: authors.slug')), false);
   assert.equal(isWaitTimeout('some string'), false);
+});
+
+/**
+ * A job whose notification never comes, and whose own state eventually says it
+ * finished. Production during the outage, in miniature.
+ *
+ * @param {{ afterPolls?: number, returns?: unknown[] }} [opts]
+ */
+function silentJob(opts = {}) {
+  const { afterPolls = 1, returns = [{ rowsAffected: 1 }] } = opts;
+  const state = { polls: 0 };
+
+  return {
+    state,
+    id: 57228,
+    // Never settles: the stream is the part that failed, so a caller relying on
+    // it alone waits out the whole deadline.
+    waitUntilFinished: () => new Promise(() => {}),
+    backend: {
+      isFinished: async () => {
+        state.polls += 1;
+        return state.polls > afterPolls ? [1, JSON.stringify(returns)] : [0, ''];
+      },
+    },
+  };
+}
+
+test('a write settles from the job itself when the notification never comes', async () => {
+  // The whole point of polling *beside* the wait rather than after it.
+  // Recovering once the deadline expires would report this write honestly and
+  // still leave the fold at one job per two minutes, which is a stopped
+  // crawler with accurate error messages.
+  const job = silentJob({ returns: [{ rowsAffected: 1, rows: [{ item_count: 11 }] }] });
+  const started = Date.now();
+
+  const settled = await settleJob({ events: {} }, job);
+
+  assert.deepEqual(settled, [{ rowsAffected: 1, rows: [{ item_count: 11 }] }]);
+  assert.ok(
+    Date.now() - started < 5_000,
+    'settled by polling in seconds, not after the 120s deadline',
+  );
+});
+
+test('polling stops once the job has been settled', async () => {
+  const job = silentJob();
+  await settleJob({ events: {} }, job);
+
+  const seen = job.state.polls;
+  await new Promise((r) => setTimeout(r, 1_200));
+
+  assert.ok(
+    job.state.polls <= seen + 1,
+    `the poll loop stops after settling, saw ${job.state.polls} against ${seen}`,
+  );
+});
+
+test('the notification still wins when the stream is working', async () => {
+  // The fast path has to stay the fast path: a working stream settles a write
+  // on the round trip, not on the next poll tick.
+  const job = {
+    id: 1,
+    waitUntilFinished: async () => [{ rowsAffected: 7 }],
+    backend: {
+      isFinished: async () => {
+        throw new Error('the poll should not have been needed');
+      },
+    },
+  };
+
+  assert.deepEqual(await settleJob({ events: {} }, job), [{ rowsAffected: 7 }]);
 });

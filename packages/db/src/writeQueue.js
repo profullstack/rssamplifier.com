@@ -56,6 +56,24 @@ export const WRITE_QUEUE = 'turso-writes';
 const WAIT_MS = 120_000;
 
 /**
+ * How often a caller asks the job directly whether it has finished.
+ *
+ * The event stream is an optimisation, not the mechanism. It was treated as
+ * the mechanism, and when it went quiet every caller sat out the full
+ * `WAIT_MS` — which, because `createWriteFolder` keeps one job in flight per
+ * process, is not a slow write but a stopped crawler. Recovering *after* the
+ * timeout fixes the lie told to the caller and leaves the two-minute ceiling
+ * exactly where it was, so the poll has to run alongside the wait rather than
+ * after it.
+ *
+ * Half a second against a write that takes a few hundred milliseconds costs at
+ * most one extra round trip per write, and there is only ever one job in flight
+ * per process to poll for — two small reads a second, against a stall that
+ * costs everything.
+ */
+const SETTLE_POLL_MS = 500;
+
+/**
  * Encode one libSQL value for JSON.
  *
  * Two types do not survive `JSON.stringify` and both occur here: SQLite
@@ -263,24 +281,16 @@ export function queueWrites(client, opts) {
     );
 
     try {
-      const encoded = await job.waitUntilFinished(entry.events, WAIT_MS);
+      const encoded = await settleJob(entry, job);
       return /** @type {object[]} */ (encoded).map(decodeResult);
     } catch (err) {
       if (!isWaitTimeout(err)) throw err;
 
-      // The wait expired. Either the job really is still running, or nobody
-      // told us it finished — and those two want opposite responses, so ask
-      // the queue rather than guessing. `recoverFinished` reads the job's own
-      // state, which is the one answer that does not depend on the event
-      // stream that just failed us.
-      const recovered = await recoverFinished(job);
-
-      // A job that had already finished is proof the notification was lost
-      // rather than late, so the consumer is rebuilt either way. The only
-      // difference the result makes is whether this caller still has to fail.
+      // Both the notification and every poll for two minutes failed to find a
+      // finished job, so the consumer is rebuilt before the next caller
+      // inherits the same silence. The job itself is genuinely unfinished --
+      // `settleJob` would have returned it otherwise -- so this caller fails.
       await reviveEvents(entry);
-
-      if (recovered) return recovered.map(decodeResult);
       throw err;
     }
   };
@@ -462,6 +472,63 @@ async function reviveEvents(entry) {
   void Promise.resolve()
     .then(() => dead.close())
     .catch(() => {});
+}
+
+/**
+ * Wait for one job, believing the event stream *or* the job itself.
+ *
+ * `waitUntilFinished` is kept as the fast path: when the stream is working it
+ * settles a write the instant the worker finishes it, which is what makes the
+ * queue cost one Redis round trip rather than a poll interval.
+ *
+ * The poll runs beside it because the stream is the part that failed. It asks
+ * `isFinished` — the job's own state, which owes nothing to any consumer — and
+ * whichever answer arrives first wins. That is the difference between a write
+ * that is merely reported honestly and a crawler that keeps running: recovering
+ * after the timeout still leaves one job in flight per `WAIT_MS`, which is a
+ * stopped crawler with accurate error messages.
+ *
+ * The losing promise is left with a `catch` attached rather than cancelled;
+ * `waitUntilFinished` has no cancel, and its later rejection must not surface
+ * as an unhandled one.
+ *
+ * @param {Entry} entry
+ * @param {import('bullmq').Job} job
+ * @returns {Promise<unknown[]>}
+ */
+export async function settleJob(entry, job) {
+  let settled = false;
+
+  const notified = job.waitUntilFinished(entry.events, WAIT_MS);
+  notified.catch(() => null);
+
+  const polled = (async () => {
+    // Loops until the notification path resolves or rejects. It never resolves
+    // "not finished" of its own accord, because that would win the race with a
+    // non-answer and rob the caller of the real one.
+    for (;;) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, SETTLE_POLL_MS);
+      });
+
+      // The race is already decided, so this value is discarded. Returning
+      // rather than looping is what lets the timer stop.
+      if (settled) return null;
+
+      // A job that failed every attempt throws here, which is the right answer
+      // and beats waiting out the rest of the deadline for the same news.
+      const recovered = await recoverFinished(job);
+      if (recovered) return recovered;
+    }
+  })();
+
+  polled.catch(() => null);
+
+  try {
+    return /** @type {unknown[]} */ (await Promise.race([notified, polled]));
+  } finally {
+    settled = true;
+  }
 }
 
 /**
