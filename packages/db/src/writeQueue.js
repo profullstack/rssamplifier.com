@@ -427,23 +427,26 @@ function watchEvents(entry) {
 /**
  * Replace an event consumer that has stopped consuming.
  *
- * The failure this exists for: the consumer's Redis connection went away
- * without the socket ever erroring — the server had no such client left, while
- * this process sat in a read that would never return. `checkConnectionError`
- * only retries errors, and there was no error, so the loop never came round
- * again. Nothing in BullMQ notices this and nothing in it recovers, and because
- * `createWriteFolder` keeps exactly one job in flight per process, the whole
- * cluster fell to one write attempt per `WAIT_MS` — for seventeen hours, with a
- * healthy database, a healthy worker, and writes that were landing the whole
- * time.
+ * The failure this exists for, stated only as far as it was actually observed:
+ * for seventeen hours every wait expired while the jobs themselves ran and
+ * committed, with their `completed` events and full return values written to
+ * the stream and nothing acting on them. The database was healthy, the worker
+ * was healthy, and restarting the process fixed it — so whatever had happened
+ * had happened to this object, and only a new one would do.
+ *
+ * The mechanism underneath is *not* settled, and this comment deliberately does
+ * not claim it is. The obvious story — the consumer hung forever in a blocking
+ * read — is undermined by BullMQ 6.1.2 already carrying a watchdog for exactly
+ * that (`readEvents` races the read and reconnects). What can be said is that
+ * the recovery is cheap, bounded, and only ever runs on a wait that has already
+ * failed.
  *
  * Guarded on the pulse so a genuinely slow job does not cost a reconnect: if
  * the consumer has reported anything at all within the last `WAIT_MS`, it is
  * alive and the wait was simply too short.
  *
- * The old object is closed for its connection's sake, but not waited on — it is
- * wedged in a read, which is the entire problem, so awaiting its close is the
- * one thing guaranteed to hang.
+ * The old object is closed for its connection's sake, but not waited on: if it
+ * is wedged, awaiting its close is the one thing guaranteed to hang.
  *
  * @param {Entry} entry
  * @returns {Promise<void>}

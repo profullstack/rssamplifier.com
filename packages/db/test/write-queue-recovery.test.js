@@ -6,10 +6,9 @@ import { isWaitTimeout, recoverFinished } from '../src/writeQueue.js';
 /**
  * The outage these tests are written from, 2026-08-27 20:48 to 2026-08-28 14:11.
  *
- * The poller's `QueueEvents` connection went away without the socket ever
- * erroring: Redis had no such client left, while the process sat in a read that
- * would never return. BullMQ only retries a read that *errors*, so the consumer
- * never came round again and never said so.
+ * Every write wait expired while nothing at all was acting on the completion
+ * events. The precise mechanism inside BullMQ was never pinned down and these
+ * tests do not depend on it; what was measured is below.
  *
  * Nothing else was wrong. The worker was healthy, the database answered an
  * empty write transaction in 0.34s, and the jobs ran and committed — the
