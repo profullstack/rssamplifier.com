@@ -56,6 +56,24 @@ export const WRITE_QUEUE = 'turso-writes';
 const WAIT_MS = 120_000;
 
 /**
+ * How often a caller asks the job directly whether it has finished.
+ *
+ * The event stream is an optimisation, not the mechanism. It was treated as
+ * the mechanism, and when it went quiet every caller sat out the full
+ * `WAIT_MS` — which, because `createWriteFolder` keeps one job in flight per
+ * process, is not a slow write but a stopped crawler. Recovering *after* the
+ * timeout fixes the lie told to the caller and leaves the two-minute ceiling
+ * exactly where it was, so the poll has to run alongside the wait rather than
+ * after it.
+ *
+ * Half a second against a write that takes a few hundred milliseconds costs at
+ * most one extra round trip per write, and there is only ever one job in flight
+ * per process to poll for — two small reads a second, against a stall that
+ * costs everything.
+ */
+const SETTLE_POLL_MS = 500;
+
+/**
  * Encode one libSQL value for JSON.
  *
  * Two types do not survive `JSON.stringify` and both occur here: SQLite
@@ -209,7 +227,10 @@ export function queueWrites(client, opts) {
   // so the keyspace is claimed explicitly rather than left on BullMQ's default.
   const prefix = opts.prefix ?? '{rssamplifier}';
 
-  const { queue, events } = sharedQueue(opts.url, prefix);
+  // The entry rather than its fields: `entry.events` is replaced in place when
+  // a dead consumer is rebuilt, and a destructured copy would pin every future
+  // wait to the corpse. See `reviveEvents`.
+  const entry = sharedQueue(opts.url, prefix);
   const original = client.batch.bind(client);
 
   /**
@@ -217,7 +238,7 @@ export function queueWrites(client, opts) {
    * @returns {Promise<unknown>}
    */
   const enqueue = async (statements) => {
-    const job = await queue.add(
+    const job = await entry.queue.add(
       'batch',
       { statements: Array.from(statements ?? []).map(encodeStatement) },
       {
@@ -241,15 +262,37 @@ export function queueWrites(client, opts) {
         // gives a contended primary a chance to drain first, which is the
         // only thing that makes the next attempt differ from the last.
         backoff: { type: 'exponential', delay: opts.backoffMs ?? 5_000 },
-        removeOnComplete: true,
+        // Was `true`, which deletes the job the instant it succeeds. That is
+        // the tidy answer and it made a lost notification unrecoverable: the
+        // waiter times out, goes looking for the job to ask whether its write
+        // actually landed, and finds nothing — so a write that *committed* is
+        // reported to the crawler as a failure, and a healthy feed collects an
+        // error and a re-crawl for a row it already stored.
+        //
+        // A short retention gives `recoverFinished` something to read. Two
+        // hundred is a couple of minutes of queue at full rate, which is far
+        // longer than the window between a completion and the waiter noticing
+        // it, and small enough to stay invisible next to a 1MB Redis.
+        removeOnComplete: { count: 200 },
         // Kept, because a write that failed every attempt is the thing you go
         // looking for afterwards. Bounded so the list cannot become the leak.
         removeOnFail: 1000,
       },
     );
 
-    const encoded = await job.waitUntilFinished(events, WAIT_MS);
-    return /** @type {object[]} */ (encoded).map(decodeResult);
+    try {
+      const encoded = await settleJob(entry, job);
+      return /** @type {object[]} */ (encoded).map(decodeResult);
+    } catch (err) {
+      if (!isWaitTimeout(err)) throw err;
+
+      // Both the notification and every poll for two minutes failed to find a
+      // finished job, so the consumer is rebuilt before the next caller
+      // inherits the same silence. The job itself is genuinely unfinished --
+      // `settleJob` would have returned it otherwise -- so this caller fails.
+      await reviveEvents(entry);
+      throw err;
+    }
   };
 
   // Callers waiting at the same moment are folded into one job, which is one
@@ -305,9 +348,20 @@ function groupStatements(opts) {
  * minutes and kept climbing. Refcounted rather than cached outright so that
  * `closeWriteQueue` still means something to a caller that owns the last one.
  *
- * @type {Map<string, { queue: import('bullmq').Queue, events: import('bullmq').QueueEvents, refs: number }>}
+ * @type {Map<string, Entry>}
  */
 const shared = new Map();
+
+/**
+ * @typedef {{
+ *   queue: import('bullmq').Queue,
+ *   events: import('bullmq').QueueEvents,
+ *   url: string,
+ *   prefix: string,
+ *   refs: number,
+ *   lastEventAt: number,
+ * }} Entry
+ */
 
 /**
  * @param {string} url
@@ -325,12 +379,212 @@ function sharedQueue(url, prefix) {
   const connection = connectionFor(url);
   const entry = {
     queue: new Queue(WRITE_QUEUE, { connection, prefix }),
-    events: new QueueEvents(WRITE_QUEUE, { connection, prefix }),
+    events: newEvents(url, prefix),
+    url,
+    prefix,
     refs: 1,
+    lastEventAt: Date.now(),
   };
 
+  // Once, at construction rather than in `watchEvents`, which runs again on
+  // every revive. An `error` with no listener is a throw, and BullMQ reports
+  // connection trouble on the object it happened to.
+  entry.queue.on('error', () => {});
+
+  watchEvents(entry);
   shared.set(key, entry);
   return entry;
+}
+
+/**
+ * @param {string} url
+ * @param {string} prefix
+ * @returns {import('bullmq').QueueEvents}
+ */
+function newEvents(url, prefix) {
+  return new QueueEvents(WRITE_QUEUE, { connection: connectionFor(url), prefix });
+}
+
+/**
+ * Keep a pulse on the event consumer, and stop its failures being silent.
+ *
+ * Both halves of this were missing and the outage needed both. BullMQ's
+ * `QueueEvents` swallows connection errors inside its own read loop and
+ * re-emits them on itself; with no `error` listener attached, node's
+ * EventEmitter turns that into a throw which BullMQ then catches and discards.
+ * So the consumer can stop being a consumer without a single line in the log.
+ *
+ * `lastEventAt` is the pulse. The queue emits `added` and `active` for every
+ * job and `completed` or `failed` for every outcome, so a consumer that is
+ * reading at all cannot be quiet for long while work is going through. That is
+ * what lets a wait timeout tell "the job is slow" from "nobody is listening" —
+ * see `reviveEvents`.
+ *
+ * @param {Entry} entry
+ */
+function watchEvents(entry) {
+  const beat = () => {
+    entry.lastEventAt = Date.now();
+  };
+
+  for (const name of ['added', 'active', 'completed', 'failed', 'drained']) {
+    entry.events.on(name, beat);
+  }
+
+  entry.events.on('error', beat);
+}
+
+/**
+ * Replace an event consumer that has stopped consuming.
+ *
+ * The failure this exists for, stated only as far as it was actually observed:
+ * for seventeen hours every wait expired while the jobs themselves ran and
+ * committed, with their `completed` events and full return values written to
+ * the stream and nothing acting on them. The database was healthy, the worker
+ * was healthy, and restarting the process fixed it — so whatever had happened
+ * had happened to this object, and only a new one would do.
+ *
+ * The mechanism underneath is *not* settled, and this comment deliberately does
+ * not claim it is. The obvious story — the consumer hung forever in a blocking
+ * read — is undermined by BullMQ 6.1.2 already carrying a watchdog for exactly
+ * that (`readEvents` races the read and reconnects). What can be said is that
+ * the recovery is cheap, bounded, and only ever runs on a wait that has already
+ * failed.
+ *
+ * Guarded on the pulse so a genuinely slow job does not cost a reconnect: if
+ * the consumer has reported anything at all within the last `WAIT_MS`, it is
+ * alive and the wait was simply too short.
+ *
+ * The old object is closed for its connection's sake, but not waited on: if it
+ * is wedged, awaiting its close is the one thing guaranteed to hang.
+ *
+ * @param {Entry} entry
+ * @returns {Promise<void>}
+ */
+async function reviveEvents(entry) {
+  if (Date.now() - entry.lastEventAt < WAIT_MS) return;
+
+  const dead = entry.events;
+  entry.events = newEvents(entry.url, entry.prefix);
+  entry.lastEventAt = Date.now();
+  watchEvents(entry);
+
+  void Promise.resolve()
+    .then(() => dead.close())
+    .catch(() => {});
+}
+
+/**
+ * Wait for one job, believing the event stream *or* the job itself.
+ *
+ * `waitUntilFinished` is kept as the fast path: when the stream is working it
+ * settles a write the instant the worker finishes it, which is what makes the
+ * queue cost one Redis round trip rather than a poll interval.
+ *
+ * The poll runs beside it because the stream is the part that failed. It asks
+ * `isFinished` — the job's own state, which owes nothing to any consumer — and
+ * whichever answer arrives first wins. That is the difference between a write
+ * that is merely reported honestly and a crawler that keeps running: recovering
+ * after the timeout still leaves one job in flight per `WAIT_MS`, which is a
+ * stopped crawler with accurate error messages.
+ *
+ * The losing promise is left with a `catch` attached rather than cancelled;
+ * `waitUntilFinished` has no cancel, and its later rejection must not surface
+ * as an unhandled one.
+ *
+ * @param {Entry} entry
+ * @param {import('bullmq').Job} job
+ * @returns {Promise<unknown[]>}
+ */
+export async function settleJob(entry, job) {
+  let settled = false;
+
+  const notified = job.waitUntilFinished(entry.events, WAIT_MS);
+  notified.catch(() => null);
+
+  const polled = (async () => {
+    // Loops until the notification path resolves or rejects. It never resolves
+    // "not finished" of its own accord, because that would win the race with a
+    // non-answer and rob the caller of the real one.
+    for (;;) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, SETTLE_POLL_MS);
+      });
+
+      // The race is already decided, so this value is discarded. Returning
+      // rather than looping is what lets the timer stop.
+      if (settled) return null;
+
+      // A job that failed every attempt throws here, which is the right answer
+      // and beats waiting out the rest of the deadline for the same news.
+      const recovered = await recoverFinished(job);
+      if (recovered) return recovered;
+    }
+  })();
+
+  polled.catch(() => null);
+
+  try {
+    return /** @type {unknown[]} */ (await Promise.race([notified, polled]));
+  } finally {
+    settled = true;
+  }
+}
+
+/**
+ * Whether an error is `waitUntilFinished` giving up, rather than a real failure.
+ *
+ * Matched on the message because BullMQ throws a plain `Error` for it — there
+ * is no class to test and no code on it.
+ *
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isWaitTimeout(err) {
+  return /timed out before finishing, no finish notification/.test(
+    String(/** @type {{ message?: string }} */ (err)?.message ?? err),
+  );
+}
+
+/**
+ * Ask the queue what became of a job whose notification never arrived.
+ *
+ * Deliberately the same primitive `waitUntilFinished` polls with before it
+ * starts listening — `isFinished`, which reads the job's own state rather than
+ * anything on the event stream. That is the whole point: the stream is the part
+ * that just failed, so the recovery must not consult it.
+ *
+ * Returns the encoded results if the job had in fact completed, and null if it
+ * is genuinely still running or its state cannot be read. A job that failed
+ * every attempt throws its own reason, because "UNIQUE constraint failed" is a
+ * far better thing to hand a caller than "we waited two minutes".
+ *
+ * @param {{ id?: string|number, backend: { isFinished: (id: string, returnValue: boolean) => Promise<[number, string]> } }} job
+ * @returns {Promise<unknown[]|null>}
+ */
+export async function recoverFinished(job) {
+  let status;
+  let result;
+
+  try {
+    [status, result] = await job.backend.isFinished(String(job.id), true);
+  } catch {
+    return null;
+  }
+
+  // Still waiting, still running, or gone. Nothing to hand back.
+  if (!status) return null;
+
+  // The two codes `waitUntilFinished` treats as failure. `result` is the
+  // failedReason rather than a return value.
+  if (status === -1 || status === 2) throw new Error(String(result) || 'write job failed');
+
+  try {
+    const value = JSON.parse(String(result));
+    return Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
