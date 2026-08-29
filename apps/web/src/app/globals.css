@@ -482,8 +482,21 @@ h2 {
   margin-bottom: 2rem;
 }
 
+/* Stacked fields need air between them. /discover got away without this with
+   two, because a textarea and an input read as separate blocks on their own;
+   /sales has four in a row and they ran together into one grey slab. */
+.submit-box > input,
+.submit-box > textarea {
+  margin-bottom: 0.75rem;
+}
+
+/* `email` belongs here for the same reason `text` does, and its absence was a
+   real bug rather than a style preference: /discover and /sales both take an
+   address in a `.submit-box`, and without it the field rendered at the browser's
+   default size beside full-width siblings — a form that looks half broken. */
 textarea,
 input[type='text'],
+input[type='email'],
 input[type='search'] {
   width: 100%;
   font-family: var(--mono);

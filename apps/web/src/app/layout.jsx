@@ -321,7 +321,11 @@ export default function RootLayout({ children }) {
             </p>
             <p>
               <a href="/about">About</a> · <a href="/advertise">Advertise</a> ·{' '}
-              <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
+              {/* Beside Advertise rather than beside About: both are the
+                  commercial half of the footer, and a reader looking for one is
+                  the reader most likely to want the other. */}
+              <a href="/sales">Training data</a> · <a href="/contact">Contact</a> ·{' '}
+              <a href="/privacy">Privacy</a> ·{' '}
               <a href="/terms">Terms</a> ·{' '}
               <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
                 Source on GitHub

@@ -1,4 +1,4 @@
-import { q } from '@rssamplifier/db';
+import { q, dataset } from '@rssamplifier/db';
 
 import { db, siteUrl } from './db.js';
 
@@ -173,10 +173,15 @@ export async function llmsTxt(opts = {}) {
     `- [Submit](${base}/api/submit): POST {"url":"..."} or {"urls":[...]} or {"opml":"..."}`,
     `- [Discover](${base}/api/discover): POST {"keywords":["..."]} — find blogs by subject`,
     `- [Discovery status](${base}/api/discoveries/{id}): progress of one keyword run`,
+    // Listed among the open endpoints because the manifest *is* open — it
+    // describes the corpus, its cadence and the shape of every row without an
+    // account. Only the streams it points at need a licence, and the line says
+    // so rather than letting an agent discover it as a 402.
+    `- [Corpus manifest](${base}/api/dataset): what the whole directory looks like in bulk, sliced ${dataset.WINDOW_HOURS}-hourly as gzipped NDJSON. Open; the bulk streams themselves are licensed — ${base}/sales`,
     '',
     '## Notes for agents',
     '',
-    '- Every endpoint sends `access-control-allow-origin: *`. No key is required.',
+    '- Every endpoint above sends `access-control-allow-origin: *` and needs no key. The bulk corpus streams under `/api/dataset/{name}` are the one exception, and nothing else here depends on them.',
     '- Summaries are plain text, already stripped of markup.',
     '- Each feed has a stable page at /{slug} carrying schema.org Blog or PodcastSeries JSON-LD.',
     '- Each author has a page at /authors/{slug} carrying schema.org Person with sameAs.',
