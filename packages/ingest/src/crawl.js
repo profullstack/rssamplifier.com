@@ -228,7 +228,15 @@ export async function crawlFeed(db, feed, opts = {}) {
   // So: come back when asked, leave every health column exactly as it was.
   if (resolved.throttled) {
     await q.markThrottled(db, id, throttleMinutes(resolved.retryAfter));
-    return { ok: false, newItems: 0, throttled: true, error: resolved.error };
+    // `retryAfter` travels with the result so the caller can hold the rest of
+    // this host's queue back by the same interval the server itself named.
+    return {
+      ok: false,
+      newItems: 0,
+      throttled: true,
+      retryAfter: resolved.retryAfter ?? null,
+      error: resolved.error,
+    };
   }
 
   if (!resolved.ok) {
@@ -575,7 +583,9 @@ function hostOf(feed) {
  * @param {number} [batchSize]
  * @param {number} [concurrency] hosts crawled at once
  * @param {((event: { at: string, event: 'feed', status: 'ok'|'error', subject: string, slug: string|null, amount: number|null, detail: string|null, ms: number }) => void)|null} [onEvent]
- * @param {{ perHost?: number }} [opts]
+ * @param {{ perHost?: number, crawl?: { resolve?: Function, scrape?: Function } }} [opts] `crawl` is
+ *   handed to each `crawlFeed`, which is what makes a whole batch testable without
+ *   the network — the throttle path in particular only exists across a host's queue.
  * @returns {Promise<{ crawled: number, failed: number, items: number, hosts: number }>} items being posts stored, not posts seen
  */
 export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = null, opts = {}) {
@@ -604,6 +614,9 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
   // out there -- it is entirely up to other people's servers, so it cannot be
   // predicted and has to be measured.
   let unchanged = 0;
+  // Hosts abandoned mid-queue because they answered 429. Distinct from `failed`:
+  // nothing is wrong with these feeds and they were mostly never even asked.
+  let throttled = 0;
   let next = 0;
 
   const worker = async () => {
@@ -612,14 +625,17 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
       next += 1;
       if (index >= queues.length) return;
 
-      for (const feed of queues[index]) {
+      const queue = queues[index];
+
+      for (let position = 0; position < queue.length; position += 1) {
+        const feed = queue[position];
         const started = Date.now();
 
         // One feed that throws — a write that times out, a URL that breaks the
         // parser — must not reject the whole batch and take the other workers'
         // completed crawls down with it.
         try {
-          const res = await crawlFeed(db, feed);
+          const res = await crawlFeed(db, feed, opts.crawl);
           if (res.ok) {
             crawled += 1;
             items += Number(res.newItems ?? 0);
@@ -631,6 +647,20 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
             amount: res.ok ? Number(res.newItems ?? 0) : null,
             detail: res.ok ? null : (res.error ?? 'unknown'),
           });
+
+          // A 429 is the host speaking for all of its feeds, so believe it once
+          // and leave. The rest of this queue is the same server, and asking it
+          // the same question another eight hundred times is precisely what it
+          // just told us to stop doing — see `markHostThrottled` for the
+          // measurement that put this here.
+          if (res.throttled) {
+            throttled += 1;
+            const rest = queue.slice(position + 1);
+            if (rest.length > 0) {
+              await holdBackHost(db, rest, throttleMinutes(res.retryAfter), onEvent, feed);
+            }
+            break;
+          }
         } catch (err) {
           failed += 1;
           report(onEvent, feed, started, {
@@ -649,7 +679,67 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
   // `hosts` is what says whether the spread is working: a batch of 300 feeds
   // across 4 hosts cannot go faster than its biggest queue however many workers
   // are pointed at it, and the number is otherwise invisible from outside.
-  return { crawled, failed, items, unchanged, hosts: queues.length };
+  return { crawled, failed, items, unchanged, throttled, hosts: queues.length };
+}
+
+/**
+ * Put back the feeds a throttled host never got asked about.
+ *
+ * Separated from the worker so the worker reads as the policy — believe the
+ * 429, leave — rather than as the bookkeeping. Two things it must not do, and
+ * both are why it exists as its own function:
+ *
+ *   * it must not fail the batch. These feeds are fine; the reschedule is an
+ *     optimisation and the crawl has already done its useful work. If the write
+ *     times out they keep their existing `next_fetch_at` and are simply offered
+ *     again next tick, which is the behaviour this replaces.
+ *   * it must not report the held-back feeds as errors. Nothing was wrong with
+ *     them and nothing was even sent, so a per-feed line would put hundreds of
+ *     healthy feeds on the failure panel. One line for the host says it.
+ *
+ * @param {import('@libsql/client').Client} db
+ * @param {Array<{ id: string }>} rest feeds left unread on this host
+ * @param {number} minutes how long before the first is tried again
+ * @param {((event: object) => void)|null} onEvent
+ * @param {{ feed_url: string, title?: unknown }} feed the one that was refused
+ * @returns {Promise<void>}
+ */
+async function holdBackHost(db, rest, minutes, onEvent, feed) {
+  const started = Date.now();
+
+  try {
+    // Spread across an hour rather than returned all at once: a thousand feeds
+    // handed back to the same instant is the same pile-up one tick later.
+    await q.markHostThrottled(
+      db,
+      rest.map((f) => f.id),
+      minutes,
+      60,
+    );
+  } catch {
+    // The schedule is unchanged, so they come back next tick exactly as they
+    // would have without this. Losing the batch over it would be worse.
+    return;
+  }
+
+  if (typeof onEvent !== 'function') return;
+
+  try {
+    onEvent({
+      at: new Date().toISOString(),
+      event: 'host-throttled',
+      status: 'info',
+      subject: hostOf(feed),
+      slug: null,
+      amount: rest.length,
+      // Not `message`: `toEntry` reads any row carrying one as an error, and
+      // this is the crawler behaving correctly. See the daemon error panel note.
+      detail: `held back ${rest.length} feeds for ${minutes}m`,
+      ms: Date.now() - started,
+    });
+  } catch {
+    // A broken listener loses its line and nothing else.
+  }
 }
 
 /**

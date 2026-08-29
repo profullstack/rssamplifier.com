@@ -289,7 +289,7 @@ async function tick() {
     // stdout: they are the content of a log somebody is watching, and twenty-five
     // a minute forever is not what Railway's viewer is for. The tick summary
     // below is the durable record of the same work.
-    const { crawled, failed, items, unchanged, hosts } = await crawlDue(
+    const { crawled, failed, items, unchanged, throttled, hosts } = await crawlDue(
       db,
       batchSize,
       concurrency,
@@ -309,6 +309,12 @@ async function tick() {
         // entirely up to that server, so this cannot be predicted from here and
         // has to be watched.
         unchanged,
+        // Hosts that answered 429 and had the rest of their queue put back
+        // rather than walked into the same wall. This is the number that says a
+        // slow tick was one publisher rate-limiting us and not the crawler
+        // struggling — the two are indistinguishable from `ms` alone, and
+        // telling them apart is what this whole change is for.
+        throttled,
         // How many distinct hosts the batch touched. The number that says
         // whether the worker pool had anything to do: `crawled` and `ms`
         // together look identical for a batch spread over 80 hosts and one
