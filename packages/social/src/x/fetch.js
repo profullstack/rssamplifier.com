@@ -109,16 +109,34 @@ export async function fetchXSource(feed, opts) {
       { sessions, onEvent, signal: opts.signal },
     );
   } catch (error) {
-    // A rate limit is a schedule instruction, not evidence about the account.
-    // Returning it as `throttled` routes it to `markThrottled`, which moves
-    // `next_fetch_at` and leaves every health column alone — the same treatment
-    // an ordinary publisher's 429 gets, and for the same reason (§16).
-    if (error?.name === 'XRateLimited') {
-      return { ok: false, throttled: true, retryAfter: error.retryAfter ?? null, error: 'rate-limited' };
+    // **Exactly one kind of failure is about the source.** A deleted, suspended
+    // or protected account is a fact about the account; everything else — a rate
+    // limit, a provider outage, a dead session, no provider configured at all —
+    // is a fact about us or about the upstream, and recording it against the
+    // account is how a directory deletes itself.
+    //
+    // The arithmetic, because it is what makes this urgent rather than tidy:
+    // `markCrawlFailure` retires a feed at ten consecutive failures, and an X
+    // source polls on a five-minute floor. Ten strikes is **fifty minutes**. So
+    // switching X on before a provider is reachable — which is the ordinary
+    // order of operations, since the flag is how you find out — would quietly
+    // mark every X source dead within the hour, and nothing in the logs would
+    // say "no provider configured" rather than "these accounts are broken".
+    //
+    // Returning `throttled` routes to `markThrottled`, which moves
+    // `next_fetch_at` and leaves `status`, `error_count`, `last_error` and
+    // `last_success_at` exactly as they were — the same treatment an ordinary
+    // publisher's 429 gets, and for the same reason (§16, §40).
+    if (error?.name === 'XNoSuchSource') {
+      return { ok: false, error: String(error?.message ?? 'no-such-source').slice(0, 200) };
     }
-    // A deleted, suspended or protected account is the one failure that is
-    // genuinely about the source, so it is the one that counts against it.
-    return { ok: false, error: String(error?.message ?? 'x-fetch-failed').slice(0, 200) };
+
+    return {
+      ok: false,
+      throttled: true,
+      retryAfter: retryAfterFor(error),
+      error: String(error?.message ?? 'x-fetch-failed').slice(0, 200),
+    };
   }
 
   const posts = result.posts ?? [];
@@ -147,6 +165,30 @@ export async function fetchXSource(feed, opts) {
       avatarUrl: result.avatarUrl ?? null,
     }),
   };
+}
+
+/**
+ * How long to wait before trying this source again, by what went wrong.
+ *
+ * The three intervals are three different guesses about when the situation
+ * changes. A rate limit usually names its own; a provider outage is minutes;
+ * and "no provider is configured" is a deployment that has not happened yet, so
+ * asking again in ten minutes is a thousand pointless wake-ups a day across the
+ * directory and answers no sooner than asking in an hour.
+ *
+ * @param {Error & { retryAfter?: number|null }} error
+ * @returns {number} seconds
+ */
+function retryAfterFor(error) {
+  if (error?.name === 'XRateLimited') {
+    return Number(error.retryAfter) > 0 ? Number(error.retryAfter) : ANOMALY_MINUTES * 60;
+  }
+  // Nothing is set up to collect with. Distinguished by message rather than by
+  // type because `XUnavailable` covers both this and a provider that is merely
+  // down, and the two deserve very different patience.
+  if (/no X provider is configured/i.test(String(error?.message ?? ''))) return 3600;
+
+  return ANOMALY_MINUTES * 60;
 }
 
 /**
