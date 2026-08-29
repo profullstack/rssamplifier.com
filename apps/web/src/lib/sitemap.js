@@ -48,6 +48,10 @@ export const STATIC_PAGES = [
   // addresses to keep, and it does not need the sitemap's help to do it.
   { path: '/r', changefreq: 'daily', priority: '0.8' },
   { path: '/x', changefreq: 'daily', priority: '0.8' },
+  { path: '/ig', changefreq: 'daily', priority: '0.8' },
+  // Weekly rather than daily: a namespace that only ever holds Pages somebody
+  // connected by hand changes on a very different clock from the other three.
+  { path: '/fb', changefreq: 'weekly', priority: '0.6' },
   { path: '/search', changefreq: 'daily', priority: '0.8' },
   { path: '/submit', changefreq: 'weekly', priority: '0.7' },
   { path: '/signup', changefreq: 'monthly', priority: '0.6' },

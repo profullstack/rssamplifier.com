@@ -20,17 +20,11 @@
  * fall back to, because the database was always the thing being served.
  */
 
+import { failureResult, ANOMALY_SECONDS } from '../failure.js';
 import { xSpecFromRef } from './canonical.js';
 import { normalizeXFeed } from './normalize.js';
 import { XRegistry } from './registry.js';
 import { XSessionPool, sessionsFromEnv } from './sessions.js';
-
-/**
- * How long to wait after an anomaly, in minutes. Long enough that a hundred
- * queued sources do not all rediscover the same upstream problem inside a tick,
- * short enough that a real recovery is picked up within the hour.
- */
-const ANOMALY_MINUTES = 20;
 
 /**
  * Build the runtime once, at boot.
@@ -58,7 +52,11 @@ export async function createXRuntime(opts = {}) {
 
   await Promise.all([registry.hydrate(), sessions.hydrate()]);
 
-  return { registry, sessions, onEvent: opts.onEvent ?? (() => {}) };
+  // `env` travels with the runtime so the collectors that are not X — Instagram
+  // reads RSSHUB_BASE_URL, Facebook reads FB_PAGE_TOKENS — read the same
+  // environment this was built from rather than each reaching for process.env
+  // and becoming untestable.
+  return { registry, sessions, env, onEvent: opts.onEvent ?? (() => {}) };
 }
 
 /**
@@ -109,34 +107,13 @@ export async function fetchXSource(feed, opts) {
       { sessions, onEvent, signal: opts.signal },
     );
   } catch (error) {
-    // **Exactly one kind of failure is about the source.** A deleted, suspended
-    // or protected account is a fact about the account; everything else — a rate
-    // limit, a provider outage, a dead session, no provider configured at all —
-    // is a fact about us or about the upstream, and recording it against the
-    // account is how a directory deletes itself.
-    //
-    // The arithmetic, because it is what makes this urgent rather than tidy:
-    // `markCrawlFailure` retires a feed at ten consecutive failures, and an X
-    // source polls on a five-minute floor. Ten strikes is **fifty minutes**. So
-    // switching X on before a provider is reachable — which is the ordinary
-    // order of operations, since the flag is how you find out — would quietly
-    // mark every X source dead within the hour, and nothing in the logs would
-    // say "no provider configured" rather than "these accounts are broken".
-    //
-    // Returning `throttled` routes to `markThrottled`, which moves
-    // `next_fetch_at` and leaves `status`, `error_count`, `last_error` and
-    // `last_success_at` exactly as they were — the same treatment an ordinary
-    // publisher's 429 gets, and for the same reason (§16, §40).
-    if (error?.name === 'XNoSuchSource') {
-      return { ok: false, error: String(error?.message ?? 'no-such-source').slice(0, 200) };
-    }
-
-    return {
-      ok: false,
-      throttled: true,
-      retryAfter: retryAfterFor(error),
-      error: String(error?.message ?? 'x-fetch-failed').slice(0, 200),
-    };
+    // **Exactly one kind of failure is about the source**, and the rule now
+    // lives in ../failure.js so that every platform shares it rather than each
+    // rediscovering it. See that file, and PR #157, for what it costs to get
+    // wrong: at a five-minute floor, ten strikes retires a source in fifty
+    // minutes, so "no provider configured" would delete the X directory within
+    // the hour of switching X on.
+    return failureResult(error);
   }
 
   const posts = result.posts ?? [];
@@ -149,7 +126,7 @@ export async function fetchXSource(feed, opts) {
   // and worth crawling once a day (§16, "empty-result anomalies").
   if (posts.length === 0 && Number(feed?.item_count ?? 0) > 0) {
     onEvent('x.fetch.failed', { provider: result.provider, error: 'empty-result' });
-    return { ok: false, throttled: true, retryAfter: ANOMALY_MINUTES * 60, error: 'empty-result' };
+    return { ok: false, throttled: true, retryAfter: ANOMALY_SECONDS, error: 'empty-result' };
   }
 
   return {
@@ -165,30 +142,6 @@ export async function fetchXSource(feed, opts) {
       avatarUrl: result.avatarUrl ?? null,
     }),
   };
-}
-
-/**
- * How long to wait before trying this source again, by what went wrong.
- *
- * The three intervals are three different guesses about when the situation
- * changes. A rate limit usually names its own; a provider outage is minutes;
- * and "no provider is configured" is a deployment that has not happened yet, so
- * asking again in ten minutes is a thousand pointless wake-ups a day across the
- * directory and answers no sooner than asking in an hour.
- *
- * @param {Error & { retryAfter?: number|null }} error
- * @returns {number} seconds
- */
-function retryAfterFor(error) {
-  if (error?.name === 'XRateLimited') {
-    return Number(error.retryAfter) > 0 ? Number(error.retryAfter) : ANOMALY_MINUTES * 60;
-  }
-  // Nothing is set up to collect with. Distinguished by message rather than by
-  // type because `XUnavailable` covers both this and a provider that is merely
-  // down, and the two deserve very different patience.
-  if (/no X provider is configured/i.test(String(error?.message ?? ''))) return 3600;
-
-  return ANOMALY_MINUTES * 60;
 }
 
 /**

@@ -178,14 +178,14 @@ test('a rate limit moves the schedule and touches no health column (§16)', asyn
   assert.equal(items.length, 2);
 });
 
-test('no X runtime is a reschedule, not a verdict on the source', async () => {
+test('no social runtime is a reschedule, not a verdict on the source', async () => {
   const feed = await seedXSource();
 
   const result = await crawlFeed(db, feed, {});
 
   assert.equal(result.ok, false);
   assert.equal(result.throttled, true);
-  assert.equal(result.error, 'x-runtime-unavailable');
+  assert.equal(result.error, 'social-runtime-unavailable');
 
   const after = (await db.execute({ sql: 'select * from feeds where id = ?', args: [feed.id] }))
     .rows[0];

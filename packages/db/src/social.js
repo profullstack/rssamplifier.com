@@ -137,11 +137,17 @@ export async function upsertSocialSource(db, source) {
       source.feedUrl,
       source.siteUrl ?? null,
       source.title,
-      // X sources are polled more often than the 60-minute default, because a
-      // timeline is the one thing in this directory where an hour old is
-      // visibly stale. §17's "active source: 5 minutes" is the ceiling the
-      // crawler's own interval learning then works down from.
-      source.network === 'x' ? 5 : 60,
+      // Provider-collected sources start faster than the 60-minute default,
+      // because a timeline is the one thing in this directory where an hour old
+      // is visibly stale. §17's "active source: 5 minutes" is the starting
+      // point, not the resting one: the crawler's interval learning backs a
+      // quiet Page or account off on its own, which is why a rarely-posting
+      // Facebook Page costs nothing to start fast.
+      //
+      // Reddit is excluded deliberately — it is a real feed on somebody else's
+      // server, and 50,026 of them at five minutes is how you get rate-limited
+      // off a platform. See markHostThrottled in queries.js.
+      source.network === 'reddit' ? 60 : 5,
       now,
       now,
       now,

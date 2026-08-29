@@ -1,4 +1,5 @@
 import { social } from '@rssamplifier/db';
+import { socialDisplayTitle } from '@rssamplifier/social';
 
 import { db, siteUrl } from './db.js';
 import { feedAlternates } from './subscribe.js';
@@ -47,17 +48,17 @@ export function socialMetadata({ feed, canonical, label, network }) {
     };
   }
 
+  const name = socialDisplayTitle(feed, label);
+
   return {
-    title: String(feed.title ?? label),
-    description: String(
-      feed.description ?? `${label}, mirrored by the RSS Amplifier directory.`,
-    ),
+    title: name,
+    description: String(feed.description ?? `${name}, mirrored by the RSS Amplifier directory.`),
     alternates: {
       canonical: url,
       // The same four formats the rewrites serve. No playlists: a timeline and
       // a subreddit carry no enclosures, so announcing an `.m3u` would be
       // advertising an empty file.
-      types: feedAlternates(url, String(feed.title ?? label)),
+      types: feedAlternates(url, name),
     },
     other: { 'x-social-network': network },
   };

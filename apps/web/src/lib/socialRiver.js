@@ -1,5 +1,11 @@
 import { q, social } from '@rssamplifier/db';
-import { redditSource, xSource } from '@rssamplifier/social';
+import {
+  facebookSource,
+  instagramSource,
+  redditSource,
+  socialDisplayTitle,
+  xSource,
+} from '@rssamplifier/social';
 
 import { db, siteUrl } from './db.js';
 import {
@@ -87,7 +93,10 @@ export async function socialRiver({
   const rows = await q.itemsForFeed(client, String(feed.id), riverLimit(rawLimit));
 
   const channel = {
-    title: String(feed.title ?? label ?? ref),
+    // The canonical name when the stored title says nothing — most of the
+    // imported subreddits have not been crawled yet and carry the bare host as
+    // their title. See socialDisplayTitle.
+    title: socialDisplayTitle(feed, label ?? ref),
     description: String(
       feed.description ?? `${label ?? ref}, mirrored by the RSS Amplifier directory.`,
     ),
@@ -154,4 +163,36 @@ export function xTarget(params) {
   // so the extension can go between them — see the note on `query` above.
   const [canonical, query = null] = source.path.split('?');
   return { ref: source.ref, canonical, label: source.title, query };
+}
+
+/**
+ * The same for `/ig/…`, across both modes.
+ *
+ * `ig/<handle>` rather than a bare handle, because the parser is being asked
+ * "is this Instagram?" and a bare handle is ambiguous with X — see the ordering
+ * note in @rssamplifier/social's identify.js. The route already knows which
+ * platform it is holding, so it says so.
+ *
+ * @param {{ username?: string, tag?: string }} params
+ * @returns {{ ref: string, canonical: string, label: string }|null}
+ */
+export function instagramTarget(params) {
+  const source = params.tag
+    ? instagramSource(`https://www.instagram.com/explore/tags/${params.tag}/`)
+    : instagramSource(`ig/${params.username}`);
+
+  if (!source) return null;
+  return { ref: source.ref, canonical: source.path, label: source.title };
+}
+
+/**
+ * And for `/fb/<page>`.
+ *
+ * @param {{ page?: string }} params
+ * @returns {{ ref: string, canonical: string, label: string }|null}
+ */
+export function facebookTarget(params) {
+  const source = facebookSource(`fb/${params.page}`);
+  if (!source) return null;
+  return { ref: source.ref, canonical: source.path, label: source.title };
 }

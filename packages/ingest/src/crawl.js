@@ -1,6 +1,6 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
-import { fetchXSource } from '@rssamplifier/social';
+import { fetchSocialSource, isCollected } from '@rssamplifier/social';
 
 import { prepareCredits } from './enrich.js';
 import {
@@ -202,10 +202,10 @@ export function topicsFrom(feed = {}, storedItems = []) {
 async function collectSocial(feed, opts) {
   const runtime = opts.xRuntime ?? null;
   if (!runtime) {
-    return { ok: false, throttled: true, retryAfter: 3600, error: 'x-runtime-unavailable' };
+    return { ok: false, throttled: true, retryAfter: 3600, error: 'social-runtime-unavailable' };
   }
 
-  return (opts.x ?? fetchXSource)(feed, { runtime });
+  return (opts.x ?? fetchSocialSource)(feed, { runtime });
 }
 
 export async function crawlFeed(db, feed, opts = {}) {
@@ -215,10 +215,16 @@ export async function crawlFeed(db, feed, opts = {}) {
   // The third way in. A feed is fetched, a scraped source is read off a page,
   // and a social source is collected through a provider — three methods, one
   // return shape, and everything past this point is identical for all three.
-  // That is what keeps X out of the rest of the pipeline entirely: dedupe,
-  // interval learning, keyword extraction, credits, FTS and syndication never
-  // learn that it exists (§30, AC-8).
-  const social = feed.social_network === 'x' ? 'x' : null;
+  // That is what keeps the platforms out of the rest of the pipeline entirely:
+  // dedupe, interval learning, keyword extraction, credits, FTS and syndication
+  // never learn that any of them exists (§30, AC-8).
+  //
+  // `isCollected` rather than a list of network names, because the two
+  // questions differ: Reddit *is* a social network and is *not* collected — it
+  // publishes real RSS and is fetched like any blog, and `/r/` is about naming
+  // it rather than about reading it. @rssamplifier/social owns that
+  // distinction, so adding a platform never edits this file.
+  const social = isCollected(feed);
 
   // A provider-backed source polls on a five-minute floor rather than an hour's
   // — see SOCIAL_MIN_INTERVAL. The floor is passed to every scheduling call
