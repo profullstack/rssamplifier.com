@@ -105,9 +105,17 @@ const ORDER = [
 ];
 
 /**
- * @param {{ links: Array<{ network: string, url: string, handle: string|null, source: string, verified: boolean }> }} props
+ * @param {{
+ *   links: Array<{ network: string, url: string, handle: string|null, source: string, verified: boolean }>,
+ *   prominent?: boolean,
+ * }} props
+ *   `prominent` renders full-width tappable rows rather than an inline strip.
+ *   The inline strip is right on a feed page, where the author is one fact
+ *   among many; on the author's own page the links *are* the page, and a row of
+ *   small text is a worse answer than a stack of things to press -- which is
+ *   what everybody already understands a links page to look like.
  */
-export default function AuthorLinks({ links }) {
+export default function AuthorLinks({ links, prominent = false }) {
   if (!links?.length) return null;
 
   const sorted = [...links].sort((a, b) => {
@@ -118,7 +126,10 @@ export default function AuthorLinks({ links }) {
   });
 
   return (
-    <nav className="author-links" aria-label="Where to find them">
+    <nav
+      className={prominent ? 'author-links author-links-stack' : 'author-links'}
+      aria-label="Where to find them"
+    >
       {sorted.map((link) => (
         <a
           key={link.url}
@@ -131,8 +142,14 @@ export default function AuthorLinks({ links }) {
           title={[link.handle, provenance(link)].filter(Boolean).join(' — ')}
           className={link.verified ? 'verified' : undefined}
         >
-          {LABELS[link.network] ?? link.network}
-          {link.verified && <span aria-label="verified"> ✓</span>}
+          <span className="author-link-name">
+            {LABELS[link.network] ?? link.network}
+            {link.verified && <span aria-label="verified"> ✓</span>}
+          </span>
+          {/* The handle, shown rather than only in the title attribute, because
+              a title is invisible on a touch screen and this is the half of the
+              row somebody actually wants to copy. */}
+          {prominent && link.handle && <span className="author-link-handle">{link.handle}</span>}
         </a>
       ))}
     </nav>

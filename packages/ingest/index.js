@@ -1,4 +1,4 @@
-export { submitOne, submitMany, submitOpml, submitCatalogue } from './src/submit.js';
+export { submitOne, submitMany, submitOpml, submitCatalogue, EXPRESS_MAX } from './src/submit.js';
 export {
   crawlFeed,
   crawlDue,
@@ -32,3 +32,10 @@ export {
   enrichFeedAuthors,
   storeCredits,
 } from './src/enrich.js';
+export {
+  linksFromSearch,
+  searchDue,
+  searchForAuthor,
+  searchesFor,
+  worthSearching,
+} from './src/websearch.js';

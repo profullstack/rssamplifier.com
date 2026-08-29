@@ -1,7 +1,16 @@
-import { q, discovery, alerts } from '@rssamplifier/db';
+import { q, discovery } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
-import { categoryStats, indexingHistory } from '../../../lib/crawlstats.js';
+import {
+  categoryStats,
+  indexingHistory,
+  jobBacklogs,
+  liveStats,
+  failingFeeds,
+  alertingAccounts,
+  panel,
+} from '../../../lib/crawlstats.js';
+import { toLine } from '../../../lib/crawlLog.js';
 import { jobRows } from '../../../lib/jobs.js';
 
 export const dynamic = 'force-dynamic';
@@ -14,10 +23,15 @@ export const dynamic = 'force-dynamic';
  * backlog that should drain within a tick or two, `stale` is active feeds the
  * crawler has not successfully read in a day.
  *
- * Deliberately uncached — a status endpoint that answers from a cache reports
- * that everything was fine a minute ago, which is the one thing it must not do.
- * The two additions that are cached, briefly, are the ones nothing would alert
- * on: the hourly history and the category breakdown. See lib/crawlstats.js.
+ * Every read here is cached, and the distinction that keeps that honest is
+ * between a fact and a derivation. A count is a fact and may be ten seconds
+ * old; `idleMinutes` is `now - lastSuccessAt`, so caching it would freeze the
+ * one number a monitor alerts on. `liveStats` caches the timestamp and redoes
+ * the subtraction — see lib/crawlstats.js.
+ *
+ * Before this, the endpoint answered in 118 seconds: `categoryStats` no longer
+ * completes inside the client's 30s deadline, and since a cache that only
+ * stores successes never stored it, every request paid the full timeout.
  */
 export async function GET() {
   const client = db();
@@ -33,23 +47,39 @@ export async function GET() {
     backlogs,
     activity,
     alertAccounts,
+    operationalErrors,
   ] = await Promise.all([
-    q.crawlStats(client),
-    q.failingFeeds(client, 20),
-    q.recentlyCrawled(client, 20),
-    discovery.countQueuedCandidates(client),
-    discovery.countQueuedKeywords(client),
+    liveStats(),
+    failingFeeds(),
+    panel(q.recentlyCrawled(client, 20), []),
+    panel(discovery.countQueuedCandidates(client), null),
+    panel(discovery.countQueuedKeywords(client), null),
     indexingHistory(),
     categoryStats(),
-    q.jobBacklogs(client),
-    q.logActivity(client, 1),
+    // The cached reader, which is what the page has always used. This route
+    // called `q.jobBacklogs` directly and so paid the uncached count on every
+    // request -- 27.9 seconds of a 53-second response, while /crawlstats
+    // rendered the same numbers in 3.7. Nothing about a status endpoint wants
+    // that: the backlog it reports is hundreds of thousands of feeds draining
+    // at a few hundred an hour, so a sixty-second-old answer is the same answer.
+    //
+    // The liveness numbers stay uncached, which is the distinction that matters
+    // -- `crawlStats` and `logActivity` below are still read fresh, so this
+    // endpoint can still never claim a dead crawler is alive.
+    jobBacklogs(),
+    panel(q.logActivity(client, 1), {}),
     // See the page: this only tells a sender with nobody to serve from one that
     // has stopped, which the log alone cannot say.
-    alerts.alertingAccountCount(client),
+    alertingAccounts(),
+    panel(q.crawlOperationalErrors(client, { limit: 20, hours: 24 }), []),
   ]);
 
   const jobs = jobRows({
-    backlogs,
+    // Null when the read failed and nothing was cached. `jobBacklogs` returns
+    // null rather than zeroes on purpose -- "0 waiting" reads as "all caught
+    // up", which would be a lie -- and an empty object leaves each backlog
+    // undefined, which serialises as unknown rather than as done.
+    backlogs: backlogs ?? {},
     activity,
     fetchedLastHour: stats.fetchedLastHour,
     keywordQueue: keywordsQueued,
@@ -84,6 +114,10 @@ export async function GET() {
           clearsInHours: job.eta == null ? null : Math.round(job.eta * 10) / 10,
           lastRanAt: job.lastAt,
         })),
+        // Daemon/background failures are separate from per-feed failures. A
+        // monitor should not have to tail a rolling stream to learn that the
+        // database writer or a maintenance job is timing out.
+        operationalErrors: operationalErrors.map(toLine),
         // What the directory holds, and how that has moved. `growth` is
         // cumulative and aligned to `days`, so the two zip into a series
         // without the caller having to reconstruct anything.

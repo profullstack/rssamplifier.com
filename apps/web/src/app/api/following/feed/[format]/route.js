@@ -1,7 +1,13 @@
 import { accounts } from '@rssamplifier/db';
-import { SYNDICATION_FORMATS, buildSyndication } from '@rssamplifier/feed';
+import {
+  SYNDICATION_FORMATS,
+  adSlotsFor,
+  buildSyndication,
+  interleaveAds,
+} from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../../../lib/db.js';
+import { fetchFeedAds } from '../../../../../lib/feedAds.js';
 import { RIVER_LIMIT, following, followingFeedUrl } from '../../../../../lib/following.js';
 
 export const dynamic = 'force-dynamic';
@@ -52,30 +58,42 @@ export async function GET(req, { params }) {
     );
   }
 
-  const { feeds, topics, items } = await following(client, String(user.id), {
+  const { feeds, topics, authors, items } = await following(client, String(user.id), {
     limit: RIVER_LIMIT,
   });
 
   const origin = siteUrl();
 
+  const rows = items.map((row) => ({
+    ...row,
+    // The publisher's guid, the same identity every other feed on the site
+    // uses, so a re-crawl that renumbers our rows does not make a reader show
+    // the same post twice.
+    id: String(row.guid ?? row.url ?? ''),
+  }));
+
+  // Sponsored items at the same one-in-ten rate as the topic feeds. The ad is
+  // not personalised and carries nothing about this account: the request to the
+  // ad network names the slot and nothing else, and the surface tag is what
+  // distinguishes this river from a topic's in the advertiser's own analytics.
+  // That matters here in a way it does not elsewhere — this is the one feed on
+  // the site that belongs to a particular person.
+  const wanted = adSlotsFor(rows.length);
+  const ads = wanted > 0 ? await fetchFeedAds(wanted, { src: 'following' }) : [];
+
   const body = buildSyndication(
     format,
     {
       title: 'Following — RSS Amplifier',
-      description: `Recent posts from the ${count(topics.length, 'topic')} and ${count(
-        feeds.length,
-        'blog',
-      )} this RSS Amplifier account follows.`,
+      description: `Recent posts from the ${count(topics.length, 'topic')}, ${count(
+        authors.length,
+        'person',
+        'people',
+      )} and ${count(feeds.length, 'blog')} this RSS Amplifier account follows.`,
       link: `${origin}/following`,
       selfUrl: followingFeedUrl(origin, token, format),
     },
-    items.map((row) => ({
-      ...row,
-      // The publisher's guid, the same identity every other feed on the site
-      // uses, so a re-crawl that renumbers our rows does not make a reader show
-      // the same post twice.
-      id: String(row.guid ?? row.url ?? ''),
-    })),
+    interleaveAds(rows, ads),
   );
 
   return new Response(body, {
@@ -99,8 +117,8 @@ export async function GET(req, { params }) {
  * @param {string} noun
  * @returns {string}
  */
-function count(n, noun) {
-  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+function count(n, noun, plural = `${noun}s`) {
+  return `${n} ${n === 1 ? noun : plural}`;
 }
 
 /**

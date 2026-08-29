@@ -1,0 +1,25 @@
+-- The one index /crawlstats needs, and deliberately only one.
+--
+-- That page used to answer itself with a single full scan of `feeds`: twelve
+-- conditional aggregates over every row, which at 368k feeds measured **20.2
+-- seconds** against production and was the whole of the page's fifteen-second
+-- time to first byte. Every other figure on it has been moved onto an index or
+-- onto the `crawl_hourly` rollup that already exists for exactly this purpose
+-- (see 0017), and the two that could not be are the ones below:
+--
+--   * "Stale" — active feeds with no successful read in a day. It is the
+--     number that turns the health badge amber, so it cannot be cached or
+--     approximated, and there is no other column it can be derived from.
+--   * The last successful crawl anywhere, which is the page's liveness clock.
+--     `max(last_success_at) where status = 'active'` is one seek to the end of
+--     this index rather than 62k row lookups behind `feeds_status_idx`.
+--
+-- Only one index, because `last_success_at` is rewritten on **every** crawl and
+-- every index over it is another b-tree write on the hottest write path in the
+-- system — and write transactions, not reads, are what limits the crawler. An
+-- index on `last_fetched_at` would have served the "fetched in the last hour"
+-- figure exactly; that figure now comes from the rollup instead, which costs no
+-- writes at all. Adding one index to remove five write round trips per feed is
+-- a good trade; adding two to save a rollup read is not.
+create index if not exists feeds_status_success_idx
+  on feeds (status, last_success_at);

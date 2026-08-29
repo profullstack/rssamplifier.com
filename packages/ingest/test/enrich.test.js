@@ -192,6 +192,136 @@ test('a page crediting two people keeps its links off both of them', async () =>
   );
 });
 
+test('two people stored in one batch each get their own links, not each other\'s', async () => {
+  // The test for how the author id is resolved.
+  //
+  // `creditStatements` writes the whole credit set in one transaction, which it
+  // can only do because it never reads an author id back into JS -- each link
+  // row is written as `insert into author_links (...) select ?, id, ... from
+  // authors where identity_key = ?`, resolving the id in SQL after the upsert
+  // above it has run.
+  //
+  // The failure that would be invisible in a single-author test is binding the
+  // wrong id: with two people in the same batch, an off-by-one or a stale
+  // variable attaches Ada's homepage to Grace and nothing throws, nothing
+  // duplicates, and the row counts all come out right. So this asserts on which
+  // person each link actually landed on.
+  const feed = await seedFeed({ slug: 'two-bylines', feedUrl: 'https://bylines.example/feed.xml' });
+
+  await storeCredits(db, feed, [
+    {
+      name: 'Ada Byron',
+      url: 'https://ada.example/',
+      email: 'ada@ada.example',
+      confidence: 0.9,
+      source: 'feed',
+      role: 'author',
+    },
+    {
+      name: 'Grace Hopper',
+      url: 'https://grace.example/',
+      email: 'grace@grace.example',
+      confidence: 0.9,
+      source: 'feed',
+      role: 'author',
+    },
+  ]);
+
+  const { rows } = await db.execute({
+    sql: `select a.name as person, l.url as link
+          from author_links l join authors a on a.id = l.author_id
+          join feed_authors fa on fa.author_id = a.id
+          where fa.feed_id = ?
+          order by a.name, l.url`,
+    args: [String(feed.id)],
+  });
+
+  const byPerson = new Map();
+  for (const r of rows) {
+    const list = byPerson.get(String(r.person)) ?? [];
+    list.push(String(r.link));
+    byPerson.set(String(r.person), list);
+  }
+
+  // Asserted as "whose links are these" rather than as an exact list: the
+  // credit pipeline also files a normalised form of a homepage, so the count is
+  // an implementation detail. Which person each link hangs off is not.
+  const ada = byPerson.get('Ada Byron') ?? [];
+  const grace = byPerson.get('Grace Hopper') ?? [];
+
+  assert.ok(ada.length >= 2 && grace.length >= 2, 'both people got their links');
+  assert.ok(
+    ada.every((url) => url.includes('ada')),
+    `Ada has only her own links, got ${JSON.stringify(ada)}`,
+  );
+  assert.ok(
+    grace.every((url) => url.includes('grace')),
+    `and Grace only hers, got ${JSON.stringify(grace)}`,
+  );
+  assert.ok(ada.includes('mailto:ada@ada.example'), 'including her address');
+  assert.ok(grace.includes('mailto:grace@grace.example'), 'and hers');
+
+  // Both are filed against the feed, exactly once each.
+  const linked = await db.execute({
+    sql: 'select count(*) as n from feed_authors where feed_id = ?',
+    args: [String(feed.id)],
+  });
+  assert.equal(Number(linked.rows[0].n), 2);
+});
+
+test('a credit re-stored unchanged writes nothing at all', async () => {
+  // The guards on every conflict clause. Re-storing an identical credit is what
+  // the crawler used to do on every single crawl of every feed -- three write
+  // transactions to arrive at the rows already on file.
+  const feed = await seedFeed({ slug: 'unchanged', feedUrl: 'https://unchanged.example/feed.xml' });
+  const credit = [
+    { name: 'Same Person', url: 'https://same.example/', confidence: 0.8, source: 'feed', role: 'author' },
+  ];
+
+  await storeCredits(db, feed, credit);
+
+  const changes = async () => Number((await db.execute('select total_changes() as n')).rows[0].n);
+  const before = await changes();
+
+  await storeCredits(db, feed, credit);
+
+  assert.equal((await changes()) - before, 0, 'the second store changed no rows');
+
+  // And a credit that genuinely learns something still gets through.
+  const richer = await changes();
+  await storeCredits(db, feed, [{ ...credit[0], bio: 'Writes things.', confidence: 0.95 }]);
+  assert.ok((await changes()) - richer > 0, 'a better credit is still written');
+});
+
+test('an author keeps the bio the page published', async () => {
+  // Production had **0 bios across 35,280 authors** while 2,388 of the same
+  // rows carried a site_url found by the same pass. That is the shape of a
+  // dropped field, not of a scraper that cannot find one -- and it was: the
+  // extractor read a bio, `credit()` had nowhere to put it, `absorb()` dropped
+  // it on merge, and the call site used `identity.credits` while ignoring
+  // `identity.bio` entirely. Three holes, all silent.
+  const feed = await seedFeed({ slug: 'has-bio', feedUrl: 'https://bio.example/feed.xml' });
+
+  await storeCredits(db, feed, [
+    {
+      name: 'Ada Byron',
+      url: 'https://ada.example/',
+      bio: 'Writes about analytical engines and the weather.',
+      confidence: 0.9,
+      source: 'h-card',
+      role: 'author',
+    },
+  ]);
+
+  const { rows } = await db.execute({
+    sql: `select a.bio from authors a join feed_authors fa on fa.author_id = a.id where fa.feed_id = ?`,
+    args: [String(feed.id)],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(String(rows[0].bio), 'Writes about analytical engines and the weather.');
+});
+
 test('a blog with accounts but no byline keeps its accounts', async () => {
   const feed = await seedFeed({
     slug: 'unsigned',

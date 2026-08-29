@@ -1,9 +1,10 @@
 import { q, newId, authors as people } from '@rssamplifier/db';
 import { topicSlug } from '@rssamplifier/feed';
-import { submitCatalogue, hashIp } from '@rssamplifier/ingest';
+import { submitCatalogue, hashIp, EXPRESS_MAX } from '@rssamplifier/ingest';
 
 import { db, siteUrl } from '../db.js';
 import { readerView } from '../reader.js';
+import { freshness } from '../freshness.js';
 import { clampRawInput } from '../submitted.js';
 import { clip, plainText } from './text.js';
 
@@ -23,8 +24,17 @@ import { clip, plainText } from './text.js';
 /** How much extracted article text one `read_post` call may return. */
 const ARTICLE_LIMIT = 24_000;
 
-/** Feeds one `submit_feed` call will resolve before queueing the rest. */
-const SUBMIT_INLINE_LIMIT = 20;
+/**
+ * Feeds one `submit_feed` call will resolve before queueing the rest.
+ *
+ * One, matching the form, and for the same reason: a resolve is an outbound
+ * fetch — up to eleven of them sequentially at a fifteen-second timeout — so
+ * twenty of them was a tool call that could run for minutes and time out with
+ * nothing to show. A list is queued instead and the caller is handed the status
+ * URL it already returns. A single URL still resolves, so an agent submitting
+ * one blog gets its slug back in the same call.
+ */
+const SUBMIT_INLINE_LIMIT = 1;
 
 /** Submissions allowed per IP per hour, matching /api/submit. */
 const SUBMIT_RATE_LIMIT = 20;
@@ -560,7 +570,15 @@ export const TOOLS = [
       const result = await submitCatalogue(
         client,
         urls.map((url) => ({ url })),
-        { submissionId, inlineLimit: SUBMIT_INLINE_LIMIT },
+        {
+          submissionId,
+          inlineLimit: urls.length === 1 ? SUBMIT_INLINE_LIMIT : 0,
+          // A hand-written tool call is the same population as a hand-typed
+          // paste, so it gets the same express lane and the same bound. The
+          // tool accepts up to 200 URLs, which is past EXPRESS_MAX, so this
+          // is a real test rather than a formality.
+          priority: urls.length <= EXPRESS_MAX ? 1 : 0,
+        },
       );
 
       await q.completeSubmission(client, submissionId, {
@@ -613,6 +631,8 @@ export function describe(tool) {
  * @returns {object}
  */
 function feed(f) {
+  const fresh = freshness(f, f.last_published_at);
+
   return {
     slug: f.slug,
     title: f.title,
@@ -624,6 +644,27 @@ function feed(f) {
     itemCount: f.item_count,
     status: f.status,
     lastSuccessAt: f.last_success_at,
+
+    // Whether this feed is worth trusting, answered rather than implied.
+    //
+    // `lastSuccessAt` was already here and on its own it is not enough: it is a
+    // raw instant, and every caller has to invent the same interpretation of it
+    // — against a schedule it cannot see, since a monthly blog read a week ago
+    // is as current as a news site read an hour ago. Worse, it says nothing at
+    // all about the question that actually bites, which is whether the
+    // publisher is still publishing. Sampling production, 15.8% of active feeds
+    // had published nothing in over two years, and an agent quoting one of them
+    // as current is the silent failure this directory most needs to avoid.
+    //
+    // So the interpretation is made here, once, by the service that knows the
+    // schedule. `freshness` is 'live' | 'dormant' | 'overdue' | 'failing' |
+    // 'unread'; the timestamps stay alongside it so a caller that disagrees
+    // with the judgement can make its own.
+    freshness: fresh.state,
+    lastPublishedAt: fresh.publishedAt,
+    nextCheckAt: fresh.nextCheckAt,
+    freshnessNote: fresh.note,
+
     page: `${siteUrl()}/${f.slug}`,
   };
 }

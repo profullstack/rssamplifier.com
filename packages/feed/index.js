@@ -1,11 +1,17 @@
 export { slugify, isReserved, uniqueSlug } from './src/slug.js';
 export { parseOpml, buildOpml, opmlHead, opmlOutline, opmlFoot } from './src/opml.js';
 export {
+  AD_EVERY,
+  AD_MAX,
+  adPositions,
+  adSlotsFor,
+  interleaveAds,
   SYNDICATION_FORMATS,
   buildSyndication,
   buildRss,
   buildAtom,
   buildJsonFeed,
+  buildMarkdown,
   buildM3u,
   buildPls,
   playable,
@@ -58,8 +64,10 @@ export {
   classifyLink,
   cleanName,
   credit,
+  feedContacts,
   feedCredits,
   identityFromHtml,
+  identityFromHumansTxt,
   identityKey,
   isRoleEmail,
   linksBackTo,
@@ -71,3 +79,4 @@ export {
   personalEmail,
   splitBylines,
 } from './src/identity.js';
+export { hostIdentity, identityFromProfile, profileRequest } from './src/platforms.js';

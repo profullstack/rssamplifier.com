@@ -32,6 +32,11 @@ const RESERVED = new Set([
   // slugged 'authors' would still be served, but only Next's static segment
   // would answer and the blog's own page would be unreachable.
   'authors',
+  // The directory's own river lives at /feed.rss, and the rewrite that serves
+  // it is matched before the one that turns /:slug.rss into a feed's own
+  // document. A blog slugged 'feed' would keep its page and lose its feeds,
+  // which is the confusing half of the failure rather than the obvious one.
+  'feed',
   'admin',
   'static',
   '_next',
@@ -102,7 +107,11 @@ export function uniqueSlug(title, fallbackUrl = '', taken = () => false) {
       base = '';
     }
   }
-  if (!base) base = 'feed';
+  // Last resort, for a feed with no usable title and no usable URL. 'feed' was
+  // the obvious word and is now reserved — the directory's own river answers at
+  // /feed.rss — so an untitled submission is 'untitled' rather than 'feed-2',
+  // which reads like the second of something rather than like a placeholder.
+  if (!base) base = 'untitled';
 
   let candidate = base;
   let n = 1;

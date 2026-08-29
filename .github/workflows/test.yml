@@ -1,0 +1,57 @@
+# The first CI this repo has had.
+#
+# Until now nothing ran the suite automatically: the only checks on a pull
+# request were Socket's dependency scans, which say nothing about whether the
+# code works. Eleven workspaces of tests existed and were only ever run by
+# whoever remembered to. That is also how three migrations came to quietly claim
+# an already-taken number — the guard against it is a test, and a test nobody
+# runs is a comment.
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to the same branch makes the first run irrelevant, so stop it
+# rather than paying for both. Cancelling is limited to pull requests: a push to
+# main is a merge, and cancelling that would leave the branch with no verdict.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # The suite runs in about a minute. Ten is generous for a slow runner and
+    # short enough that a hung test gets reported rather than left burning.
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Before setup-node, which is not the obvious order: `cache: pnpm` needs
+      # the pnpm binary to exist so it can ask where the store lives. The
+      # version comes from `packageManager` in package.json, so it stays in step
+      # with local development without being written down twice.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matching apps/*/Dockerfile, which is node:22-alpine. `engines` says
+          # >=22, but CI should run what production runs rather than the newest
+          # thing that satisfies the range.
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Every workspace. The suite is hermetic — it builds SQLite databases in
+      # tmpdir and stubs the network — so it needs no Turso credentials and no
+      # secrets, which is what makes it safe to run on a pull request.
+      - run: pnpm -r test
+
+      # The web build, because a broken page is not something the tests catch:
+      # they cover packages and route handlers, and a JSX or import error in a
+      # page only surfaces when Next compiles it.
+      - run: pnpm build

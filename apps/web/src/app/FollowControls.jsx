@@ -20,7 +20,7 @@ import FollowButton from './FollowButton.jsx';
  *
  * @param {{
  *   endpoint: string,
- *   kind: 'feed'|'topic',
+ *   kind: 'feed'|'topic'|'author',
  *   slug: string,
  *   segment?: string,
  *   following: boolean,
@@ -81,7 +81,7 @@ export default function FollowControls({
  * this only says whether this one follow feeds them.
  *
  * @param {{
- *   kind: 'feed'|'topic',
+ *   kind: 'feed'|'topic'|'author',
  *   slug: string,
  *   segment?: string,
  *   alerts: boolean,

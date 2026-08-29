@@ -28,9 +28,32 @@ export default function AboutPage() {
       <p>
         Anyone can add one, with no account. We resolve a homepage to its feed by reading{' '}
         <code>&lt;link rel=&quot;alternate&quot;&gt;</code> tags first, then trying the conventional
-        paths. RSS, Atom and JSON Feed all work. Feeds are re-crawled hourly, backing off when a
-        host stops responding, and a feed that fails ten times running stops being crawled while its
-        archive page stays up.
+        paths. RSS, Atom and JSON Feed all work. A feed that fails ten times running stops being
+        crawled while its archive page stays up.
+      </p>
+
+      <h2>Our crawler</h2>
+      <p>
+        It identifies itself as <code>RSSAmplifierBot</code>, and that is the name to use if you
+        would rather it did not read you:
+      </p>
+      <pre>
+        <code>
+          User-agent: RSSAmplifierBot{'\n'}
+          Disallow: /
+        </code>
+      </pre>
+      <p>
+        Each feed is read on its own rhythm rather than on a fixed schedule. We measure the typical
+        gap between your posts and come back at roughly half of it — so a daily paper is read daily
+        and a blog that posts twice a year is read twice a year, never more often than hourly and
+        never less than every ninety days. A feed that goes quiet is asked progressively less often
+        without ever being given up on entirely.
+      </p>
+      <p>
+        We send <code>If-None-Match</code> and <code>If-Modified-Since</code> whenever your server
+        has given us something to send, so if nothing has changed you can answer{' '}
+        <code>304</code> and send no body at all.
       </p>
 
       <h2>What we store</h2>

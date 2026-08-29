@@ -1,13 +1,17 @@
-import { q } from '@rssamplifier/db';
-
-import { db, siteUrl } from '../lib/db.js';
+import { siteUrl } from '../lib/db.js';
+import { directoryIndex } from '../lib/directory.js';
+import { feedAlternates } from '../lib/subscribe.js';
 import { AD_TEXT, adPlan } from '../lib/ads.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
+import SubscribeLinks from './SubscribeLinks.jsx';
 import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
 import Toolbar from './Toolbar.jsx';
 import { CATEGORIES } from './CategoryIndex.jsx';
+import ListFilter from './ListFilter.jsx';
+import { FILTER_FROM } from '../lib/listFilter.js';
+import { jsonLdScript } from '../lib/jsonld.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,7 +28,12 @@ export const dynamic = 'force-dynamic';
  * card from opengraph-image.jsx still come from the layout and the file.
  */
 export const metadata = {
-  alternates: { canonical: '/' },
+  alternates: {
+    canonical: '/',
+    // The whole directory as a feed. A relative base here for the same reason
+    // the canonical is relative: Next resolves both against metadataBase.
+    types: feedAlternates('/feed', 'New in RSS Amplifier'),
+  },
   openGraph: {
     type: 'website',
     siteName: 'RSS Amplifier',
@@ -36,12 +45,10 @@ export const metadata = {
  * Directory index: newest blogs first, with the submit box up top.
  */
 export default async function Home() {
-  const client = db();
-  const [rows, total, byKind] = await Promise.all([
-    q.listFeeds(client, { limit: 60 }),
-    q.countFeeds(client),
-    q.countFeedsByKind(client),
-  ]);
+  // Cached in Redis and served stale on failure. Two of these three reads are
+  // whole-table work at half a million feeds, and uncached they answered this
+  // URL with a 500 whenever the database was busy — see ../lib/directory.js.
+  const { rows, total, byKind } = await directoryIndex();
 
   // The index is a long scan, so ads go *between* rows rather than around the
   // list. First one is deep enough that the fold is all directory, and there
@@ -65,7 +72,7 @@ export default async function Home() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       <h1>An open directory of blogs, built for agents.</h1>
@@ -96,6 +103,10 @@ export default async function Home() {
        * line of type, so it costs the fold 40px rather than a 250px block.
        */}
       <Ad format={AD_TEXT} />
+
+      {/* The directory itself, as a feed: everything added to it, newest
+          first. `/feed.rss` rather than `/.rss`, which is not an address. */}
+      <SubscribeLinks base="/feed" what="the directory" />
 
       {/* The index below is everything, newest first. These are the two ways
           into it that are worth having their own page — the counts are the
@@ -134,6 +145,10 @@ export default async function Home() {
       <h2>
         Recently added <span className="pill">{total} blogs</span>
       </h2>
+
+      {rows.length >= FILTER_FROM && (
+        <ListFilter target=".feed-list .feed-row" noun="blog" searchHref="/search?q=" />
+      )}
 
       {rows.length === 0 ? (
         <p className="empty">Nothing here yet. Be the first — paste a URL above.</p>

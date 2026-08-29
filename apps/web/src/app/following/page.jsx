@@ -3,11 +3,14 @@ import { accounts } from '@rssamplifier/db';
 
 import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { postThumb } from '../../lib/thumbs.js';
 import {
   RIVER_LIMIT,
+  RIVER_AUTHORS,
   RIVER_TOPICS,
   following as loadFollowing,
   followingFeedUrl,
@@ -43,13 +46,13 @@ export default async function FollowingPage({ searchParams }) {
   const client = db();
   const userId = String(user.id);
 
-  const [{ feeds, topics, items, topicsUsed }, token] = await Promise.all([
+  const [{ feeds, topics, authors, items, topicsUsed, authorsUsed }, token] = await Promise.all([
     loadFollowing(client, userId, { limit: RIVER_LIMIT }),
     accounts.feedToken(client, userId),
   ]);
 
   const origin = siteUrl();
-  const nothing = feeds.length === 0 && topics.length === 0;
+  const nothing = feeds.length === 0 && topics.length === 0 && authors.length === 0;
 
   return (
     <>
@@ -66,21 +69,28 @@ export default async function FollowingPage({ searchParams }) {
       {nothing ? (
         <p className="lede">
           Nothing followed yet. Press <strong>Follow</strong> on any <a href="/blogs">blog</a> to be
-          told when they post, or on any <a href="/topics">topic</a> to be told when anybody posts
+          told when they post, on any <a href="/topics">topic</a> to be told when anybody posts
           about it — <a href="/topics/ai">ai</a> and <a href="/topics/ai/podcasts">ai: podcasts</a>{' '}
-          are two separate follows, because they are two separate pages.
+          are two separate follows, because they are two separate pages — or on a{' '}
+          <a href="/authors">person</a>, which collects everything they publish wherever they
+          publish it.
         </p>
       ) : (
         <p className="lede">
-          {describe(topics.length, 'topic')} and {describe(feeds.length, 'blog')}, merged newest
-          first.
+          {describe(topics.length, 'topic')}, {describe(authors.length, 'person', 'people')} and{' '}
+          {describe(feeds.length, 'blog')}, merged newest first.
         </p>
       )}
 
       {topics.length > 0 && (
         <>
           <h2>Topics</h2>
-          <ul className="post-list following-list">
+
+          {topics.length >= FILTER_FROM && (
+            <ListFilter target=".following-topics > li" noun="topic" />
+          )}
+
+          <ul className="post-list following-list following-topics">
             {topics.map((t) => {
               const label = topicLabel(t);
 
@@ -112,6 +122,43 @@ export default async function FollowingPage({ searchParams }) {
             <p className="hint">
               The river below is drawn from the {RIVER_TOPICS} topics you followed most recently.
               The rest are still followed — open any of them above for its own page and feed.
+            </p>
+          )}
+        </>
+      )}
+
+      {authors.length > 0 && (
+        <>
+          <h2>People</h2>
+
+          {authors.length >= FILTER_FROM && (
+            <ListFilter target=".following-people > li" noun="person" />
+          )}
+
+          <ul className="post-list following-list following-people">
+            {authors.map((a) => (
+              <li key={String(a.slug)}>
+                <a href={`/authors/${encodeURIComponent(String(a.slug))}`}>{String(a.name)}</a>
+                {/* Unfollowing lives next to the thing it undoes, told explicitly
+                    which way to go rather than toggling, so a double submit
+                    cannot re-follow what it just removed. */}
+                <form className="follow-form" action="/api/follows/authors" method="post">
+                  <input type="hidden" name="slug" value={String(a.slug)} />
+                  <input type="hidden" name="action" value="unfollow" />
+                  <button type="submit" className="secondary-button">
+                    Unfollow
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+
+          {/* Said out loud rather than left as a silent truncation, for the same
+              reason the topics section says it. */}
+          {authors.length > authorsUsed && (
+            <p className="hint">
+              The river below is drawn from the {RIVER_AUTHORS} people you followed most recently.
+              The rest are still followed — open any of them above for their own page and feed.
             </p>
           )}
         </>
@@ -167,6 +214,12 @@ export default async function FollowingPage({ searchParams }) {
 
       <h2>Latest</h2>
 
+      {/* The river is the reason to come back to this page, and it is the one
+          list here long enough that finding a post in it means scrolling. */}
+      {items.length >= FILTER_FROM && (
+        <ListFilter target="article.entry" noun="post" searchHref="/search?q=" />
+      )}
+
       {items.length === 0 ? (
         <p className="empty">
           {nothing
@@ -219,16 +272,20 @@ export default async function FollowingPage({ searchParams }) {
 }
 
 /**
- * "3 topics", "one blog", "no topics".
+ * "3 topics", "one blog", "no people".
+ *
+ * The plural is a parameter rather than an `s` because one of the three nouns
+ * here does not take one: "3 persons" is not what anybody says.
  *
  * @param {number} n
  * @param {string} noun
+ * @param {string} [plural]
  * @returns {string}
  */
-function describe(n, noun) {
-  if (n === 0) return `no ${noun}s`;
+function describe(n, noun, plural = `${noun}s`) {
+  if (n === 0) return `no ${plural}`;
   if (n === 1) return `one ${noun}`;
-  return `${n} ${noun}s`;
+  return `${n} ${plural}`;
 }
 
 /**

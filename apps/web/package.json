@@ -10,7 +10,7 @@
     "start": "node .next/standalone/apps/web/server.js"
   },
   "dependencies": {
-    "@profullstack/player": "^0.2.0",
+    "@profullstack/player": "^0.3.1",
     "@profullstack/rssamplifier": "workspace:*",
     "@rssamplifier/auth": "workspace:*",
     "@rssamplifier/db": "workspace:*",

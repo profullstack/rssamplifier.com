@@ -2,6 +2,7 @@ import { consumeSignInLink, startSession } from '@rssamplifier/auth';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { setSessionCookie, requestMeta } from '../../../lib/auth.js';
+import { attempt, forgive, callerAddress } from '../../../lib/authThrottle.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,12 +20,29 @@ export const dynamic = 'force-dynamic';
  * @param {Request} req
  */
 export async function GET(req) {
+  // Presenting a token that does not work is the nearest thing this system has
+  // to a failed login, so it is what the backoff counts. Guessing one is not a
+  // realistic attack — a token is 32 random bytes — but a caller grinding this
+  // endpoint is doing nothing legitimate either, and metering it costs a real
+  // reader nothing: their link works the first time.
+  const caller = callerAddress(req);
+  const identity = `magic-verify:${caller}`;
+
+  const verdict = attempt(identity);
+  if (!verdict.ok) {
+    return redirect(`/login?error=too-many&retry=${verdict.retryAfter}`);
+  }
+
   const token = new URL(req.url).searchParams.get('t');
   const result = await consumeSignInLink(db(), token ?? '');
 
   if (!result.ok) {
     return redirect(`/login?error=${encodeURIComponent(result.error)}`);
   }
+
+  // It worked, so whoever this is can read the mailbox — which is the whole
+  // security model. Any fumbled links before it were a person, not an attack.
+  forgive(identity);
 
   const meta = await requestMeta();
   const { token: sessionToken } = await startSession(db(), result.userId, meta);

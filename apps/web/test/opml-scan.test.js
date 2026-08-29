@@ -100,11 +100,41 @@ test('a list separated by commas or spaces splits the same way the endpoint does
   );
 });
 
-test('the kind of a file is read from its name, then from its contents', () => {
+test('the kind of a file is read from its contents, then from its name', () => {
   assert.equal(sniffKind({ name: 'subs.opml' }, ''), 'opml');
-  assert.equal(sniffKind({ name: 'feeds.txt' }, '<opml>'), 'list');
+  // The case the old order got wrong: a reader that writes OPML into a file
+  // called .txt is still writing OPML, and scanning it for bare URLs finds
+  // nothing usable in it at all.
+  assert.equal(sniffKind({ name: 'feeds.txt' }, '<opml>'), 'opml');
+  assert.equal(sniffKind({ name: 'feeds.txt' }, 'https://a.example/feed'), 'list');
   // No usable extension, so the file itself decides — a reader that exports
   // OPML as "export" should still import as OPML.
   assert.equal(sniffKind({ name: 'export' }, '<?xml version="1.0"?><opml>'), 'opml');
   assert.equal(sniffKind({ name: 'export' }, 'https://a.example/feed'), 'list');
+  // An outline is signature enough on its own: a fragment pasted out of a
+  // subscription list has no <opml> root to find.
+  assert.equal(sniffKind({ name: 'export' }, '<outline xmlUrl="https://a.example/f" />'), 'opml');
+});
+
+test('a real subscription list scans one feed per line, however it is chunked', () => {
+  // The size the cap is written for, fed through the scanner the way the
+  // uploader feeds it: a hundred and eight thousand lines, read a megabyte at
+  // a time. The count is the whole point — a boundary landing mid-URL used to
+  // cost one feed per chunk, silently.
+  const total = 108_000;
+  const text = Array.from({ length: total }, (_, i) => `https://f${i}.example/feed.xml`).join('\n');
+
+  const scanner = createScanner('list');
+  const found = [];
+  const slice = 1 << 20;
+
+  for (let at = 0; at < text.length; at += slice) {
+    found.push(...scanner.push(text.slice(at, at + slice)));
+  }
+  found.push(...scanner.end());
+
+  assert.equal(found.length, total);
+  assert.equal(found[0].url, 'https://f0.example/feed.xml');
+  assert.equal(found.at(-1).url, `https://f${total - 1}.example/feed.xml`);
+  assert.equal(new Set(found.map((f) => f.url)).size, total);
 });

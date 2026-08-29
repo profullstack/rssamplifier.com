@@ -130,6 +130,22 @@ test('a type that is not media at all still does not become a video', () => {
   assert.equal(isWatchable({ audio_url: 'https://e/x', audio_type: 'application/pdf' }), false);
 });
 
+test('the stored character count decides once the body stops being stored', () => {
+  // Bodies are no longer kept at crawl time (0031), so `content_html` is null
+  // for anything crawled since and the crawl records the length instead.
+  const post = { audio_url: 'https://media.example/ep.mp3', audio_type: 'audio/mpeg' };
+
+  assert.equal(isEpisode(post, null, 40), true, 'a short post with audio is an episode');
+  assert.equal(isEpisode(post, null, 9000), false, 'a long one is an article with audio');
+
+  // The trap: `Number(null)` is 0 and `Number.isFinite(0)` is true, so a null
+  // count read as a zero-length body would call every post with media an
+  // episode. Absent means "fall back to the body", not "empty".
+  const article = '<p>Paragraph of the actual piece.</p>'.repeat(60);
+  assert.equal(isEpisode(post, article, null), false, 'null count falls back to the body');
+  assert.equal(isEpisode(post, article, undefined), false, 'and so does an absent one');
+});
+
 test('a video with an article around it is not an episode', () => {
   const post = { audio_url: 'https://media.example/demo.mp4', audio_type: 'video/mp4' };
   const article = '<p>Paragraph of the actual tutorial.</p>'.repeat(60);
@@ -225,4 +241,37 @@ test('a short post with no picture in it is prose, not a picture', () => {
   assert.equal(isPicture('<p>Back on Monday.</p>'), false);
   assert.equal(isPicture(''), false);
   assert.equal(isPicture(null), false);
+});
+
+test('an http enclosure is handed to the player over https, because http cannot play', () => {
+  // What SomaFM's feeds print: an Icecast stream at http://, on a host that
+  // has served https for years. The player is a subresource of a page served
+  // over https, so the browser blocks the http one as mixed content — and
+  // `media-src` lists https only, so it is refused before that. The reader saw
+  // a transport with a dead play button and nothing explaining it.
+  //
+  // There is no version of this where http plays, so relaxing the policy would
+  // not have helped. Upgrading is the only move that can.
+  const stream = {
+    url: 'https://somafm.com/beatblender/',
+    audio_url: 'http://ice2.somafm.com/beatblender-128-mp3',
+    audio_type: 'audio/mpeg',
+  };
+
+  assert.deepEqual(playableMedia(stream), {
+    kind: 'audio',
+    src: 'https://ice2.somafm.com/beatblender-128-mp3',
+  });
+});
+
+test('an https enclosure is left exactly as the publisher wrote it', () => {
+  const post = {
+    url: 'https://example.com/ep/1',
+    audio_url: 'https://example.com/ep/1.mp3?token=http://not-a-scheme',
+    audio_type: 'audio/mpeg',
+  };
+
+  // Only a leading scheme is rewritten — an http:// sitting inside a query
+  // string is somebody's parameter, not the address being fetched.
+  assert.equal(playableMedia(post).src, post.audio_url);
 });

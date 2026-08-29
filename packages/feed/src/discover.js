@@ -52,12 +52,67 @@ export function normalizeUrl(input) {
   try {
     const u = new URL(raw);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    if (!u.hostname.includes('.')) return null;
+    if (!plausibleHost(u.hostname)) return null;
     u.hash = '';
     return u.toString();
   } catch {
     return null;
   }
+}
+
+/**
+ * Is this hostname something a publisher could actually be at?
+ *
+ * `new URL()` is far more permissive about hosts than DNS is. Quotes, parens,
+ * `=` and `&` are not forbidden host code points, so `new URL('https://x')`
+ * happily parses `version="1.0"`, `zombies.)` and `z.` into a hostname — and
+ * the check this replaced, `hostname.includes('.')`, waved all three through.
+ *
+ * That is not a theoretical gap. The bulk-upload scanner splits pasted text on
+ * whitespace and offers every token as a URL, so pasting raw OPML instead of a
+ * URL list turned the markup itself into feeds: `https://version="1.0"/`,
+ * `https://text="gg.deals/`, and a sentence ending in "zombies." into
+ * `https://zombies.)/`. Roughly 3,700 such rows reached the directory, and
+ * every one of them is crawled forever on a cadence, failing `blocked-host`.
+ *
+ * Validating here rather than in the scanner is deliberate: `normalizeUrl` is
+ * the single gate every entry path goes through -- web submit, OPML import,
+ * the queue drain and discovery -- so one check covers all of them, and the
+ * scanner cannot import this module anyway (it runs in the browser, and
+ * pulling `@rssamplifier/feed` into client code fails the build on `node:dns`).
+ *
+ * Kept deliberately loose about what a real domain looks like: this rejects
+ * things that cannot be hostnames, not things that are merely unusual. IDN is
+ * already punycode by the time it arrives, and a bare IPv4 literal is allowed
+ * through so that a feed genuinely served from one is not newly rejected --
+ * private ranges are refused later, by `isPublicHost`.
+ *
+ * @param {string} hostname as parsed by `new URL`, so lowercased and punycoded
+ * @returns {boolean}
+ */
+function plausibleHost(hostname) {
+  const host = String(hostname ?? '');
+  if (!host || host.length > 253) return false;
+
+  // A dotted-quad is a legitimate, if unusual, place for a feed to live.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return host.split('.').every((n) => Number(n) <= 255);
+  }
+
+  // Anything outside the DNS alphabet is markup or prose, not a host.
+  if (!/^[a-z0-9.-]+$/.test(host)) return false;
+
+  const labels = host.split('.');
+  // Two labels at least, none empty -- which is what rules out `z.` and `you.`,
+  // whose trailing dot leaves an empty final label.
+  if (labels.length < 2) return false;
+  if (labels.some((l) => l === '' || l.length > 63 || l.startsWith('-') || l.endsWith('-'))) {
+    return false;
+  }
+
+  // A public suffix is letters. This is the part that rejects `1.0` while
+  // leaving `example.co.uk` and `xn--bcher-kva.de` alone.
+  return /^[a-z]{2,}$/.test(labels[labels.length - 1]);
 }
 
 /**

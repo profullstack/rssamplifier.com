@@ -57,7 +57,14 @@ export default async function SubmissionPage({ params }) {
   const staged = Number(progress.pending ?? 0);
   const done = progress.waiting === 0 && staged === 0;
   const settled = progress.crawled + progress.failed;
-  const percent = progress.queued === 0 ? 100 : Math.floor((settled / progress.queued) * 100);
+
+  // Everything this import will crawl, staged entries included. Counting only
+  // what is already queued made the bar read 100% and "finished" for the whole
+  // handover — which is now most of a large import's life, and is exactly the
+  // stretch where nothing has been crawled at all. A full bar over a heading
+  // that says "Import in progress" is worse than no bar.
+  const total = progress.queued + staged;
+  const percent = total === 0 ? 100 : Math.floor((settled / total) * 100);
 
   return (
     <>
@@ -76,7 +83,7 @@ export default async function SubmissionPage({ params }) {
         lines={lines}
         unit="feeds"
         verb="Crawl"
-        initial={{ total: progress.queued, settled, percent, done }}
+        initial={{ total, settled, percent, done }}
       />
 
       <dl className="stats">

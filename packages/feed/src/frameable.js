@@ -16,6 +16,15 @@ import { isPublicHost } from './fetch.js';
 const TIMEOUT_MS = 5000;
 
 /**
+ * Shorter, and spent on a guess: the https twin of an http address, tried
+ * before the address itself. A host that has TLS answers this immediately, and
+ * one that does not usually refuses the connection outright rather than hanging
+ * — so the cost of asking is near zero in both of the common cases, and this
+ * clock only bounds the third, where a firewall drops the packet in silence.
+ */
+const SECURE_TIMEOUT_MS = 2500;
+
+/**
  * Longer, and only spent once the headers said the page cannot be framed — at
  * which point the body is the article the reader came for, not a detail.
  */
@@ -28,7 +37,7 @@ const BODY_TIMEOUT_MS = 10_000;
  */
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 
-const USER_AGENT = 'rssamplifier.com reader (+https://rssamplifier.com)';
+const USER_AGENT = 'rssamplifier.com reader (+https://rssamp.com/about)';
 
 /**
  * Decide framing from the two headers that govern it.
@@ -185,14 +194,6 @@ export async function isFrameable(url, origin = 'https://rssamplifier.com') {
  */
 export async function probePage(url, options = {}) {
   const { origin = 'https://rssamplifier.com', wantHtml = true } = options;
-  const no = (reason) => ({
-    frameable: false,
-    reason,
-    html: null,
-    url: null,
-    status: 0,
-    contentType: '',
-  });
 
   const normalized = normalizeUrl(url);
   if (!normalized) return no('invalid-url');
@@ -200,10 +201,74 @@ export async function probePage(url, options = {}) {
   const target = new URL(normalized);
   if (!(await isPublicHost(target.hostname))) return no('blocked-host');
 
+  // An http:// address is one the reader cannot show even when the fetch
+  // succeeds. We are served over https, so the browser treats an http frame as
+  // blockable mixed content and refuses it before our own CSP is consulted —
+  // and `frame-src`/`media-src` list only https anyway. The page went blank
+  // with no way to tell the reader why: the fetch here worked fine, and the
+  // refusal happened later, in a browser we hear nothing back from.
+  //
+  // So the scheme is upgraded where the publisher supports it, which by now is
+  // most of them: a feed that still prints http:// links is usually a feed
+  // whose template was written once and never revisited, in front of a server
+  // that has had TLS for years. Asked as a plain probe on a short clock, and
+  // only for the addresses that need it, so a genuinely http-only host pays one
+  // fast timeout and then gets exactly what it got before.
+  if (target.protocol === 'http:') {
+    const secure = await attempt(secureTwin(target), {
+      origin,
+      wantHtml,
+      timeout: SECURE_TIMEOUT_MS,
+    });
+    if (secure.status > 0 && secure.status < 400) return secure;
+  }
+
+  return attempt(normalized, { origin, wantHtml, timeout: TIMEOUT_MS });
+}
+
+/**
+ * The same address over TLS.
+ *
+ * Host, port and path are left alone — only the scheme moves — so this is the
+ * same resource on the same server, not a guess at where it might have moved.
+ * A URL that names port 80 explicitly is left as it is: that is a server
+ * saying which socket it serves from, and 443 is not it.
+ *
+ * @param {URL} target
+ * @returns {string}
+ */
+function secureTwin(target) {
+  const secure = new URL(target.href);
+  secure.protocol = 'https:';
+  return secure.href;
+}
+
+/**
+ * A probe that failed, in the shape a caller can read without checking first.
+ *
+ * @param {string} reason
+ * @returns {{ frameable: boolean, reason: string, html: string|null, url: string|null, status: number, contentType: string }}
+ */
+function no(reason) {
+  return { frameable: false, reason, html: null, url: null, status: 0, contentType: '' };
+}
+
+/**
+ * One fetch of one address, and the verdict that comes off it.
+ *
+ * Split out of `probePage` so the https-first attempt above is the same code
+ * as the attempt it falls back to — the two differ only in how long they are
+ * given to answer.
+ *
+ * @param {string} normalized
+ * @param {{ origin: string, wantHtml: boolean|'always', timeout: number }} options
+ * @returns {Promise<{ frameable: boolean, reason: string, html: string|null, url: string|null, status: number, contentType: string }>}
+ */
+async function attempt(normalized, { origin, wantHtml, timeout }) {
   const controller = new AbortController();
   // Headers decide the verdict and arrive quickly; a body worth reading is
   // allowed longer, because it is now the page rather than a detail of it.
-  let timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  let timer = setTimeout(() => controller.abort(), timeout);
 
   try {
     const res = await fetch(normalized, {

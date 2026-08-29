@@ -5,6 +5,7 @@ import { SIGNED_IN_HINT_COOKIE } from '../lib/session-hint.js';
 import DockPlayer from './DockPlayer.jsx';
 import ServiceWorker from './ServiceWorker.jsx';
 import Script from "next/script";
+import { jsonLdScript } from '../lib/jsonld.js';
 
 export const metadata = {
   metadataBase: new URL(siteUrl()),
@@ -148,7 +149,7 @@ export default function RootLayout({ children }) {
       <body>
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(siteJsonLd()) }}
+          dangerouslySetInnerHTML={{ __html: jsonLdScript(siteJsonLd()) }}
         />
 
         {/* Ahead of the masthead, and synchronous, so a signed-in reader never
@@ -309,8 +310,9 @@ export default function RootLayout({ children }) {
               <code>{`curl -fsSL ${siteUrl()}/install.sh | sh`}</code>
             </p>
             <p>
-              <a href="/about">About</a> · <a href="/contact">Contact</a> ·{' '}
-              <a href="/privacy">Privacy</a> ·{' '}
+              <a href="/about">About</a> · <a href="/advertise">Advertise</a> ·{' '}
+              <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
+              <a href="/terms">Terms</a> ·{' '}
               <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
                 Source on GitHub
               </a>

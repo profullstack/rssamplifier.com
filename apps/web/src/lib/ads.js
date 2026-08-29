@@ -19,10 +19,21 @@
  * text/plain to CLI clients. ad.js has no size for it and cannot render it in a
  * browser, so it is deliberately unused here.
  *
+ * The syndicated feeds are monetised too, but nothing in this file does it:
+ * a feed has no DOM for ad.js to fill, so the ad has to be *in* the document
+ * and is fetched while it is built. See ./feedAds.js and `interleaveAds` in the
+ * feed package.
+ *
  * Deliberately *not* monetised: /llms.txt, /opml, /api/* and the rest of the
  * machine-readable surface (the clean copy for agents is the product's whole
  * pitch), the framed reader (someone else's article — see the reader page), and
  * /offline (no network, so the request could not succeed anyway).
+ *
+ * The line between "a feed carries ads" and "/api/* does not" is who the
+ * document is for. A feed is a subscription a person reads in a reader, and it
+ * is the same river the ad-carrying web pages show. /api/* and /llms.txt are
+ * the machine-readable copy an agent consumes, where an ad is noise in a data
+ * structure rather than a placement anybody sees.
  */
 
 export const AD_SLOT = '2768fe0d-c51c-4629-8d86-0efba3d9ec1f';

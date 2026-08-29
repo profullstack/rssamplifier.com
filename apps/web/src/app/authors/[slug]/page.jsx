@@ -1,10 +1,17 @@
 import { notFound } from 'next/navigation';
-import { authors } from '@rssamplifier/db';
+import { alerts, authors } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { currentUser } from '../../../lib/auth.js';
+import { feedAlternates } from '../../../lib/subscribe.js';
 import AdBanner from '../../AdBanner.jsx';
 import AuthorLinks from '../../AuthorLinks.jsx';
+import FollowControls from '../../FollowControls.jsx';
+import SubscribeLinks from '../../SubscribeLinks.jsx';
 import { CATEGORIES } from '../../CategoryIndex.jsx';
+import ListFilter from '../../ListFilter.jsx';
+import { FILTER_FROM } from '../../../lib/listFilter.js';
+import { jsonLdScript } from '../../../lib/jsonld.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +32,14 @@ export async function generateMetadata({ params }) {
       : titles.length
         ? `${person.name} publishes ${titles.slice(0, 3).join(', ')}.`
         : `${person.name} in the rssamplifier directory.`,
-    alternates: { canonical: `${siteUrl()}/authors/${slug}` },
+    alternates: {
+      canonical: `${siteUrl()}/authors/${slug}`,
+      // Subscribe to the person rather than to one of their publications. A
+      // writer with a blog, a newsletter and a podcast has three feeds and no
+      // way to hand somebody all three; the directory already knows which are
+      // theirs, so this is the one river here that exists nowhere else.
+      types: feedAlternates(`${siteUrl()}/authors/${slug}`, String(person.name)),
+    },
   };
 }
 
@@ -47,6 +61,24 @@ export default async function AuthorPage({ params }) {
 
   const feeds = person.feeds ?? [];
   const links = person.links ?? [];
+
+  // Whether this reader already follows them, and whether that follow is
+  // alerting. One round trip for both, the way the feed and topic pages do it:
+  // the button and the bell are rendered together and asking twice would be two
+  // queries for one row.
+  const user = await currentUser();
+  const follow = user
+    ? await alerts.authorFollowState(db(), String(user.id), String(person.id))
+    : { following: false, alerts: false };
+
+  // What they have published lately, read off their own feeds' ids rather than
+  // searched for -- see `postsByAuthor`. A profile that lists the blogs but not
+  // the writing is a card catalogue entry; the point of a page about a person
+  // is what they wrote.
+  const posts = await authors.postsByAuthor(
+    db(),
+    feeds.map((f) => String(f.id ?? '')).filter(Boolean),
+  );
 
   // Their own site is a link like any other in the row below, but it is also
   // the thing schema.org means by `url`, so it is pulled out here.
@@ -80,16 +112,77 @@ export default async function AuthorPage({ params }) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       <p className="eyebrow">
         <a href="/authors">Authors</a>
       </p>
-      <h1>{person.name}</h1>
-      {person.bio && <p className="lede">{person.bio}</p>}
 
-      <AuthorLinks links={links} />
+      {/* The profile proper: picture, name, bio, and the links as things to
+          press. This is the shape everybody already reads as "a page about a
+          person", and it is worth matching rather than inventing -- somebody
+          arriving from a byline is looking for who this is and where else to
+          find them, in that order. */}
+      <header className="profile">
+        {person.avatar_url && (
+          // Their own published avatar, from an h-card or structured data. It
+          // was in this page's JSON-LD from the start and never rendered, which
+          // is an odd way round: the machines could see their face and the
+          // people could not.
+          //
+          // A plain <img>: the picture is on somebody else's host, and Next's
+          // optimiser would need every author's domain allow-listed in advance,
+          // which for an open directory is a list that cannot be written.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="profile-avatar"
+            src={String(person.avatar_url)}
+            alt=""
+            width={96}
+            height={96}
+            loading="lazy"
+            // A dead avatar URL is common -- people move hosts -- and the
+            // broken-image icon is worse than no picture at all.
+            referrerPolicy="no-referrer"
+          />
+        )}
+
+        <h1>{person.name}</h1>
+        {person.bio && <p className="profile-bio">{person.bio}</p>}
+      </header>
+
+      <AuthorLinks links={links} prominent />
+
+      {/* Follow the person, and then decide whether to be told. Above the
+          subscribe links deliberately: those hand the reader a document to take
+          somewhere else, and this keeps them here, which is the thing the page
+          could describe and not offer.
+
+          Only where there is something to follow. A profile with no credited
+          feeds would produce a follow that can never deliver anything, which is
+          the same reason the subscribe links below are conditional. */}
+      {feeds.length > 0 && (
+        <div className="detail-actions">
+          <FollowControls
+            endpoint="/api/follows/authors"
+            kind="author"
+            slug={slug}
+            following={follow.following}
+            alerts={follow.alerts}
+            signedIn={Boolean(user)}
+            next={`/authors/${slug}`}
+            label={`Follow ${person.name}`}
+          />
+        </div>
+      )}
+
+      {/* Everything they publish, wherever they publish it, as one feed. Only
+          offered when there is something behind it: a subscribe link on a
+          profile with no credited feeds is a link to an empty document. */}
+      {feeds.length > 0 && (
+        <SubscribeLinks base={`/authors/${slug}`} what={String(person.name)} />
+      )}
 
       <h2>
         {feeds.length === 1 ? 'Publishes' : 'Publishes'}{' '}
@@ -97,6 +190,10 @@ export default async function AuthorPage({ params }) {
           {feeds.length} {feeds.length === 1 ? 'feed' : 'feeds'}
         </span>
       </h2>
+
+      {feeds.length >= FILTER_FROM && (
+        <ListFilter target=".feed-list > li" noun="feed" />
+      )}
 
       {feeds.length === 0 ? (
         <p className="empty">
@@ -121,6 +218,41 @@ export default async function AuthorPage({ params }) {
             );
           })}
         </ul>
+      )}
+
+      {posts.length > 0 && (
+        <>
+          <h2>Lately</h2>
+
+          {posts.length >= FILTER_FROM && (
+            <ListFilter target=".post-list > li" noun="post" searchHref="/search?q=" />
+          )}
+
+          <ul className="post-list">
+            {posts.map((post) => (
+              <li key={`${post.feed_slug}-${post.guid}`}>
+                <h3>
+                  <a
+                    href={`/${encodeURIComponent(String(post.feed_slug))}/read?p=${encodeURIComponent(String(post.guid))}`}
+                  >
+                    {post.title}
+                  </a>
+                </h3>
+                <p className="hint">
+                  <a href={`/${encodeURIComponent(String(post.feed_slug))}`}>{post.feed_title}</a>
+                  {post.published_at && (
+                    <>
+                      {' · '}
+                      <time dateTime={String(post.published_at)}>
+                        {String(post.published_at).slice(0, 10)}
+                      </time>
+                    </>
+                  )}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {/* Said plainly, on the page it is about. Somebody who finds themselves

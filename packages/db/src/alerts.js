@@ -142,6 +142,40 @@ export async function topicFollowState(db, userId, slug, segment = '') {
 }
 
 /**
+ * Turn alerts on or off for a followed author.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} authorId
+ * @param {boolean} on
+ * @returns {Promise<boolean>}
+ */
+export async function setAuthorAlerts(db, userId, authorId, on) {
+  const res = await db.execute({
+    sql: 'update author_follows set alerts = ? where user_id = ? and author_id = ?',
+    args: [on ? 1 : 0, userId, authorId],
+  });
+  return Number(res.rowsAffected ?? 0) > 0;
+}
+
+/**
+ * The same, for a person.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} authorId
+ * @returns {Promise<{ following: boolean, alerts: boolean }>}
+ */
+export async function authorFollowState(db, userId, authorId) {
+  const { rows } = await db.execute({
+    sql: 'select alerts from author_follows where user_id = ? and author_id = ? limit 1',
+    args: [userId, authorId],
+  });
+  if (rows.length === 0) return { following: false, alerts: false };
+  return { following: true, alerts: Number(rows[0]?.alerts ?? 0) === 1 };
+}
+
+/**
  * Everything one account has switched alerts on for, both kinds together.
  *
  * For the account page, which lists them, and for nothing else — the sender
@@ -152,7 +186,7 @@ export async function topicFollowState(db, userId, slug, segment = '') {
  * @returns {Promise<{ feeds: object[], topics: object[] }>}
  */
 export async function alertingFollows(db, userId) {
-  const [feeds, topics] = await Promise.all([
+  const [feeds, topics, people] = await Promise.all([
     db.execute({
       sql: `select f.slug, f.title
             from follows fo join feeds f on f.id = fo.feed_id
@@ -168,9 +202,16 @@ export async function alertingFollows(db, userId) {
             order by tf.created_at desc`,
       args: [userId],
     }),
+    db.execute({
+      sql: `select a.slug, a.name
+            from author_follows af join authors a on a.id = af.author_id
+            where af.user_id = ? and af.alerts = 1
+            order by af.created_at desc`,
+      args: [userId],
+    }),
   ]);
 
-  return { feeds: feeds.rows, topics: topics.rows };
+  return { feeds: feeds.rows, topics: topics.rows, authors: people.rows };
 }
 
 /* ---------------------------------------------------------------- channels */
@@ -441,7 +482,9 @@ export async function usersWithAlerts(db, limit = 50) {
             and (exists (select 1 from follows fo
                          where fo.user_id = u.id and fo.alerts = 1)
               or exists (select 1 from topic_follows tf
-                         where tf.user_id = u.id and tf.alerts = 1))
+                         where tf.user_id = u.id and tf.alerts = 1)
+              or exists (select 1 from author_follows af
+                         where af.user_id = u.id and af.alerts = 1))
           order by s.updated_at is not null, s.updated_at
           limit ?`,
     args: [limit],
@@ -474,7 +517,9 @@ export async function alertingAccountCount(db) {
        and (exists (select 1 from follows fo
                     where fo.user_id = u.id and fo.alerts = 1)
          or exists (select 1 from topic_follows tf
-                    where tf.user_id = u.id and tf.alerts = 1))`,
+                    where tf.user_id = u.id and tf.alerts = 1)
+         or exists (select 1 from author_follows af
+                    where af.user_id = u.id and af.alerts = 1))`,
   );
   return Number(rows[0]?.n ?? 0);
 }
@@ -639,6 +684,75 @@ export async function newItemsForTopic(db, slug, cursor, opts = {}) {
           order by i.created_at
           limit ?`,
     args: [slug, ...(kinds ?? []), feedCap, cursor, limit],
+  });
+  return rows;
+}
+
+/**
+ * How many of an author's feeds an alert draws from.
+ *
+ * A person credited on more than this many feeds is either extremely prolific
+ * or a mis-merge, and both are better bounded than trusted: the query runs once
+ * per alerting author per account per tick.
+ */
+export const ALERT_AUTHOR_FEEDS = 20;
+
+/**
+ * The people an account has alerting.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function alertedAuthors(db, userId, limit = 50) {
+  const { rows } = await db.execute({
+    sql: `select a.id, a.slug, a.name
+          from author_follows af join authors a on a.id = af.author_id
+          where af.user_id = ? and af.alerts = 1
+          order by af.created_at desc
+          limit ?`,
+    args: [userId, limit],
+  });
+  return rows;
+}
+
+/**
+ * New posts by one alerting author, oldest first.
+ *
+ * An author is defined by `feed_authors`, so this reads their feeds rather than
+ * a column on the item. Filtered on `created_at` for the same reason every
+ * other alert query is: the watermark is a point in ingest time, and
+ * `published_at` is whatever the publisher claimed.
+ *
+ * Dead feeds are excluded on the same grounds the topic query excludes them. A
+ * feed that stopped resolving still carries its old items, and an author whose
+ * blog moved should not have the move announced as new writing.
+ *
+ * @param {Client} db
+ * @param {string} authorId
+ * @param {string} cursor
+ * @param {{ limit?: number, feedCap?: number }} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function newItemsForAuthor(db, authorId, cursor, opts = {}) {
+  const { limit = 50, feedCap = ALERT_AUTHOR_FEEDS } = opts;
+
+  const { rows } = await db.execute({
+    sql: `with picked as (
+            select fa.feed_id from feed_authors fa
+            join feeds f on f.id = fa.feed_id and f.status <> 'dead'
+            where fa.author_id = ?
+            limit ?
+          )
+          select ${ALERT_COLS}
+          from feed_items i
+          join feeds f on f.id = i.feed_id
+          where i.feed_id in (select feed_id from picked)
+            and i.created_at > ?
+          order by i.created_at
+          limit ?`,
+    args: [authorId, feedCap, cursor, limit],
   });
   return rows;
 }

@@ -47,6 +47,44 @@ test('normalizeUrl adds a scheme but rejects dangerous ones', () => {
   assert.equal(normalizeUrl(''), null);
 });
 
+test('normalizeUrl rejects markup and prose that a dot alone would let through', () => {
+  // The bulk-upload scanner splits pasted text on whitespace and offers every
+  // token as a URL, so pasting raw OPML instead of a URL list turned the markup
+  // itself into feeds. The old check was `hostname.includes('.')`, and every
+  // one of these contains a dot: ~3,700 reached production, where they are
+  // re-crawled forever and fail `blocked-host`.
+  //
+  // These are the real stored feed_urls, with the `https://` the old code added
+  // and the trailing slash `URL.toString()` gave them.
+  for (const token of [
+    'version="1.0"',   // an XML declaration
+    'text="gg.deals',  // an OPML attribute, torn at the quote
+    'title="arnika.org',
+    'zombies.)',       // a sentence ending in a word and a bracket
+    'yourself."',
+    'z.',              // a single letter and a full stop
+    'you.',
+    'york.',
+  ]) {
+    assert.equal(normalizeUrl(token), null, `${token} is not a hostname`);
+  }
+});
+
+test('normalizeUrl still accepts the unusual hosts that are real', () => {
+  // The gate rejects what cannot be a hostname, not what is merely unusual --
+  // so this is the half of the change that would break the directory if it
+  // were wrong.
+  assert.equal(normalizeUrl('sub.domain.co.uk'), 'https://sub.domain.co.uk/');
+  assert.equal(normalizeUrl('xn--bcher-kva.de'), 'https://xn--bcher-kva.de/', 'IDN arrives punycoded');
+  assert.equal(normalizeUrl('EXAMPLE.COM'), 'https://example.com/');
+  assert.equal(normalizeUrl('news.ycombinator.com/rss'), 'https://news.ycombinator.com/rss');
+  assert.equal(normalizeUrl('http://example.com:8080/feed'), 'http://example.com:8080/feed', 'a port is fine');
+  // A feed genuinely served from a dotted quad is odd but not impossible, and
+  // private ranges are refused later by isPublicHost rather than here.
+  assert.equal(normalizeUrl('192.168.1.1'), 'https://192.168.1.1/');
+  assert.equal(normalizeUrl('999.1.1.1'), null, 'but not a quad that cannot be one');
+});
+
 test('findFeedLinks reads alternate links regardless of attribute order', () => {
   const html = `
     <link rel="alternate" type="application/rss+xml" href="/feed.xml">
@@ -86,5 +124,7 @@ test('uniqueSlug avoids reserved routes and collisions', () => {
 
 test('uniqueSlug falls back to the hostname when the title is unusable', () => {
   assert.equal(uniqueSlug('!!!', 'https://www.example.com/feed'), 'example-com');
-  assert.equal(uniqueSlug('', ''), 'feed');
+  // Not 'feed': that address belongs to the directory's own river now, so an
+  // untitled submission gets a placeholder rather than a reserved word.
+  assert.equal(uniqueSlug('', ''), 'untitled');
 });

@@ -8,6 +8,7 @@ import {
   SYNDICATION_FORMATS,
   buildAtom,
   buildJsonFeed,
+  buildMarkdown,
   buildM3u,
   buildPls,
   buildRss,
@@ -296,4 +297,53 @@ test('a post picture rides along in every format that can carry one', () => {
   // And a post without one carries no empty element.
   assert.ok(!buildRss(channel, items).includes('media:thumbnail'));
   assert.ok(!buildAtom(channel, items).includes('media:thumbnail'));
+});
+
+test('markdown carries the river as prose, with the channel above it', () => {
+  const doc = buildMarkdown(channel, items);
+
+  assert.match(doc, /^# physics — RSS Amplifier\n/);
+  assert.ok(doc.includes('Feed: <https://rssamplifier.com/topics/physics.rss>'));
+  // The link is in the heading, so a reader skimming headings can open one
+  // without hunting for a URL underneath it.
+  assert.ok(doc.includes('## [Entanglement, briefly](https://example.com/posts/1)'));
+  // Date, byline and publication on one line, as a date rather than a timestamp.
+  assert.ok(doc.includes('_2026-08-15 · A. Writer · Quantum Notes_'));
+  assert.ok(doc.includes('A short note.'));
+});
+
+test('markdown discloses a sponsored item where a reader will see it', () => {
+  const doc = buildMarkdown(channel, [
+    { id: 'ad-1', title: 'Something for sale', url: 'https://example.com/ad', sponsored: true },
+  ]);
+
+  // Under the heading, not in a footnote: disclosure somebody has to go looking
+  // for is not disclosure.
+  assert.match(doc, /## \[Something for sale\].*\n\n_\*\*Sponsored\*\*_/);
+});
+
+test('markdown does not let a title become markup', () => {
+  const doc = buildMarkdown(channel, [
+    { id: 'x', title: '# not a heading *emphatically* [link](nope)', summary: 'Fine.' },
+  ]);
+
+  const heading = doc.split('\n').find((l) => l.startsWith('## '));
+  // The hash inside the title is harmless once it is not at the start of a
+  // line; the constructs that would nest inside the heading are escaped.
+  assert.ok(heading.includes('\\*emphatically\\*'));
+  assert.ok(heading.includes('\\[link\\]'));
+});
+
+test('markdown says so when there is nothing to say', () => {
+  const doc = buildMarkdown(channel, []);
+
+  assert.ok(doc.includes('_Nothing published yet._'));
+  // No rule, because there is nothing under it to separate.
+  assert.ok(!doc.includes('\n---\n'));
+});
+
+test('every format renders through the dispatcher, markdown included', () => {
+  assert.equal(buildSyndication('md', channel, items), buildMarkdown(channel, items));
+  assert.equal(SYNDICATION_FORMATS.get('md').type, 'text/markdown; charset=utf-8');
+  assert.equal(SYNDICATION_FORMATS.get('md').media, false);
 });

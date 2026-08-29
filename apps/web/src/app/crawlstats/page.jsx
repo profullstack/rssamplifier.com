@@ -1,14 +1,31 @@
-import { q, discovery, alerts } from '@rssamplifier/db';
+import { q, discovery } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
-import { categoryStats, indexingHistory, GROWTH_DAYS } from '../../lib/crawlstats.js';
-import { toLine } from '../../lib/crawlLog.js';
+import {
+  categoryStats,
+  indexingHistory,
+  jobBacklogs,
+  queueHistory,
+  liveStats,
+  failingFeeds,
+  alertingAccounts,
+  panel,
+  GROWTH_DAYS,
+} from '../../lib/crawlstats.js';
+import { describe, toLine } from '../../lib/crawlLog.js';
 import { etaLabel, jobRows } from '../../lib/jobs.js';
 import AutoRefresh from '../AutoRefresh.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
 import Toolbar from '../Toolbar.jsx';
-import { GrowthChart, IndexingChart, Sparkline, ThroughputChart } from './Charts.jsx';
+import {
+  GrowthChart,
+  IndexingChart,
+  QueueBurndown,
+  Sparkline,
+  ThroughputChart,
+} from './Charts.jsx';
 import CrawlLog from './CrawlLog.jsx';
+import ErrorBrowser, { ErrorBrowserButton } from './ErrorBrowser.jsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,38 +63,91 @@ export default async function CrawlStatsPage() {
     backlogs,
     activity,
     alertAccounts,
+    operationalErrors,
+    queues,
   ] = await Promise.all([
-    q.crawlStats(client),
-    q.failingFeeds(client, 15),
-    q.recentlyCrawled(client, 15),
-    discovery.countQueuedCandidates(client),
-    discovery.countQueuedKeywords(client),
+    liveStats(),
+    failingFeeds(50),
+    panel(q.recentlyCrawled(client, 15), []),
+    panel(discovery.countQueuedCandidates(client), null),
+    panel(discovery.countQueuedKeywords(client), null),
     indexingHistory(),
     categoryStats(),
     // Rendered into the log so the panel arrives with history rather than
     // waiting for the crawler's next line, and so the log is not blank for a
     // reader with JavaScript off.
-    q.crawlLogTail(client, 40),
+    panel(q.crawlLogTail(client, 40), []),
     // The two halves of the jobs board: what each kind of work has waiting, and
-    // what each has been doing. Both are one query, and both are asked here
-    // rather than cached — a stale answer about whether a worker is alive is the
-    // one thing this page must never give.
-    q.jobBacklogs(client),
-    q.logActivity(client, 1),
+    // what each has been doing.
+    //
+    // The backlogs are cached for a minute; the activity beside them is not.
+    // That split is the point. Counting the directory by status and card state
+    // visits all 369,030 rows, which is 398ms on an idle database and **16.9
+    // seconds** under the crawler's write load — on a page that is
+    // `force-dynamic` and refreshes every fifteen seconds. Meanwhile a backlog
+    // of three hundred thousand feeds draining at a few hundred an hour does
+    // not meaningfully move in sixty seconds. What must never be stale is
+    // whether a worker is *alive*, and that comes from `logActivity` and
+    // `crawlStats`, both of which are still read fresh on every request.
+    jobBacklogs(),
+    panel(q.logActivity(client, 1), {}),
     // Only to tell a sender with nothing to do from one that has stopped: the
     // alert pass writes no log line at all when nobody is subscribed, and a
     // silent job is otherwise indistinguishable from a dead one.
-    alerts.alertingAccountCount(client),
+    alertingAccounts(),
+    // Kept separately from the rolling live-log window. At crawler throughput,
+    // 400 successful feed lines can evict an operational failure in minutes.
+    panel(q.crawlOperationalErrors(client, { limit: 20, hours: 24 }), []),
+    // Sampled by the poller rather than counted here: these are the same
+    // expensive counts the jobs board caches, and the chart wants them as a
+    // history anyway.
+    queueHistory(),
   ]);
 
   const jobs = jobRows({
-    backlogs,
+    // Null when the read failed and nothing was cached — see `jobBacklogs`,
+    // which returns null rather than zeroes because "0 waiting" reads as "all
+    // caught up" and would be a lie. An empty object leaves each row's backlog
+    // undefined, which the board already renders as unknown.
+    backlogs: backlogs ?? {},
     activity,
     fetchedLastHour: stats.fetchedLastHour,
     keywordQueue,
     candidateQueue: discoveryQueue,
     alertAccounts,
   });
+
+  // Only the queues that live on `feeds`, which are the ones the poller can
+  // sample cheaply enough to write down every ten minutes. Keyword and
+  // candidate depths are on the jobs board above but not here: they are read
+  // from the discovery tables, they move in steps rather than slopes, and a
+  // burndown of a number that is usually zero is a flat line.
+  const burndownQueues = [
+    {
+      key: 'due',
+      label: 'Feed updates',
+      what: 'Overdue for a re-read. Meant to be deep — read the slope, not the height.',
+      values: queues.series.due ?? [],
+    },
+    {
+      key: 'first-crawl',
+      label: 'First crawls',
+      what: 'Imported or discovered, never yet read. This one should trend to zero.',
+      values: queues.series.firstCrawl ?? [],
+    },
+    {
+      key: 'authors',
+      label: 'Author walk',
+      what: 'Sites never looked at for who writes them. The longest queue by far.',
+      values: queues.series.authors ?? [],
+    },
+    {
+      key: 'cards',
+      label: 'Feed pictures',
+      what: 'Feeds with no card image yet.',
+      values: queues.series.cards ?? [],
+    },
+  ];
 
   // The whole directory's curve is the categories' curves added up, which is
   // one array of thirty numbers rather than a seventh query for a total the
@@ -86,9 +156,39 @@ export default async function CrawlStatsPage() {
     categories.categories.reduce((n, row) => n + (row.growth[day] ?? 0), 0),
   );
 
-  // A crawler that has fetched nothing in an hour is either idle because
-  // nothing was due, or stopped. The backlog tells those apart.
-  const idle = stats.fetchedLastHour === 0;
+  // Plain serializable rows for the client-side disclosure panel. Database Row
+  // objects are deliberately not handed across the server/client boundary.
+  const errorMessages = [
+    ...failing.map((row) => ({
+      id: `feed-${String(row.slug)}`,
+      kind: 'feed',
+      at: row.last_fetched_at ? String(row.last_fetched_at) : null,
+      source: String(row.title || row.feed_url || row.slug),
+      href: `/${String(row.slug)}`,
+      message: row.last_error ? String(row.last_error) : 'Unknown feed error',
+    })),
+    ...operationalErrors.map((row) => {
+      const line = toLine(row);
+      return {
+        id: `daemon-${String(line.id)}`,
+        kind: 'daemon',
+        at: line.at ? String(line.at) : null,
+        source: String(line.event || 'crawler'),
+        href: null,
+        message: describe(line, { name: false }),
+      };
+    }),
+  ];
+
+  // A crawler that has not landed a single successful read in a quarter of an
+  // hour is stopped, not merely between batches. The backlog tells "stopped"
+  // apart from "idle because nothing was due".
+  //
+  // Measured against the last successful crawl rather than against the hourly
+  // throughput figure: throughput comes from a rollup the poller is allowed to
+  // fail to write, and an outage badge must not be able to fire on missing
+  // bookkeeping. See `idleMinutes` in crawlStats.
+  const idle = stats.idleMinutes === null || stats.idleMinutes >= 15;
   const health = idle && stats.due > 0 ? 'stalled' : stats.staleActive > 0 ? 'degraded' : 'healthy';
 
   return (
@@ -104,20 +204,20 @@ export default async function CrawlStatsPage() {
       <p className={`crawl-health crawl-health-${health}`}>
         <strong>{label(health)}</strong>{' '}
         {health === 'stalled'
-          ? `${fmt(stats.due)} feeds are due and nothing has been fetched in the last hour.`
+          ? `${fmt(stats.due)} feeds are due and nothing has been read successfully in ${fmt(stats.idleMinutes ?? 0)} minutes.`
           : health === 'degraded'
             ? `${fmt(stats.staleActive)} active feeds have not been read successfully in over a day.`
-            : `${fmt(stats.fetchedLastHour)} feeds fetched in the last hour.`}
+            : `${fmt(stats.fetchedLastHour)} feeds an hour, most recently ${fmt(stats.idleMinutes ?? 0)} minutes ago.`}
       </p>
 
       <div className="stat-grid">
         <Stat label="Feeds" value={fmt(stats.total)} note={`${fmt(stats.active)} active`} />
         <Stat label="Due now" value={fmt(stats.due)} note="waiting to be crawled" />
-        <Stat label="Fetched (1h)" value={fmt(stats.fetchedLastHour)} note="crawler throughput" />
+        <Stat label="Fetched/hour" value={fmt(stats.fetchedLastHour)} note="crawler throughput" />
         <Stat label="Fetched (24h)" value={fmt(stats.fetchedLastDay)} note={`${fmt(stats.succeededLastDay)} succeeded`} />
         <Stat label="New posts (24h)" value={fmt(stats.itemsLastDay)} note="items ingested" />
         <Stat label="Stale" value={fmt(stats.staleActive)} note="active, no success in 24h" />
-        <Stat label="Erroring" value={fmt(stats.errored)} note={`${fmt(stats.dead)} given up`} />
+        <ErrorBrowser total={stats.errored} dead={stats.dead} errors={errorMessages} />
         <Stat label="Pending" value={fmt(stats.pending)} note="accepted, not yet crawled" />
         {/*
          * Discovery shares this poller, so it belongs on this board: a keyword
@@ -168,9 +268,9 @@ export default async function CrawlStatsPage() {
               <td>
                 <span className={`job-state job-state-${job.state}`}>{job.state}</span>
                 {job.errors > 0 && (
-                  <span className="job-errors">
+                  <ErrorBrowserButton className="job-errors">
                     {fmt(job.errors)} {job.errors === 1 ? 'error' : 'errors'}
-                  </span>
+                  </ErrorBrowserButton>
                 )}
               </td>
               <td className="num">
@@ -195,6 +295,48 @@ export default async function CrawlStatsPage() {
           ))}
         </tbody>
       </table>
+
+      {/* The table above says how deep each queue is; this says which way it is
+          going, which is the half a count cannot carry. A backlog of twelve
+          thousand is a crawler falling behind or one halfway through catching
+          up, and those are opposite emergencies. */}
+      <QueueBurndown hours={queues.hours} queues={burndownQueues} />
+
+      <h2 id="daemon-errors">Daemon errors (24h)</h2>
+      <p>
+        Failures in the crawler itself and its background jobs. Feed-specific failures are listed
+        separately below; these lines remain visible even after the busy live log has rolled past
+        them.
+      </p>
+      {operationalErrors.length === 0 ? (
+        <p>No daemon or background-job errors were recorded in the last 24 hours.</p>
+      ) : (
+        <table className="crawl-table">
+          <thead>
+            <tr>
+              <th scope="col">Time</th>
+              <th scope="col">Event</th>
+              <th scope="col">Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {operationalErrors.map((row) => {
+              const line = toLine(row);
+              return (
+                <tr key={line.id}>
+                  <td className="num">
+                    <time dateTime={line.at}>{new Date(line.at).toISOString()}</time>
+                  </td>
+                  <td><code>{line.event}</code></td>
+                  <td className="crawl-error">
+                    <ErrorMessage message={describe(line, { name: false })} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
 
       <h2>Live log</h2>
       <p>
@@ -262,7 +404,11 @@ export default async function CrawlStatsPage() {
                 <td className="num">{row.addedLastDay ? `+${fmt(row.addedLastDay)}` : '—'}</td>
                 <td className="num">{row.addedLastMonth ? `+${fmt(row.addedLastMonth)}` : '—'}</td>
                 <td className="num">{fmt(row.items)}</td>
-                <td className="num">{row.errored ? fmt(row.errored) : '—'}</td>
+                <td className="num">
+                  {row.errored ? (
+                    <ErrorBrowserButton className="error-count-button">{fmt(row.errored)}</ErrorBrowserButton>
+                  ) : '—'}
+                </td>
                 <td className="spark-cell">
                   <Sparkline
                     values={row.growth}
@@ -289,7 +435,11 @@ export default async function CrawlStatsPage() {
                 : '—'}
             </td>
             <td className="num">{fmt(sum(categories.categories, 'items'))}</td>
-            <td className="num">{fmt(sum(categories.categories, 'errored'))}</td>
+            <td className="num">
+              <ErrorBrowserButton className="error-count-button">
+                {fmt(sum(categories.categories, 'errored'))}
+              </ErrorBrowserButton>
+            </td>
             <td />
           </tr>
         </tfoot>
@@ -323,7 +473,7 @@ export default async function CrawlStatsPage() {
         </table>
       )}
 
-      <h2>Failing feeds</h2>
+      <h2 id="failing-feeds">Failing feeds</h2>
       {failing.length === 0 ? (
         <p>No feed is currently failing.</p>
       ) : (
@@ -343,7 +493,9 @@ export default async function CrawlStatsPage() {
                   <a href={`/${String(row.slug)}`}>{String(row.title)}</a>
                 </td>
                 <td>{fmt(Number(row.error_count ?? 0))}</td>
-                <td className="crawl-error">{row.last_error ? String(row.last_error) : '—'}</td>
+                <td className="crawl-error">
+                  {row.last_error ? <ErrorMessage message={String(row.last_error)} /> : '—'}
+                </td>
                 <td>{ago(row.last_success_at ? String(row.last_success_at) : null)}</td>
               </tr>
             ))}
@@ -389,15 +541,37 @@ function sum(rows, key) {
 }
 
 /**
- * @param {{ label: string, value: string, note?: string }} props
+ * @param {{ label: string, value: string, note?: string, href?: string }} props
  */
-function Stat({ label, value, note }) {
-  return (
-    <div className="stat">
+function Stat({ label, value, note, href }) {
+  const content = (
+    <>
       <span className="stat-value">{value}</span>
       <span className="stat-label">{label}</span>
       {note && <span className="stat-note">{note}</span>}
-    </div>
+    </>
+  );
+
+  return href ? (
+    <a className="stat stat-link" href={href} aria-label={`${label}: ${value}. View details`}>
+      {content}
+    </a>
+  ) : (
+    <div className="stat">{content}</div>
+  );
+}
+
+/**
+ * A table-friendly error preview that opens to the untruncated message.
+ *
+ * @param {{ message: string }} props
+ */
+function ErrorMessage({ message }) {
+  return (
+    <details className="crawl-error-details">
+      <summary title={message}>{message}</summary>
+      <div>{message}</div>
+    </details>
   );
 }
 

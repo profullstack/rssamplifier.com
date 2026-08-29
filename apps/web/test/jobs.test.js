@@ -21,6 +21,9 @@ function busy(overrides = {}) {
       cardsNone: 283,
       cardsError: 31,
       cardsLastHour: 1_320,
+      authorsPending: 81_123,
+      authorsDone: 3_275,
+      authorsLastHour: 283,
       ...overrides.backlogs,
     },
     activity: {
@@ -32,6 +35,7 @@ function busy(overrides = {}) {
       'cluster-backfill': { lines: 360, errors: 0, amount: 12_000, lastAt: at, ms: 90 },
       topics: { lines: 4, errors: 0, amount: 0, lastAt: at, ms: 300 },
       alerts: { lines: 30, errors: 0, amount: 48, lastAt: at, ms: 600 },
+      author: { lines: 283, errors: 4, amount: 60, lastAt: at, ms: 2_400 },
       ...overrides.activity,
     },
     alertAccounts: overrides.alertAccounts ?? 4,

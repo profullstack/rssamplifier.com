@@ -593,10 +593,200 @@ function absorb(into, from) {
   into.email ||= from.email;
   into.url ||= from.url;
   into.avatar ||= from.avatar;
+  // Same omission as the one in `credit`, and it bites in the other direction:
+  // even once a bio exists, merging two credits for one person would drop it
+  // whenever the credit carrying it lost the merge.
+  into.bio ||= from.bio;
   into.confidence = Math.max(into.confidence, from.confidence);
   // Owner outranks author: it is the stronger claim about the feed.
   if (from.role === 'owner') into.role = 'owner';
   if (!into.source.includes(from.source)) into.source += `,${from.source}`;
+}
+
+/**
+ * Every channel-level statement about who publishes a feed, before any of them
+ * has been judged.
+ *
+ * Split out of `feedCredits` so that the judging can happen twice, on the same
+ * list, for two different questions. `feedCredits` asks "is this a person?" and
+ * keeps the ones that are. `feedContacts` asks "is there a way to reach this
+ * publisher?" -- which has a useful answer even when the first question's is
+ * no.
+ *
+ * Item bylines are deliberately not here. They are statements about one post,
+ * and a contact harvested from one is not the feed's.
+ *
+ * @param {any} channel the raw parsed channel/feed object
+ * @param {'rss'|'atom'|'rdf'|'json'} format
+ * @param {string} [base]
+ * @returns {object[]} inputs for `credit`, unjudged
+ */
+export function channelCreditInputs(channel, format, base = '') {
+  const ch = channel ?? {};
+  const out = [];
+
+  if (format === 'json') {
+    // JSON Feed 1.1 replaced the single `author` with `authors`, and
+    // publishers emit both; reading each in turn costs nothing.
+    for (const author of [...arr(ch.authors), ch.author]) {
+      if (!author) continue;
+      out.push({
+        name: author.name,
+        url: author.url,
+        avatar: author.avatar,
+        role: 'owner',
+        source: 'json-feed-author',
+        confidence: 0.8,
+        base,
+      });
+    }
+  }
+
+  if (format === 'atom') {
+    for (const author of arr(ch.author)) {
+      out.push({
+        name: author?.name ?? author,
+        email: author?.email,
+        url: author?.uri,
+        role: 'owner',
+        source: 'atom-feed-author',
+        confidence: 0.85,
+        base,
+      });
+    }
+    for (const contributor of arr(ch.contributor)) {
+      out.push({
+        name: contributor?.name ?? contributor,
+        email: contributor?.email,
+        url: contributor?.uri,
+        source: 'atom-contributor',
+        confidence: 0.5,
+        base,
+      });
+    }
+  }
+
+  if (format === 'rss' || format === 'rdf') {
+    // managingEditor is defined as an address and conventionally written
+    // "jane@example.com (Jane Doe)", which cleanName already understands.
+    out.push({
+      name: ch.managingEditor,
+      email: ch.managingEditor,
+      role: 'owner',
+      source: 'managing-editor',
+      confidence: 0.8,
+    });
+    // webMaster is the person who runs the server, which on the small web is
+    // usually the same person and in a newsroom never is. Believed, but at a
+    // confidence that says so.
+    out.push({
+      name: ch.webMaster,
+      email: ch.webMaster,
+      role: 'owner',
+      source: 'web-master',
+      confidence: 0.4,
+    });
+    out.push({
+      name: ch['itunes:author'],
+      role: 'owner',
+      source: 'itunes-author',
+      confidence: 0.7,
+    });
+    const owner = ch['itunes:owner'];
+    if (owner) {
+      out.push({
+        name: owner['itunes:name'] ?? owner.name,
+        email: owner['itunes:email'] ?? owner.email,
+        role: 'owner',
+        source: 'itunes-owner',
+        confidence: 0.85,
+      });
+    }
+    out.push({
+      name: ch['dc:creator'],
+      role: 'owner',
+      source: 'channel-dc-creator',
+      confidence: 0.75,
+    });
+
+    // Podcasting 2.0. `role` distinguishes a host from a guest, and a guest is
+    // not an author of the feed — they appeared on one episode of it.
+    for (const person of arr(ch['podcast:person'])) {
+      const personRole = String(person?.['@role'] ?? '').toLowerCase();
+      if (personRole && !/host|owner|author|creator|producer/.test(personRole)) continue;
+      out.push({
+        name: person?.['#text'] ?? person,
+        url: person?.['@href'],
+        avatar: person?.['@img'],
+        role: 'owner',
+        source: 'podcast-person',
+        confidence: 0.9,
+        base,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * How to reach a feed's publisher when nobody publishable was named.
+ *
+ * The gap this closes: `credit` returns null the moment a name fails the person
+ * test, and it takes the whole statement with it -- including a perfectly good
+ * address. The Daily Breadcast publishes an `itunes:owner` named "Someone Who
+ * Wants to Help" alongside a real personal mailbox. The name is correctly
+ * rejected; a directory that then also discards the mailbox has thrown away the
+ * only contact the publisher offered.
+ *
+ * These go to `feed_links`, never to an author row, for the reason `feed_links`
+ * exists: the feed published a way to reach whoever makes it, and we do not
+ * know their name. Inventing a person to hang it on would put a fiction on a
+ * page the directory presents as real people.
+ *
+ * Only statements whose name was rejected are harvested. When a name *did*
+ * survive, its address belongs to that person and `feedCredits` has already
+ * routed it there -- collecting it again here would file one address in two
+ * places and count it twice.
+ *
+ * Each contact carries the channel element it was read from, the same way a
+ * credit does. `feed_links.source` is `not null` and is what the page means by
+ * "where we found this" -- a mailbox harvested from `webMaster` is a weaker
+ * claim than one from `itunes:owner`, and dropping the provenance here lost
+ * that distinction *and* left the column with nothing to store.
+ *
+ * @param {any} channel the raw parsed channel/feed object
+ * @param {'rss'|'atom'|'rdf'|'json'} format
+ * @param {string} [base]
+ * @returns {Array<{ url: string, network: string, source: string }>}
+ */
+export function feedContacts(channel, format, base = '') {
+  const out = [];
+  const seen = new Set();
+
+  for (const input of channelCreditInputs(channel, format, base)) {
+    // A name that survives is a person, and their address is theirs.
+    if (credit(input)) continue;
+
+    // `personalEmail` first, because the address is often written into the name
+    // field -- managingEditor is defined as "jane@example.com (Jane Doe)" -- and
+    // because it is what keeps a role mailbox out. info@, editor@ and support@
+    // are dropped at extraction here exactly as they are on the author side, so
+    // what reaches `feed_links` is a person's mailbox rather than a ticket
+    // queue.
+    const email = personalEmail(input.email ?? input.name);
+
+    // `classifyLink` decides both of these: it rejects anything that is not a
+    // personal profile, which is most of what a channel element points at.
+    for (const candidate of [email ? `mailto:${email}` : null, input.url]) {
+      const link = candidate ? classifyLink(candidate, base) : null;
+      if (!link || seen.has(link.url)) continue;
+      seen.add(link.url);
+      out.push({ url: link.url, network: link.network, source: input.source });
+    }
+  }
+
+  return out;
 }
 
 /**
@@ -607,13 +797,14 @@ function absorb(into, from) {
  * @param {unknown} [input.email]
  * @param {unknown} [input.url]
  * @param {unknown} [input.avatar]
+ * @param {unknown} [input.bio] a sentence or two the page says about them
  * @param {'author'|'owner'} [input.role]
  * @param {string} input.source
  * @param {number} input.confidence
  * @param {string} [input.base]
  * @returns {Credit | null}
  */
-export function credit({ name, email, url, avatar, role = 'author', source, confidence, base = '' }) {
+export function credit({ name, email, url, avatar, bio, role = 'author', source, confidence, base = '' }) {
   const cleaned = cleanName(name);
   if (!looksLikePersonName(cleaned)) return null;
 
@@ -622,6 +813,14 @@ export function credit({ name, email, url, avatar, role = 'author', source, conf
     email: personalEmail(email ?? name),
     url: normalizeIdentityUrl(url, base),
     avatar: normalizeIdentityUrl(avatar, base),
+    // Carried, and it was not. `identityFromHtml` has always extracted a bio --
+    // from an h-card's .p-note, a schema.org Person's description -- and this
+    // object was the hole it fell through: with no `bio` field here there was
+    // nowhere for it to go, so `storeCredits` wrote `person.bio ?? ''` and the
+    // empty string became null. Production had **0 bios across 35,280 authors**
+    // while 2,388 of the same rows had a site_url from the same pass, which is
+    // the shape of a dropped field rather than a scraper that cannot find one.
+    bio: typeof bio === 'string' ? bio.trim() : '',
     role,
     source,
     confidence,
@@ -648,127 +847,8 @@ export function credit({ name, email, url, avatar, role = 'author', source, conf
  * @returns {Credit[]}
  */
 export function feedCredits(channel, items, format, base = '') {
-  const found = [];
   const ch = channel ?? {};
-
-  if (format === 'json') {
-    // JSON Feed 1.1 replaced the single `author` with `authors`, and
-    // publishers emit both; reading each in turn costs nothing.
-    for (const author of [...arr(ch.authors), ch.author]) {
-      if (!author) continue;
-      found.push(
-        credit({
-          name: author.name,
-          url: author.url,
-          avatar: author.avatar,
-          role: 'owner',
-          source: 'json-feed-author',
-          confidence: 0.8,
-          base,
-        }),
-      );
-    }
-  }
-
-  if (format === 'atom') {
-    for (const author of arr(ch.author)) {
-      found.push(
-        credit({
-          name: author?.name ?? author,
-          email: author?.email,
-          url: author?.uri,
-          role: 'owner',
-          source: 'atom-feed-author',
-          confidence: 0.85,
-          base,
-        }),
-      );
-    }
-    for (const contributor of arr(ch.contributor)) {
-      found.push(
-        credit({
-          name: contributor?.name ?? contributor,
-          email: contributor?.email,
-          url: contributor?.uri,
-          source: 'atom-contributor',
-          confidence: 0.5,
-          base,
-        }),
-      );
-    }
-  }
-
-  if (format === 'rss' || format === 'rdf') {
-    // managingEditor is defined as an address and conventionally written
-    // "jane@example.com (Jane Doe)", which cleanName already understands.
-    found.push(
-      credit({
-        name: ch.managingEditor,
-        email: ch.managingEditor,
-        role: 'owner',
-        source: 'managing-editor',
-        confidence: 0.8,
-      }),
-    );
-    // webMaster is the person who runs the server, which on the small web is
-    // usually the same person and in a newsroom never is. Believed, but at a
-    // confidence that says so.
-    found.push(
-      credit({
-        name: ch.webMaster,
-        email: ch.webMaster,
-        role: 'owner',
-        source: 'web-master',
-        confidence: 0.4,
-      }),
-    );
-    found.push(
-      credit({
-        name: ch['itunes:author'],
-        role: 'owner',
-        source: 'itunes-author',
-        confidence: 0.7,
-      }),
-    );
-    const owner = ch['itunes:owner'];
-    if (owner) {
-      found.push(
-        credit({
-          name: owner['itunes:name'] ?? owner.name,
-          email: owner['itunes:email'] ?? owner.email,
-          role: 'owner',
-          source: 'itunes-owner',
-          confidence: 0.85,
-        }),
-      );
-    }
-    found.push(
-      credit({
-        name: ch['dc:creator'],
-        role: 'owner',
-        source: 'channel-dc-creator',
-        confidence: 0.75,
-      }),
-    );
-
-    // Podcasting 2.0. `role` distinguishes a host from a guest, and a guest is
-    // not an author of the feed — they appeared on one episode of it.
-    for (const person of arr(ch['podcast:person'])) {
-      const personRole = String(person?.['@role'] ?? '').toLowerCase();
-      if (personRole && !/host|owner|author|creator|producer/.test(personRole)) continue;
-      found.push(
-        credit({
-          name: person?.['#text'] ?? person,
-          url: person?.['@href'],
-          avatar: person?.['@img'],
-          role: 'owner',
-          source: 'podcast-person',
-          confidence: 0.9,
-          base,
-        }),
-      );
-    }
-  }
+  const found = channelCreditInputs(ch, format, base).map(credit);
 
   // Item bylines. Capped at a sample rather than the whole window: a feed
   // carries up to forty items and reading every one of them to find the same
@@ -959,6 +1039,223 @@ export function identityFromHtml(html, baseUrl = '') {
     profiles: [...profiles.values()],
     credits: mergeCredits(credits),
   };
+}
+
+/**
+ * `humans.txt`, the file whose entire purpose is to name the people.
+ *
+ * Worth a request precisely because of what it is. Every other source here is
+ * markup that happens to carry identity as a side effect — a link with a `rel`
+ * attribute, a microformat class, a byline in a feed. `humans.txt` is a
+ * convention with one job: the author writing it was answering the question
+ * "who made this", which is the question being asked.
+ *
+ * The format is loose and its shape is inverted from everything else. The
+ * *key* is the role and the *value* is the person:
+ *
+ *     /* TEAM *\/
+ *     Chef: Jane Doe
+ *     Site: https://jane.example
+ *     Mastodon: @jane@example.social
+ *
+ * So a person is a block: a naming line, then the contact lines that follow it
+ * until the next person or the next section. Attaching links to the nearest
+ * preceding name is the whole parsing job, and getting it wrong on a two-person
+ * file would give one of them the other's accounts.
+ *
+ * Only `/* TEAM *\/` and its unlabelled equivalent are read. `/* THANKS *\/`
+ * exists to credit other people's work — libraries, inspirations, a designer at
+ * another company — and treating those as this feed's authors would attribute a
+ * blog to whoever its author admires.
+ *
+ * @param {string} text the file, as served
+ * @param {string} baseUrl for resolving relative links
+ * @returns {{ credits: Credit[], profiles: Array<{ network: string, url: string, handle: string, source: string }> }}
+ */
+export function identityFromHumansTxt(text, baseUrl = '') {
+  const empty = { credits: [], profiles: [] };
+  if (typeof text !== 'string' || !text.trim()) return empty;
+
+  // A server that answers every path with its 404 page is common enough that
+  // this has to be checked: HTML here is not a humans.txt, it is a miss.
+  if (/^\s*<(?:!doctype|html)/i.test(text)) return empty;
+
+  /** Keys whose value is a person's name. */
+  const NAMES = new Set([
+    'name',
+    'chef',
+    'developer',
+    'developers',
+    'designer',
+    'author',
+    'owner',
+    'maintainer',
+    'engineer',
+    'writer',
+    'creator',
+    'programmer',
+  ]);
+
+  /** Keys whose value is somewhere to reach that person. */
+  const LINKS = new Set([
+    'site',
+    'website',
+    'url',
+    'homepage',
+    'blog',
+    'twitter',
+    'x',
+    'mastodon',
+    'fediverse',
+    'github',
+    'gitlab',
+    'codeberg',
+    'linkedin',
+    'instagram',
+    'bluesky',
+    'contact',
+    'email',
+    'e-mail',
+    'mail',
+  ]);
+
+  const credits = [];
+  const profiles = [];
+  /** @type {Credit|null} the person the following contact lines belong to */
+  let current = null;
+  let inTeam = true;
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+
+    // A section header both switches context and ends the current person.
+    const section = line.match(/^\/\*+\s*(.+?)\s*\*+\//);
+    if (section) {
+      inTeam = /team|staff|people|author|owner/i.test(section[1]);
+      current = null;
+      continue;
+    }
+
+    if (!line) {
+      current = null;
+      continue;
+    }
+    if (!inTeam) continue;
+
+    const pair = line.match(/^([A-Za-z][\w -]{0,24})\s*:\s*(.+)$/);
+    if (!pair) continue;
+
+    const key = pair[1].trim().toLowerCase();
+    const value = pair[2].trim();
+
+    if (NAMES.has(key)) {
+      const name = cleanName(value);
+      // The role filters apply here exactly as they do to a byline: "Developer:
+      // the web team" names nobody, and a file that says so must not produce a
+      // person called "the web team".
+      current = looksLikePersonName(name)
+        ? credit({ name, role: 'author', source: 'humans-txt', confidence: 0.7, base: baseUrl })
+        : null;
+      if (current) credits.push(current);
+      continue;
+    }
+
+    if (!LINKS.has(key)) continue;
+
+    // A bare handle is not a URL, and which platform it belongs to is exactly
+    // what the key just said.
+    const expanded = expandHandle(key, value);
+
+    // `Site: https://jane.example` is the most useful line in the file and
+    // matches no profile shape, so classifyLink returns null for it — rightly,
+    // since it refuses to file arbitrary links as somebody's website. Here the
+    // key has already said that is what this is, so the fallback is safe and is
+    // limited to the keys that said it.
+    const link = classifyLink(expanded, baseUrl) ?? homepage(expanded, key);
+    if (!link) continue;
+
+    profiles.push({ ...link, source: 'humans-txt' });
+
+    // Attach to the person this block is about, so a two-person file does not
+    // hand one of them the other's accounts. A link before any name belongs to
+    // the site, which is what `feed_links` is for, and the caller stores it
+    // there.
+    if (!current) continue;
+    if (link.network === 'email' && !current.email) current.email = link.handle;
+    if (link.network === 'website' && !current.url) current.url = link.url;
+  }
+
+  return { credits, profiles };
+}
+
+/**
+ * A homepage line from a humans.txt, as a link row.
+ *
+ * Only for the keys that name a site. Everything else that fails to classify is
+ * genuinely unrecognised and is dropped, which is what keeps a `Standards:` or
+ * `Language:` line from becoming a link.
+ *
+ * @param {string} url already expanded to an absolute URL
+ * @param {string} key the humans.txt key it came from
+ * @returns {{ network: string, url: string, handle: string }|null}
+ */
+function homepage(url, key) {
+  if (!['site', 'website', 'url', 'homepage', 'blog'].includes(key)) return null;
+
+  const normalized = normalizeIdentityUrl(url);
+  if (!normalized) return null;
+
+  try {
+    return { network: 'website', url: normalized, handle: new URL(normalized).hostname };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A handle written the way people write them in a humans.txt, as a URL.
+ *
+ * `Twitter: @jane` is the common form and is not a link until it is made one.
+ * A value that is already a URL is left alone.
+ *
+ * @param {string} key the platform, which the key names
+ * @param {string} value
+ * @returns {string}
+ */
+function expandHandle(key, value) {
+  const raw = value.trim();
+  if (/^(?:https?:|mailto:|xmpp:|nostr:)/i.test(raw)) return raw;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) return `mailto:${raw}`;
+
+  const handle = raw.replace(/^@/, '');
+  if (!handle) return '';
+
+  switch (key) {
+    case 'twitter':
+    case 'x':
+      return `https://x.com/${handle}`;
+    case 'github':
+      return `https://github.com/${handle}`;
+    case 'gitlab':
+      return `https://gitlab.com/${handle}`;
+    case 'codeberg':
+      return `https://codeberg.org/${handle}`;
+    case 'linkedin':
+      return `https://www.linkedin.com/in/${handle}`;
+    case 'instagram':
+      return `https://instagram.com/${handle}`;
+    case 'bluesky':
+      return `https://bsky.app/profile/${handle}`;
+    case 'mastodon':
+    case 'fediverse': {
+      // `@jane@example.social` is the only form that names its own host.
+      const parts = handle.split('@');
+      return parts.length === 2 ? `https://${parts[1]}/@${parts[0]}` : '';
+    }
+    default:
+      // site/url/homepage/blog, written without a scheme.
+      return /^[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(handle) ? `https://${handle}` : '';
+  }
 }
 
 /**

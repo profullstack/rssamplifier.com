@@ -17,6 +17,12 @@
  *   parser. This is deliberately *not* the same document as `/api/topics/:slug`:
  *   that lists the feeds filed under a topic, this lists what they published.
  *   A directory listing and a river are different questions.
+ * - **Markdown** (`.md`) — the one a language model reads without being handed a
+ *   parser at all. The same river written as prose: a heading per item, the
+ *   date and byline under it, the summary below that. Nothing polls a `.md`, so
+ *   it is not a subscription format; it is the shape an agent told to "read
+ *   this blog" can use directly, and a machine-readable copy that is pleasant
+ *   to read is this directory's whole pitch.
  * - **M3U** (`.m3u`) and **PLS** (`.pls`) — playlists. Not feeds at all: they
  *   carry no dates, no links and no prose, only an ordered list of media to
  *   play. They exist here because a topic like `jazz` or `radio` is mostly
@@ -44,6 +50,7 @@ export const SYNDICATION_FORMATS = new Map([
   ['xml', { type: 'application/rss+xml; charset=utf-8', label: 'RSS', media: false }],
   ['atom', { type: 'application/atom+xml; charset=utf-8', label: 'Atom', media: false }],
   ['json', { type: 'application/feed+json; charset=utf-8', label: 'JSON Feed', media: false }],
+  ['md', { type: 'text/markdown; charset=utf-8', label: 'Markdown', media: false }],
   ['m3u', { type: 'audio/x-mpegurl; charset=utf-8', label: 'M3U', media: true }],
   ['pls', { type: 'audio/x-scpls; charset=utf-8', label: 'PLS', media: true }],
 ]);
@@ -65,6 +72,8 @@ export function buildSyndication(format, channel, items) {
       return buildAtom(channel, items);
     case 'json':
       return buildJsonFeed(channel, items);
+    case 'md':
+      return buildMarkdown(channel, items);
     case 'm3u':
       return buildM3u(channel, items);
     case 'pls':
@@ -100,7 +109,185 @@ export function buildSyndication(format, channel, items) {
  * @property {string} [feed_title] the publication it came from
  * @property {string} [feed_slug]
  * @property {string} [feed_url] that publication's own feed
+ * @property {boolean} [sponsored] a paid item rather than something a feed published
+ * @property {string|null} [content_html] a ready-made HTML body, used in place
+ *   of `summary`. Only sponsored items carry one — a crawled post's body is
+ *   somebody else's HTML and is deliberately reduced to a plain-text summary.
  */
+
+/**
+ * How often a sponsored item is placed, and how many a document may carry.
+ *
+ * One in ten is the ratio: frequent enough to be worth selling, rare enough
+ * that a reader scrolling a river meets nine real posts first. The cap matters
+ * more than it looks — feeds here go up to 200 items, and at one in ten with no
+ * ceiling a long topic feed would carry twenty ads, which is not a river with
+ * advertising in it, it is an advertising feed.
+ */
+export const AD_EVERY = 10;
+export const AD_MAX = 3;
+
+/**
+ * Where the sponsored items go, as indexes to insert *after*.
+ *
+ * One function rather than two, because the count and the placement have to
+ * agree exactly: every ad fetched costs an impression the moment the ad network
+ * records it, so an ad counted and then not placed is reach an advertiser paid
+ * for and nobody got. `adSlotsFor` is this list's length, and `interleaveAds`
+ * walks this list — neither re-derives the rule.
+ *
+ * **The last slot steps back rather than being dropped.** A feed of exactly ten
+ * items has its only boundary at the very end, and an ad may never trail a
+ * document, so the first version of this dropped it and served no ad at all.
+ * That was not an edge case: **32,114 of the directory's 83,940 feeds with
+ * items carry exactly ten** — the number an RSS document conventionally holds —
+ * so 38% of the per-listing feeds were unsellable by arithmetic alone. Moving
+ * that ad one post earlier keeps both rules a reader can feel (nine real posts
+ * before the first ad, a real post after the last) and costs nothing.
+ *
+ * A list shorter than one full interval still gets nothing. A six-post feed
+ * cannot carry an ad without the ad becoming the feed, and the same rule
+ * governs the web units (see apps/web/src/lib/ads.js).
+ *
+ * @param {number} total how many real items the document will carry
+ * @param {{ every?: number, max?: number }} [opts]
+ * @returns {number[]} ascending item indexes, each meaning "an ad follows this"
+ */
+export function adPositions(total, { every = AD_EVERY, max = AD_MAX } = {}) {
+  const n = Number(total) || 0;
+  const gap = Math.max(1, Math.floor(Number(every) || AD_EVERY));
+  const cap = Math.max(0, Math.floor(Number(max) ?? AD_MAX));
+  if (n < gap || cap === 0) return [];
+
+  const out = [];
+
+  for (let i = gap - 1; i < n && out.length < cap; i += gap) {
+    // Never trailing: an ad as the last entry reads as the feed having ended in
+    // an advertisement. Step back one post instead of skipping the slot.
+    const at = i + 1 < n ? i : i - 1;
+    // Stepping back cannot land on or before the previous ad — that would put
+    // two sponsored items next to each other, which is worse than one fewer.
+    if (at < 0 || (out.length > 0 && at <= out[out.length - 1])) break;
+    out.push(at);
+  }
+
+  return out;
+}
+
+/**
+ * How many sponsored items a list of this length will actually take.
+ *
+ * Exported because the caller has to decide how many ads to *fetch* before it
+ * can interleave them. See `adPositions` for why the two must not disagree.
+ *
+ * @param {number} total how many real items the document will carry
+ * @param {{ every?: number, max?: number }} [opts]
+ * @returns {number}
+ */
+export function adSlotsFor(total, opts) {
+  return adPositions(total, opts).length;
+}
+
+/**
+ * Place sponsored items among real ones.
+ *
+ * Position in the document is only half the job, and the half that does not
+ * matter. **Readers sort by date**, so where an ad *sits* in the XML is
+ * irrelevant next to what date it carries — and an ad dated "now" floats to the
+ * top of the river no matter which index it was written at.
+ *
+ * That is not hypothetical. The first version of this shipped ads dated to the
+ * start of the current UTC day, which is *newer than most of the feed*: the
+ * directory is a river of other people's blogs and the newest post is routinely
+ * a day or more old. All three ads therefore sorted above every real post, and
+ * because they shared one timestamp they arrived as a block of three
+ * advertisements at the top of the feed. Precisely the thing nobody opens.
+ *
+ * So each ad is re-dated to sit just behind the post it follows — one second
+ * older, which is enough to order it and small enough that it reads as
+ * contemporary with its neighbours. Document order and reader order then agree,
+ * and the ads are spread through the river instead of stacked on top of it.
+ *
+ * Re-dating is safe because identity is the guid, not the date: a reader that
+ * has already stored the item keeps whatever date it first saw, and one that
+ * has not gets an item that sorts where we intended.
+ *
+ * Which items an ad follows is `adPositions`' decision, not this function's —
+ * including the short-list rule, and the one that steps the final ad back from
+ * the end of the document rather than dropping it.
+ *
+ * @param {Item[]} items the real posts, in the order they should appear
+ * @param {Item[]} ads sponsored items, already in Item shape
+ * @param {{ every?: number, max?: number }} [opts]
+ * @returns {Item[]} one list, ads interleaved
+ */
+export function interleaveAds(items, ads, opts) {
+  if (!Array.isArray(ads) || ads.length === 0) return items;
+
+  // Only as many slots as there are ads to fill them. Trimming the tail rather
+  // than the head matters: the first slot is the one most readers reach.
+  const at = new Set(adPositions(items.length, opts).slice(0, ads.length));
+  if (at.size === 0) return items;
+
+  const out = [];
+  let placed = 0;
+
+  for (let i = 0; i < items.length; i += 1) {
+    out.push(items[i]);
+    if (at.has(i)) {
+      out.push(datedAfter(ads[placed], items[i]));
+      placed += 1;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * An ad re-dated to sort immediately after the post it follows.
+ *
+ * Falls back to the ad's own date when the preceding post has none — a great
+ * many rows genuinely do not (an item parsed out of a playlist has no date), and
+ * inventing one for the neighbour would be worse than leaving the ad where it
+ * was.
+ *
+ * @param {Item} ad
+ * @param {Item} previous
+ * @returns {Item}
+ */
+function datedAfter(ad, previous) {
+  const at = new Date(String(previous?.published_at ?? ''));
+  if (Number.isNaN(at.getTime())) return ad;
+  return { ...ad, published_at: new Date(at.getTime() - 1000).toISOString() };
+}
+
+/**
+ * Wrap a body in CDATA.
+ *
+ * The one sequence a CDATA section cannot contain is its own terminator, and
+ * there is no escape for it — the section has to be closed and reopened around
+ * the `>`. Only sponsored bodies take this path and ours never produce `]]>`,
+ * but the copy inside them is written by an advertiser, so this is a
+ * correctness guard rather than a theoretical one.
+ *
+ * @param {unknown} html
+ * @returns {string}
+ */
+function cdata(html) {
+  const safe = String(html ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+  return `<![CDATA[${safe.replace(/]]>/g, ']]]]><![CDATA[>')}]]>`;
+}
+
+/**
+ * The disclosure label carried on a sponsored item.
+ *
+ * A constant rather than a per-item field: a reader filtering on `<category>`
+ * needs one term to filter on, and letting an advertiser choose the wording
+ * their own disclosure appears under defeats the point of having one.
+ */
+const SPONSORED = 'Sponsored';
 
 // --------------------------------------------------------------------- RSS
 
@@ -133,7 +320,15 @@ export function buildRss(channel, items) {
 
       if (item.url) parts.push(`      <link>${esc(item.url)}</link>`);
       if (item.published_at) parts.push(`      <pubDate>${esc(rfc822(item.published_at))}</pubDate>`);
-      if (item.summary) parts.push(`      <description>${esc(item.summary)}</description>`);
+      // A sponsored item brings its own HTML body and has to be labelled where
+      // a reader will actually see it: <category> is the machine-readable half,
+      // and the title it arrived with already carries the human half.
+      if (item.sponsored) parts.push(`      <category>${esc(SPONSORED)}</category>`);
+      if (item.content_html) {
+        parts.push(`      <description>${cdata(item.content_html)}</description>`);
+      } else if (item.summary) {
+        parts.push(`      <description>${esc(item.summary)}</description>`);
+      }
       // dc:creator rather than <author>, which RSS defines as an email address.
       // Almost nothing publishes one, and readers show dc:creator anyway.
       if (item.author) parts.push(`      <dc:creator>${esc(item.author)}</dc:creator>`);
@@ -210,7 +405,15 @@ export function buildAtom(channel, items) {
 
       if (item.published_at) parts.push(`    <published>${esc(item.published_at)}</published>`);
       if (item.url) parts.push(`    <link rel="alternate" type="text/html" href="${esc(item.url)}" />`);
-      if (item.summary) parts.push(`    <summary type="text">${esc(item.summary)}</summary>`);
+      if (item.sponsored) {
+        parts.push(`    <category term="sponsored" label="${esc(SPONSORED)}" />`);
+        parts.push(`    <rights>${esc(SPONSORED)}</rights>`);
+      }
+      if (item.content_html) {
+        parts.push(`    <content type="html">${cdata(item.content_html)}</content>`);
+      } else if (item.summary) {
+        parts.push(`    <summary type="text">${esc(item.summary)}</summary>`);
+      }
       if (item.author) parts.push(`    <author><name>${esc(item.author)}</name></author>`);
       if (item.feed_title) parts.push(`    <source><title>${esc(item.feed_title)}</title></source>`);
       // Atom has no image element either, and the same Media RSS namespace is
@@ -270,6 +473,14 @@ export function buildJsonFeed(channel, items) {
 
       if (item.url) out.url = item.url;
       if (item.summary) out.summary = item.summary;
+      if (item.content_html) out.content_html = item.content_html;
+      // JSON Feed has no notion of an ad, so the disclosure goes in both the
+      // human field readers display and an extension field an agent can branch
+      // on. The `_` prefix is the spec's own marker for "this is ours".
+      if (item.sponsored) {
+        out.tags = [SPONSORED];
+        out._crawlproof = { sponsored: true, label: SPONSORED };
+      }
       if (item.image_url) out.image = item.image_url;
       if (item.published_at) out.date_published = item.published_at;
       if (item.author) out.authors = [{ name: item.author }];
@@ -298,6 +509,105 @@ export function buildJsonFeed(channel, items) {
   };
 
   return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+// --------------------------------------------------------------- markdown
+
+/**
+ * The same river, as a Markdown document.
+ *
+ * For the readers that are not feed readers: an agent handed a URL, a curl in a
+ * terminal, a repository that wants the last twenty posts checked in as text.
+ * All of those can parse RSS and would mostly rather not, and this directory's
+ * pitch is that the machine-readable copy is the good copy.
+ *
+ * Two rules keep it honest. Summaries are already plain text by the time they
+ * arrive — the crawler reduces somebody else's HTML on the way in — so the only
+ * escaping needed is for characters that would turn a title into markup. And a
+ * sponsored item says so on its own line under the heading rather than in a
+ * footnote: disclosure a reader has to go looking for is not disclosure.
+ *
+ * @param {Channel} channel
+ * @param {Item[]} items
+ * @returns {string}
+ */
+export function buildMarkdown(channel, items) {
+  const out = [`# ${mdText(channel.title)}`, ''];
+
+  if (channel.description) out.push(mdText(channel.description), '');
+
+  // Two trailing spaces on the first line: a hard break, so the pair reads as
+  // two lines in every renderer rather than one run-on sentence.
+  out.push(`Page: <${channel.link}>  `, `Feed: <${channel.selfUrl}>`, '');
+
+  if (items.length === 0) {
+    out.push('_Nothing published yet._', '');
+    return `${out.join('\n')}\n`;
+  }
+
+  out.push('---', '');
+
+  for (const item of items) {
+    // The item's own title, not `entryTitle` — that prefixes the publication
+    // for the playlists, where there is no other line to carry it. Here there
+    // is one directly underneath, and a heading reading "Quantum Notes -
+    // Entanglement, briefly" above "Quantum Notes" says it twice.
+    const title = mdText(item.title || '(untitled)');
+    // The link is in the heading rather than beside it, so somebody skimming
+    // headings can open one without hunting for a URL underneath.
+    out.push(item.url ? `## [${title}](${item.url})` : `## ${title}`);
+
+    // One meta line — date, byline, publication, and the sponsorship mark when
+    // there is one. A middle dot rather than four bullets, which would run
+    // longer than most of the summaries they sit above.
+    const meta = [];
+    if (item.published_at) meta.push(isoDate(item.published_at));
+    if (item.author) meta.push(mdText(item.author));
+    if (item.feed_title) meta.push(mdText(item.feed_title));
+    if (item.sponsored) meta.push(`**${SPONSORED}**`);
+    if (meta.length) out.push('', `_${meta.join(' · ')}_`);
+
+    if (item.summary) out.push('', mdText(item.summary));
+    if (playable(item)) out.push('', `[Listen](${item.audio_url})`);
+
+    out.push('');
+  }
+
+  return `${out.join('\n')}\n`;
+}
+
+/**
+ * Text that will not be read as markup.
+ *
+ * Deliberately narrow: the characters that begin an inline construct, plus the
+ * newlines that would end a paragraph early. Escaping every punctuation mark is
+ * the other common approach, and it produces a document full of backslashes for
+ * the sake of a title nobody was going to misread.
+ *
+ * @param {unknown} v
+ * @returns {string}
+ */
+function mdText(v) {
+  return String(v ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/([\\`*_[\]<>])/g, '\\$1')
+    .trim();
+}
+
+/**
+ * The date, as a date — no clock, no zone.
+ *
+ * A river read as prose is read by somebody deciding whether this is recent,
+ * and 2026-08-19 answers that where a full timestamp asks them to parse it
+ * first. Anything unparseable falls back to the raw value rather than to
+ * "Invalid Date".
+ *
+ * @param {string} iso
+ * @returns {string}
+ */
+function isoDate(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toISOString().slice(0, 10);
 }
 
 // --------------------------------------------------------------- playlists

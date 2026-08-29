@@ -9,9 +9,12 @@ import { shareText } from '../../../lib/share.js';
 import Ad from '../../Ad.jsx';
 import AdBanner from '../../AdBanner.jsx';
 import FollowControls from '../../FollowControls.jsx';
+import ListFilter from '../../ListFilter.jsx';
+import { FILTER_FROM } from '../../../lib/listFilter.js';
 import Share from '../../Share.jsx';
 import { Avatar } from '../../Thumb.jsx';
 import { feedImage } from '../../../lib/thumbs.js';
+import { jsonLdScript } from '../../../lib/jsonld.js';
 
 /** Feeds per page. Matches the category pages. */
 export const PAGE_SIZE = 60;
@@ -28,10 +31,12 @@ export const PAGE_SIZE = 60;
  * @returns {string[]}
  */
 function formatsFor(group) {
-  // The whole topic keeps all five: it contains whatever it contains, and a
+  // The whole topic keeps all of them: it contains whatever it contains, and a
   // topic with a single podcast in it still has a playlist worth offering.
-  if (!group) return ['rss', 'atom', 'json', 'm3u', 'pls'];
-  return group.playlists ? ['rss', 'atom', 'json', 'm3u', 'pls'] : ['rss', 'atom', 'json'];
+  if (!group) return ['rss', 'atom', 'json', 'md', 'm3u', 'pls'];
+  return group.playlists
+    ? ['rss', 'atom', 'json', 'md', 'm3u', 'pls']
+    : ['rss', 'atom', 'json', 'md'];
 }
 
 /**
@@ -46,13 +51,16 @@ function formatTitle(ext, what) {
     rss: 'RSS 2.0',
     atom: 'Atom 1.0',
     json: 'JSON Feed 1.1',
+    md: 'Markdown',
     m3u: 'M3U playlist',
     pls: 'PLS playlist',
   };
 
-  return ext === 'm3u' || ext === 'pls'
-    ? `${names[ext]} — the playable media from ${what}`
-    : `${names[ext]} — recent posts from ${what}`;
+  if (ext === 'm3u' || ext === 'pls') return `${names[ext]} — the playable media from ${what}`;
+  // Not a subscription: nothing polls a `.md`. It is the same river written as
+  // prose, for reading and for handing to something that reads.
+  if (ext === 'md') return `${names[ext]} — recent posts from ${what}, as a document to read`;
+  return `${names[ext]} — recent posts from ${what}`;
 }
 
 /**
@@ -142,7 +150,7 @@ export default async function TopicListing({ topic, counts, group = null, page =
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       <p className="eyebrow">
@@ -245,6 +253,10 @@ export default async function TopicListing({ topic, counts, group = null, page =
       </div>
 
       <Ad format={AD_TEXT} />
+
+      {rows.length >= FILTER_FROM && (
+        <ListFilter target=".feed-list .feed-row" noun="feed" searchHref="/search?q=" />
+      )}
 
       <div className="feed-list">
         {rows.flatMap((f, i) => {

@@ -1620,6 +1620,30 @@ body:has(.reader) {
   padding: 1rem 0.5rem;
 }
 
+/* A post whose picture is the post — a photoblog entry, a comic, an image
+   board's item — at the size it was published.
+
+   Centred with auto margins rather than with the translate trick
+   `.reader-article.pictures img` uses: that one is escaping a fixed measure,
+   and this paragraph already has the column's full width to work in.
+
+   Never scaled up, for the reason written over that rule. Where the only
+   picture we hold is a feed's thumbnail, 131px stretched across a monitor is
+   worse than 131px. */
+.reader-picture {
+  margin: 0 auto 1.2rem;
+  text-align: center;
+}
+
+.reader-picture img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  margin-inline: auto;
+  border-radius: 8px;
+}
+
 .button {
   display: inline-block;
   padding: 0.6rem 1.1rem;
@@ -2311,6 +2335,138 @@ select {
   padding: 1rem 1.1rem;
 }
 
+.stat-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.stat-link:hover,
+.stat-link:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.stat-link:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.stat-button {
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crawl-error-browser {
+  grid-column: 1 / -1;
+  background: var(--surface);
+  padding: 1rem 1.1rem 1.2rem;
+  min-width: 0;
+}
+
+.crawl-error-browser:focus {
+  outline: none;
+}
+
+.crawl-error-browser-head,
+.crawl-error-browser-meta,
+.crawl-error-browser-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.crawl-error-browser-head {
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.9rem;
+}
+
+.crawl-error-browser-head h2,
+.crawl-error-browser-head p {
+  margin: 0;
+}
+
+.crawl-error-browser-head p {
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.crawl-error-browser-actions button,
+.crawl-error-browser-meta button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0.3rem 0.55rem;
+  cursor: pointer;
+}
+
+.crawl-error-browser-actions button:hover,
+.crawl-error-browser-actions button:focus-visible,
+.crawl-error-browser-meta button:hover,
+.crawl-error-browser-meta button:focus-visible {
+  border-color: var(--accent);
+}
+
+.crawl-error-browser-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 32rem;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.crawl-error-browser-list li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.crawl-error-browser-meta {
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+}
+
+.crawl-error-browser-meta time {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.crawl-error-browser-meta button {
+  margin-left: auto;
+}
+
+.crawl-error-browser-list pre {
+  margin: 0.5rem 0 0;
+  padding: 0.65rem 0.75rem;
+  background: var(--surface-2, var(--accent-soft));
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.crawl-error-copy-failed {
+  color: var(--accent);
+}
+
+@media (max-width: 40rem) {
+  .crawl-error-browser-head {
+    display: block;
+  }
+
+  .crawl-error-browser-actions {
+    margin-top: 0.75rem;
+  }
+}
+
 .stat-value {
   font-family: var(--serif);
   font-size: 1.6rem;
@@ -2433,6 +2589,26 @@ select {
   font-size: 0.7rem;
   color: var(--accent);
   margin-top: 0.3rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.job-errors:hover,
+.job-errors:focus-visible {
+  text-decoration: underline;
+}
+
+.error-count-button {
+  border: 0;
+  background: transparent;
+  color: var(--link, var(--accent));
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .crawl-error {
@@ -2442,6 +2618,33 @@ select {
   max-width: 28rem;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.crawl-error-details {
+  max-width: 28rem;
+}
+
+.crawl-error-details summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.crawl-error-details[open] summary {
+  color: var(--accent);
+  margin-bottom: 0.35rem;
+}
+
+.crawl-error-details div {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+#daemon-errors,
+#failing-feeds {
+  scroll-margin-top: 1rem;
 }
 
 /*
@@ -2699,6 +2902,80 @@ select {
 
 .chart-swatch-2 {
   background: var(--chart-2);
+}
+
+/* Queue burndown: small multiples, each panel at its own scale. */
+.burndown {
+  margin: 1.5rem 0 0;
+}
+
+.burndown-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.6rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+}
+
+.burndown-grid {
+  display: grid;
+  /* Two or three to a row on a desktop, one on a phone. A panel narrower than
+     this stops being readable as a slope, which is the only thing it is for. */
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.25rem;
+}
+
+.burndown-panel {
+  margin: 0;
+}
+
+.burndown-panel figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.burndown-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.burndown-now {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+/* The direction over the window. Never colour alone — the sign and the word
+   "level" carry it — and deliberately not a red/green pair, which this palette
+   does not have and which would read as good/bad when a deep update queue is
+   neither. A growing queue simply gets full-strength ink so the eye lands on
+   it; everything else recedes. */
+.burndown-change {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.burndown-change.is-up {
+  color: var(--ink);
+}
+
+/* The arithmetic a zeroed axis cannot draw: a queue moving 0.5% a day is a flat
+   line and a real date. */
+.burndown-eta {
+  margin: 0.25rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink);
+}
+
+.burndown-what {
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 
 .chart-data {
@@ -3419,4 +3696,169 @@ html:not([data-dock]) .playlist-hint {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.9rem;
   }
+}
+
+/* When a feed was last read, and whether it is still publishing.
+   Sits under the feed's meta line and is shown in every state, including the
+   healthy one — see Freshness.jsx for why a signal that only appears when
+   something is wrong carries almost no information. */
+.freshness {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+  border-left: 3px solid var(--line);
+  padding: 0.5rem 0 0.5rem 0.9rem;
+  margin: 0.9rem 0 0;
+}
+
+.freshness strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.freshness time {
+  /* The instant is in the datetime attribute; the prose is what people read.
+     No underline: this is not a link and must not invite a click. */
+  border-bottom: 1px dotted var(--line);
+}
+
+.freshness-note {
+  display: inline-block;
+  margin-top: 0.35rem;
+}
+
+/* Live is the ordinary state and is deliberately quiet — a badge on every
+   healthy feed in the directory should not shout. */
+.freshness-live {
+  border-color: var(--accent);
+}
+
+/* Dormant is the one this exists for: our copy is current and the publisher
+   has stopped. It is not an error, so it is marked rather than alarmed. */
+.freshness-dormant {
+  border-color: var(--muted);
+  background: var(--accent-soft);
+}
+
+.freshness-overdue,
+.freshness-failing,
+.freshness-unread {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* A person's page: picture, name, bio, then the links as things to press.
+   Deliberately the shape everybody already reads as "a page about a person" —
+   somebody arriving from a byline wants who this is and where else to find
+   them, in that order. See AuthorLinks.jsx for why the links stack here and
+   stay inline on a feed page. */
+.profile {
+  margin: 0 0 1.4rem;
+}
+
+.profile-avatar {
+  display: block;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  margin-bottom: 0.9rem;
+  /* Somebody else's host, and people move: a picture that fails to load must
+     leave a gap rather than a broken-image icon. */
+  background: var(--accent-soft);
+}
+
+.profile-bio {
+  font-size: 1.02rem;
+  line-height: 1.55;
+  color: var(--fg);
+  margin: 0.5rem 0 0;
+  max-width: 38rem;
+}
+
+/* The stacked, tappable variant. Full-width rows with a comfortable target,
+   because on a phone a row of small inline text is a row of missed taps. */
+.author-links-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0 0 1.8rem;
+  max-width: 32rem;
+}
+
+.author-links-stack a {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.95rem;
+  min-height: 2.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-decoration: none;
+  background: var(--bg);
+}
+
+.author-links-stack a:hover,
+.author-links-stack a:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.author-links-stack .author-link-name {
+  font-weight: 600;
+}
+
+/* The handle, shown rather than hidden in a title attribute — a title is
+   invisible on a touch screen, and this is the half somebody wants to copy. */
+.author-links-stack .author-link-handle {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- list filter
+ *
+ * The type-to-narrow box above a long list (<ListFilter>). It sits between the
+ * heading and the list itself, so it reads as belonging to the list rather than
+ * to the page, and it is absent entirely without JavaScript — everything below
+ * it still works, and the pager remains the way through.
+ */
+
+.list-filter {
+  margin: 0 0 1.25rem;
+}
+
+.list-filter input[type='search'] {
+  /* Narrower than a form field on purpose: this one filters what is already on
+     screen rather than asking a question of the server, and a full-width box
+     promises a search it cannot do. */
+  max-width: 26rem;
+}
+
+.list-filter .filter-count {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin: 0.45rem 0 0;
+}
+
+.list-filter .empty {
+  padding: 1.5rem 0 0;
+  text-align: left;
+}
+
+/* Hidden rather than removed: the filter puts every row back the moment the box
+   is cleared, so the rows never leave the document. !important because the rows
+   it hides carry their own display — a topic chip is inline-flex, a feed row is
+   a grid — and either would win over a plain display:none here. */
+.filtered-out {
+  display: none !important;
 }

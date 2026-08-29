@@ -61,6 +61,7 @@ const PREFETCH_DEPTH = 6;
  *   submissionId?: string|null,
  *   offsetMinutes?: number,
  *   ratePerMinute?: number,
+ *   priority?: number,
  * }} [opts]
  * @returns {Promise<{ queued: number, skipped: number, invalid: number, total: number }>}
  */
@@ -68,6 +69,9 @@ export async function queueFeeds(db, entries, opts = {}) {
   const submissionId = opts.submissionId ?? null;
   const rate = Math.max(1, opts.ratePerMinute ?? DEFAULT_RATE);
   const offsetMs = Math.max(0, opts.offsetMinutes ?? 0) * 60_000;
+  // The express lane, set by the submit route for a submission small enough to
+  // have been typed rather than exported. See `expressFeeds`.
+  const priority = Number(opts.priority) > 0 ? 1 : 0;
 
   // Deduplicated here as well as in the database, because two identical URLs in
   // the same batch would otherwise both be "not yet known" and the second would
@@ -120,8 +124,17 @@ export async function queueFeeds(db, entries, opts = {}) {
     // Spread within the batch and offset by everything queued before it, so a
     // catalogue uploaded in four hundred pieces still schedules as one steady
     // line rather than four hundred overlapping four-hour bursts.
-    next_fetch_at: nowIso(offsetMs + (i / rate) * 60_000),
+    //
+    // Except in the express lane, where the spread would defeat the purpose:
+    // `expressFeeds` only returns what is already due, so a submission of fifty
+    // blogs scheduled at 240 a minute would have its last one wait twelve
+    // seconds to become eligible and then be crawled a tick later still. The
+    // burst this protects against is a catalogue of hundreds of thousands; a
+    // hand submission is capped at a hundred and is the thing somebody is
+    // sitting and watching.
+    next_fetch_at: nowIso(priority > 0 ? 0 : offsetMs + (i / rate) * 60_000),
     submission_id: submissionId,
+    priority,
   }));
 
   let queued = 0;

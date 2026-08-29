@@ -48,7 +48,7 @@ export default async function SignupPage({ searchParams }) {
         </p>
       )}
 
-      {params.error && <p className="notice">{explainSignInError(params.error)}</p>}
+      {params.error && <p className="notice">{explainSignInError(params.error, params.retry)}</p>}
 
       <SignInPanels
         from="/signup"

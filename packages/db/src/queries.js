@@ -12,11 +12,53 @@ import { newId, nowIso } from './client.js';
  * @typedef {import('@libsql/client').Client} Client
  */
 
+/**
+ * Run one write through whatever serialisation the client has.
+ *
+ * `queueWrites` and `serializeWrites` both override exactly one method —
+ * `client.batch` — because that is the one that opens a transaction. Nothing
+ * touches `client.execute`. That is right for reads, which must never queue
+ * behind a crawl, and it quietly excused every *write* issued as a single
+ * statement: those go straight at the database, so instead of taking their turn
+ * with the queued writes they compete with them for the one lock SQLite has.
+ *
+ * The daemon's bookkeeping is all of that shape and some of it is hot. The crawl
+ * log flushes every two seconds; the throughput and queue rollups land on their
+ * own timers; the log prune runs hourly. Measured on production, the queue
+ * sample failed on **every single tick** — 08:12:57, 08:22:57, 08:32:57 — always
+ * with the 30-second deadline, while the reads feeding it all returned inside
+ * 1.4 seconds. It was not slow. It was starving: a one-row upsert that could not
+ * get the lock between two queued transactions, and gave up.
+ *
+ * A single-statement batch is the same statement with a turn in the queue. It
+ * waits `WAIT_MS` rather than the request deadline, which is the difference
+ * between waiting and failing, and it stops these writes making the contention
+ * they were dying of.
+ *
+ * @param {Client} db
+ * @param {{ sql: string, args?: unknown[] }} statement
+ * @returns {Promise<{ rowsAffected?: number, rows?: unknown[] }>}
+ */
+async function writeOne(db, statement) {
+  const [result] = await db.batch([statement], 'write');
+  return /** @type {any} */ (result ?? { rowsAffected: 0, rows: [] });
+}
+
 /** Columns exposed to callers; content_html is deliberately excluded from lists. */
+// The scheduling signals on the last line are not read by any page, and they are
+// here anyway. `crawlFeed` takes a feed row and decides from these four columns
+// whether to ask conditionally and whether the contents changed; handed a row
+// selected without them it cannot tell "this column was not selected" from "this
+// feed has no fingerprint yet", so it concludes the feed has changed -- every
+// time, for ever. That pins the feed at the floor and writes a change-log entry
+// per crawl, which then reads back as a feed publishing hourly. Nothing errors.
+// They are a few hundred bytes next to `description` and `categories`, which is
+// a cheap price for a failure mode that would be invisible.
 const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, image_url,
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
-  fetch_interval_minutes, next_fetch_at, item_count, created_at, updated_at, source_kind,
-  card_url, card_width, card_height, card_type, authors_checked_at`;
+  fetch_interval_minutes, next_fetch_at, item_count, last_published_at, created_at, updated_at, source_kind,
+  card_url, card_width, card_height, card_type, authors_checked_at,
+  http_etag, http_last_modified, content_hash, change_log`;
 
 /** The categories the directory is browsable by. */
 export const KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
@@ -305,24 +347,67 @@ export async function insertFeed(db, feed) {
 /**
  * Insert items, ignoring ones already stored for this feed.
  *
- * Uses a single batch so one round trip covers the whole feed rather than one
- * per item — Turso is a network database and per-statement latency dominates.
+ * Uses one multi-row statement so one round trip covers the whole feed rather
+ * than one per item — Turso is a network database and request latency dominates.
  *
  * @param {Client} db
  * @param {string} feedId
  * @param {Array<object>} items
- * @returns {Promise<number>} statements sent
+ * @returns {Promise<number>} items offered
  */
 export async function upsertItems(db, feedId, items) {
-  const rows = items.filter((i) => i.guid);
-  if (rows.length === 0) return 0;
+  const statement = itemStatement(feedId, items, nowIso());
+  if (!statement) return 0;
 
-  const now = nowIso();
-  const statements = rows.map((i) => ({
+  await db.execute(statement);
+  // How many items were **offered**, not how many were new. Every crawl re-sends
+  // the whole document and the conflict clause updates the rows already there,
+  // so there is no cheap way to tell the two apart here — and reading this as
+  // "new items" silently disables the crawler's backoff. `crawlFeed` derives the
+  // real figure from the change in the stored total.
+  return statement.rows;
+}
+
+/**
+ * One multi-row insert-or-update for the items in a feed document.
+ *
+ * A multi-row statement is important on the remote database: ten individual
+ * autocommit requests are ten network round trips and ten turns through the
+ * writer, while this is one of each. It also gives catch-up mode a bounded
+ * critical path without opening the explicit transaction lane that is
+ * currently taking tens of seconds even for `select 1`.
+ *
+ * @param {string} feedId
+ * @param {object[]} items
+ * @param {string} now
+ * @returns {{ sql: string, args: unknown[], rows: number }|null}
+ */
+function itemStatement(feedId, items, now) {
+  // Newest first, then capped. A feed that ships its entire archive -- and they
+  // exist, up to 1,494 entries in a production sample -- otherwise costs a
+  // single first crawl one row-write per entry, and there are 302k feeds in the
+  // queue that have never been read. Capping the *write* rather than the stored
+  // total is what keeps the archive growing: later crawls add whatever is new,
+  // so a feed accumulates history at the rate it publishes instead of arriving
+  // all at once.
+  //
+  // Undated items sort last rather than being dropped: plenty of the small web
+  // publishes no dates at all, and a feed with none would otherwise have its
+  // items chosen arbitrarily.
+  const rows = items
+    .filter((i) => i.guid)
+    .slice()
+    .sort((a, b) => published(b) - published(a))
+    .slice(0, ITEMS_PER_CRAWL);
+
+  if (rows.length === 0) return null;
+
+  const placeholders = rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',\n        ');
+  return {
     sql: `insert into feed_items
-      (id, feed_id, guid, url, title, summary, content_html, author, image_url, published_at,
+      (id, feed_id, guid, url, title, summary, content_chars, author, image_url, published_at,
        categories, audio_url, audio_type, audio_bytes, audio_seconds, created_at, cluster_key)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      values ${placeholders}
       on conflict (feed_id, guid) do update set
         -- An episode already stored keeps its row, but a re-crawl fills in the
         -- audio it was stored without. Items imported before the media columns
@@ -332,7 +417,7 @@ export async function upsertItems(db, feedId, items) {
         -- The picture heals the same way, and for a bigger population: the
         -- parser only ever read media:thumbnail and an image enclosure, so
         -- four fifths of the posts in the directory were stored without one
-        -- that their feed was in fact carrying. This is the whole backfill —
+        -- that their feed was in fact carrying. This is the whole backfill --
         -- every feed is re-crawled on its own timer, so the column fills in
         -- over one crawl cycle with no migration and no script to remember.
         --
@@ -344,39 +429,314 @@ export async function upsertItems(db, feedId, items) {
         audio_url = coalesce(feed_items.audio_url, excluded.audio_url),
         audio_type = coalesce(feed_items.audio_type, excluded.audio_type),
         audio_bytes = coalesce(feed_items.audio_bytes, excluded.audio_bytes),
-        audio_seconds = coalesce(feed_items.audio_seconds, excluded.audio_seconds)`,
-    args: [
-      newId(),
-      feedId,
-      i.guid,
-      i.url || null,
-      i.title || '(untitled)',
-      i.summary || null,
-      i.contentHtml || null,
-      i.author || null,
-      i.imageUrl || null,
-      i.publishedAt ?? null,
-      JSON.stringify(Array.isArray(i.categories) ? i.categories : []),
-      i.audio?.url ?? null,
-      i.audio?.type ?? null,
-      i.audio?.bytes ?? null,
-      i.audio?.seconds ?? null,
-      now,
-      // Computed on the way in, so the river never pays for it. An empty string
-      // means "looked at, deliberately not groupable"; NULL is reserved for
-      // rows the backfill worker has not reached yet, and writing NULL here
-      // would put every new item back into its queue forever.
-      clusterKey(i.title || '') ?? '',
-    ],
-  }));
+        audio_seconds = coalesce(feed_items.audio_seconds, excluded.audio_seconds),
+        content_chars = coalesce(feed_items.content_chars, excluded.content_chars)
+      -- The guard, and the reason it is worth the five lines.
+      --
+      -- Every crawl re-offers the publisher's entire document, so this conflict
+      -- clause fires for every item the feed still lists -- and until this
+      -- WHERE existed it *rewrote* every one of those rows to assign them the
+      -- values they already held. With ~62k active feeds carrying ~250 items
+      -- each, a single pass over the directory was millions of row-writes that
+      -- changed nothing. The account was at 286% of its rows-written quota.
+      --
+      -- It buys no latency: a write transaction against this database costs the
+      -- same whatever is inside it (a 1-row upsert, a 100-row upsert and a
+      -- no-op all measured 30-50 seconds), so skipping the row work does not
+      -- make the crawl faster. What it buys is quota, which is what is
+      -- throttling the writes in the first place.
+      --
+      -- Every branch mirrors a coalesce above: update only if this crawl can
+      -- actually fill in something the stored row is missing.
+      where (feed_items.image_url is null and excluded.image_url is not null)
+         or (feed_items.audio_url is null and excluded.audio_url is not null)
+         or (feed_items.audio_type is null and excluded.audio_type is not null)
+         or (feed_items.audio_bytes is null and excluded.audio_bytes is not null)
+         or (feed_items.audio_seconds is null and excluded.audio_seconds is not null)
+         or (feed_items.content_chars is null and excluded.content_chars is not null)`,
+    args: rows.flatMap((i) => [
+        newId(),
+        feedId,
+        i.guid,
+        i.url || null,
+        i.title || '(untitled)',
+        i.summary || null,
+        // The length, not the body -- see 0031. Payload size genuinely does not
+        // decide how long a single write takes here (a 1.1 MB batch beat a 12 KB
+        // one), but it decides how big the database gets, and size is what makes
+        // write slots scarce. This column was 10 GB of 14. The body a reader
+        // actually opens is fetched then and cached in `item_extracts`; the only
+        // question ever asked of the stored copy was how long it was.
+        textLength(i.contentHtml),
+        i.author || null,
+        i.imageUrl || null,
+        i.publishedAt ?? null,
+        JSON.stringify(Array.isArray(i.categories) ? i.categories : []),
+        i.audio?.url ?? null,
+        i.audio?.type ?? null,
+        i.audio?.bytes ?? null,
+        i.audio?.seconds ?? null,
+        now,
+        // Computed on the way in, so the river never pays for it. An empty string
+        // means "looked at, deliberately not groupable"; NULL is reserved for
+        // rows the backfill worker has not reached yet, and writing NULL here
+        // would put every new item back into its queue forever.
+        clusterKey(i.title || '') ?? '',
+      ]),
+    rows: rows.length,
+  };
+}
 
-  await db.batch(statements, 'write');
-  // How many items were **offered**, not how many were new. Every crawl re-sends
-  // the whole document and the conflict clause updates the rows already there,
-  // so there is no cheap way to tell the two apart here — and reading this as
-  // "new items" silently disables the crawler's backoff. `crawlFeed` derives the
-  // real figure from the change in the stored total.
-  return statements.length;
+/**
+ * How many items one crawl may write.
+ *
+ * Not how many a feed may have. See `itemStatement`: a crawl stores the newest
+ * this many, and the next crawl stores whatever has appeared since, so a feed's
+ * archive still grows -- it just stops arriving in one 1,500-row transaction on
+ * a database whose write path is the scarce resource.
+ */
+const ITEMS_PER_CRAWL = Number(process.env['ITEMS_PER_CRAWL']) || 50;
+
+/**
+ * Catch-up mode avoids Turso's pathologically slow explicit transaction lane.
+ * This is opt-in because a local SQLite file has no network lock queue and is
+ * better served by the atomic transaction below.
+ */
+const CRAWL_AUTOCOMMIT = ['1', 'true'].includes(
+  String(process.env['TURSO_CRAWL_AUTOCOMMIT'] ?? '').toLowerCase(),
+);
+
+/** @type {WeakMap<Client, Promise<unknown>>} */
+const crawlWriteTails = new WeakMap();
+
+/**
+ * An item's publication time as a number, for sorting. Undated sorts last.
+ *
+ * @param {{ publishedAt?: unknown }} item
+ * @returns {number}
+ */
+function published(item) {
+  const t = Date.parse(String(item?.publishedAt ?? ''));
+  return Number.isFinite(t) ? t : -Infinity;
+}
+
+/**
+ * How much text a body carries, with the markup taken out.
+ *
+ * Deliberately identical to `textLength` in apps/web/src/lib/media.js, which is
+ * where this measurement is consumed and where it used to be taken. It moved to
+ * the write path when the body stopped being stored: the reader cannot measure
+ * what it is not given, so the crawl measures it once instead.
+ *
+ * @param {unknown} html
+ * @returns {number|null} null when the feed shipped no body at all, which is
+ *   different from an empty one and is what the coalesce above relies on.
+ */
+function textLength(html) {
+  if (html === null || html === undefined) return null;
+  return String(html)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().length;
+}
+
+
+/**
+ * Store a crawl's items and settle the feed row.
+ *
+ * This is `upsertItems` + `countItems` + `markCrawlSuccess` fused, and the
+ * reason to fuse them is that against this database a write transaction costs
+ * essentially the same whatever is inside it. Measured on production, an
+ * *empty* write transaction — `select 1` submitted in write mode, touching
+ * nothing — took **29 to 118 seconds**, while a read took 100ms and a plain
+ * select of 100 items took 90ms. A 100-row upsert and a 1-row upsert and a
+ * no-op all landed within noise of each other. The cost is acquiring the write
+ * path at all, not the work done once it is held.
+ *
+ * Ordinarily these statements use one atomic transaction. During a large
+ * first-crawl catch-up, production can set `TURSO_CRAWL_AUTOCOMMIT=1`: items
+ * become one multi-row autocommit and the feed row becomes a second. Those two
+ * writes are serialized in-process, because SQLite still has one writer and
+ * making six workers race merely moves the queue back to the database. If the
+ * first statement lands and the second fails, the feed remains due and the
+ * idempotent item upsert is retried; partial progress is therefore safe.
+ *
+ * The interval ladder is duplicated across two SET expressions rather than
+ * computed once, which looks like a mistake and is not: SQLite evaluates every
+ * right-hand side of an UPDATE against the **old** row, so `next_fetch_at` has
+ * to re-derive the same interval it cannot read back from
+ * `fetch_interval_minutes`. Both copies must stay in step with
+ * `nextIntervalMinutes` in packages/ingest/src/crawl.js, which is the JS
+ * statement of the same ladder and the one the tests exercise.
+ *
+ * @param {Client} db
+ * @param {string} id feed id
+ * @param {object[]} items parsed items, as `upsertItems` takes them
+ * @param {object} feed parsed feed metadata, as `markCrawlSuccess` takes it
+ * @param {number} previousItemCount `item_count` from the due row
+ * @param {number|null} intervalMinutes the interval the caller worked out, or
+ *   null to let the SQL ladder below decide
+ * @param {string|null} lastPublishedAt newest believable date in the document
+ * @param {Array<{ sql: string, args: unknown[] }>} extra topics and credits
+ * @param {{ etag?: string|null, lastModified?: string|null, contentHash?: string|null, changeLog?: string|null }} [signals]
+ *   what this crawl learned about when to come back -- see migration 0032. An
+ *   object rather than four more positional parameters, which at this arity is
+ *   the difference between a readable call site and a row of nulls nobody can
+ *   count. Every field is written with `coalesce(?, column)`, so omitting one
+ *   keeps what was there rather than clearing it: a server that stopped sending
+ *   an ETag has not told us the old one is wrong about anything else.
+ * @returns {Promise<{ total: number, stored: number }>} `stored` is the change
+ *   in the stored total — posts actually new, not posts offered.
+ */
+export async function storeCrawl(
+  db,
+  id,
+  items,
+  feed,
+  previousItemCount = 0,
+  intervalMinutes = null,
+  lastPublishedAt = null,
+  extra = [],
+  signals = {},
+) {
+  const now = nowIso();
+  const before = Number(previousItemCount) || 0;
+
+  // How long until this feed is read again, and there are two ways to know.
+  //
+  // Usually the caller has already worked it out from the dates in the document
+  // it just parsed — see `intervalFromDates` in packages/ingest/src/cadence.js,
+  // which schedules a feed on its own publishing rhythm rather than on a fixed
+  // ladder. That is by far the better answer and it is free, since the document
+  // is in hand either way.
+  //
+  // When the document carries no usable dates the caller passes null, and the
+  // fallback below has to be evaluated in SQL rather than in JS: it depends on
+  // whether this crawl actually stored anything, and that is not known until
+  // this very statement has run. It is the old ladder verbatim — floor 60,
+  // double a quiet feed, ceiling one day.
+  const chosen = Number(intervalMinutes);
+  const LADDER = Number.isFinite(chosen) && chosen > 0
+    ? String(Math.round(chosen))
+    : `case when (select count(*) from feed_items where feed_id = ?) > ?
+             then 60
+             else min(max(coalesce(fetch_interval_minutes, 60), 60) * 2, 1440) end`;
+  // The ladder binds two parameters; a literal interval binds none, so the
+  // argument list has to follow it. Getting this wrong shifts every later
+  // parameter by two and is exactly the kind of silent corruption that a
+  // scheduling column does not advertise, so it is derived rather than typed.
+  const ladderArgs = LADDER.startsWith('case') ? [id, before] : [];
+
+  const settle = {
+    sql: `update feeds set
+            status = 'active', title = ?, description = ?, site_url = ?, image_url = ?,
+            category = case when category_source = 'curated' then category else ? end,
+            language = coalesce(nullif(?, ''), language),
+            last_fetched_at = ?, last_success_at = ?, last_error = null,
+            error_count = 0,
+            fetch_interval_minutes = ${LADDER},
+            -- strftime's %f is 'SS.SSS', so this produces exactly the
+            -- 'YYYY-MM-DDTHH:MM:SS.sssZ' that nowIso() writes elsewhere. The
+            -- due query compares next_fetch_at as a string, so a format that
+            -- merely sorts differently would quietly break scheduling.
+            next_fetch_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+' || (${LADDER}) || ' minutes'),
+            item_count = (select count(*) from feed_items where feed_id = ?),
+            -- Kept when a crawl cannot work one out, rather than overwritten
+            -- with nothing: a date that was true last week is a better answer
+            -- than null, and null here reads to a caller as "we do not know
+            -- whether this publisher is still active" -- which would be a
+            -- worse claim than the one we already had.
+            last_published_at = coalesce(?, last_published_at),
+            -- Kept rather than cleared when this crawl has nothing to say about
+            -- them, for the same reason as last_published_at above. A server
+            -- that answered without an ETag this once has not retracted the one
+            -- it gave us last time, and dropping it would turn every later
+            -- request back into an unconditional one.
+            http_etag = coalesce(?, http_etag),
+            http_last_modified = coalesce(?, http_last_modified),
+            content_hash = coalesce(?, content_hash),
+            change_log = coalesce(?, change_log),
+            updated_at = ?
+          where id = ?
+          returning item_count`,
+    args: [
+      feed.title,
+      feed.description || null,
+      feed.siteUrl || null,
+      feed.imageUrl || null,
+      normalizeKind(feed.kind) ?? 'blog',
+      feed.language || null,
+      now,
+      now,
+      ...ladderArgs, // fetch_interval_minutes
+      ...ladderArgs, // next_fetch_at
+      id, // item_count
+      lastPublishedAt,
+      signals.etag ?? null,
+      signals.lastModified ?? null,
+      signals.contentHash ?? null,
+      signals.changeLog ?? null,
+      now,
+      id,
+    ],
+  };
+
+  const item = itemStatement(id, items, now);
+
+  if (CRAWL_AUTOCOMMIT) {
+    return serializeCrawlWrite(db, async () => {
+      if (item) await db.execute(item);
+      const result = await db.execute(settle);
+
+      // Auxiliary writes are disabled in production catch-up mode. Keeping
+      // this path complete makes the switch safe if it is enabled elsewhere;
+      // they run only after the critical feed row has settled, so a missing
+      // topic or credit cannot leave a healthy feed permanently due.
+      for (const statement of extra) await db.execute(statement);
+
+      const total = Number(result.rows?.[0]?.item_count ?? before);
+      return { total, stored: Math.max(0, total - before) };
+    });
+  }
+
+  // `extra` is everything else this crawl decided to write -- the feed's topics
+  // and its credits -- carried into the same transaction rather than opening
+  // two more of their own. It goes *after* the feed row so that a failure
+  // anywhere rolls back a crawl that had not been recorded yet, rather than one
+  // that had.
+  const statements = [...(item ? [item] : []), settle, ...extra];
+  const results = await db.batch(statements, 'write');
+
+  // Indexed rather than taken from the end: `extra` now sits behind the feed
+  // row, so "the last result" stopped being the one carrying RETURNING. Reading
+  // the wrong result here would silently report every crawl as storing nothing,
+  // which is precisely the bug that once pinned the whole directory to an
+  // hourly re-crawl.
+  const settleIndex = results.length - extra.length - 1;
+  const total = Number(results[settleIndex]?.rows?.[0]?.item_count ?? before);
+  return { total, stored: Math.max(0, total - before) };
+}
+
+/**
+ * Run one feed's autocommit writes after the previous feed has released the
+ * writer. Fetching remains concurrent; only the database's single-writer
+ * section queues here.
+ *
+ * @template T
+ * @param {Client} db
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+async function serializeCrawlWrite(db, task) {
+  const previous = crawlWriteTails.get(db) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(task);
+  crawlWriteTails.set(db, current);
+
+  try {
+    return await current;
+  } finally {
+    if (crawlWriteTails.get(db) === current) crawlWriteTails.delete(db);
+  }
 }
 
 /**
@@ -389,40 +749,46 @@ export async function upsertItems(db, feedId, items) {
  * network database for minutes, and a script is a thing somebody has to
  * remember to run and to finish.
  *
- * It walks the primary key with a cursor rather than searching for `cluster_key
- * is null`. Searching would be the obvious way to write this and it is the
- * wrong one: finding scattered null rows needs an index over the whole table to
- * stay quick, that index cannot be built here (see 0019_item_clusters.sql), and
- * without it the search degrades to a full scan that gets slower exactly as the
- * work nears completion — the last few rows would cost a scan of 1.4M each.
- * Walking the key the table is already ordered by costs one indexed range read
- * per pass and finishes in a predictable number of them.
+ * It searches for `cluster_key is null` directly. That is the opposite of what
+ * this function used to do, and the reasoning it replaces was sound in theory
+ * and wrong in practice, so it is worth writing down which measurement settled
+ * it. The old version walked the primary key with a cursor, on the grounds that
+ * an unindexed search for scattered nulls degrades to a full scan. True — but
+ * the walk had two costs the argument missed: it reads and discards the ~99% of
+ * rows that are *already* keyed, and the cursor is held in memory, so **every
+ * deploy restarts it at the beginning of a 1.75M-row table**. On production it
+ * had been running for a day, logging `keyed=0` on every pass, and had reached
+ * nothing — while 15,821 unkeyed rows sat there waiting.
+ *
+ * Measured against that table: a direct `where cluster_key is null limit 500`
+ * takes ~20 seconds and comes back with 500 rows that all need work. The whole
+ * remaining backfill is 32 such passes, about eleven minutes, after which the
+ * query returns nothing and the caller latches off for good. The cursor walk's
+ * predictable number of reads was ~3,500 passes, none of which did anything,
+ * repeated from scratch on every deploy.
+ *
+ * The tail is the case the old comment was right about: the last few passes
+ * scan most of the table to find the last few rows. That is a handful of
+ * ~14-second reads, once, at the end of a backfill that then never runs again.
  *
  * @param {Client} db
  * @param {number} [limit] rows per pass
- * @param {string} [afterId] cursor: the last id of the previous pass
- * @returns {Promise<{ scanned: number, keyed: number, cursor: string|null }>}
- *   `cursor` is null once the walk has reached the end of the table.
+ * @returns {Promise<{ scanned: number, keyed: number, done: boolean }>}
+ *   `done` is true once no unkeyed row remains anywhere in the table.
  */
-export async function backfillClusterKeys(db, limit = 500, afterId = '') {
+export async function backfillClusterKeys(db, limit = 500) {
   const { rows } = await db.execute({
-    sql: `select id, title, cluster_key from feed_items
-          where id > ? order by id limit ?`,
-    args: [afterId, limit],
+    sql: `select id, title from feed_items where cluster_key is null limit ?`,
+    args: [limit],
   });
 
-  if (rows.length === 0) return { scanned: 0, keyed: 0, cursor: null };
-
-  const cursor = String(rows[rows.length - 1].id);
-
-  // Rows keyed on the way in are the overwhelming majority once the directory
-  // has been running a while, and rewriting them would be pure write traffic
-  // for no change.
-  const pending = rows.filter((row) => row.cluster_key === null);
-  if (pending.length === 0) return { scanned: rows.length, keyed: 0, cursor };
+  // Nothing left anywhere in the table. The caller latches off for the life of
+  // the process on this, and it is now a claim the query can actually make:
+  // the old cursor walk could only ever say "nothing in *this page*".
+  if (rows.length === 0) return { scanned: 0, keyed: 0, done: true };
 
   let keyed = 0;
-  const statements = pending.map((row) => {
+  const statements = rows.map((row) => {
     const key = clusterKey(String(row.title ?? '')) ?? '';
     if (key) keyed += 1;
     return {
@@ -432,7 +798,7 @@ export async function backfillClusterKeys(db, limit = 500, afterId = '') {
   });
 
   await db.batch(statements, 'write');
-  return { scanned: rows.length, keyed, cursor };
+  return { scanned: rows.length, keyed, done: false };
 }
 
 /**
@@ -530,20 +896,65 @@ export async function itemsForKeywords(db, feedId, limit = 200) {
  * @returns {Promise<number>} rows written
  */
 export async function replaceFeedKeywords(db, feedId, keywords) {
-  const statements = [
+  // One batch, so a feed is never left with its old topics deleted and its new
+  // ones unwritten.
+  await db.batch(keywordStatements(feedId, keywords), 'write');
+  return keywords.length;
+}
+
+/**
+ * A feed's topics as statements, ready to join somebody else's transaction.
+ *
+ * Split out so that `crawlFeed` can put the items, the feed row, the topics and
+ * the credits into a **single** write transaction. On this database writes
+ * serialize -- SQLite has one writer -- so the cost of a crawl is very nearly
+ * the number of transactions it opens, not the work inside them. Folding three
+ * transactions into one is a threefold change in crawl throughput; making any
+ * one of them cheaper is not.
+ *
+ * @param {string} feedId
+ * @param {Array<{ slug: string, keyword: string, words?: number, count?: number, source?: string }>} keywords
+ * @returns {Array<{ sql: string, args: unknown[] }>}
+ */
+export function keywordStatements(feedId, keywords) {
+  return [
     { sql: 'delete from feed_keywords where feed_id = ?', args: [feedId] },
-    ...keywords.map((k) => ({
+    ...(keywords ?? []).map((k) => ({
       sql: `insert into feed_keywords (feed_id, slug, keyword, words, count, source)
             values (?, ?, ?, ?, ?, ?)
             on conflict (feed_id, slug) do nothing`,
       args: [feedId, k.slug, k.keyword, k.words ?? 1, k.count ?? 0, k.source ?? 'content'],
     })),
   ];
+}
 
-  // One batch, so a feed is never left with its old topics deleted and its new
-  // ones unwritten.
-  await db.batch(statements, 'write');
-  return keywords.length;
+/**
+ * A feed's stored topics, in full, so a crawl can write only what changed.
+ *
+ * Replaces the bare count this used to fetch. The count answered exactly one
+ * question — "has this ever been extracted?" — and the crawl then threw away
+ * every row and wrote the whole set back, whether or not a single value in it
+ * differed. Six rows deleted and six written, per crawl, per feed, forever.
+ *
+ * Reading the rows instead costs the same round trip on the same index and
+ * turns that into a diff. `keywordDiffStatements` does the comparing.
+ *
+ * @param {Client} db
+ * @param {string} feedId
+ * @returns {Promise<Array<{ slug: string, keyword: string, words: number, count: number, source: string }>>}
+ */
+export async function feedKeywordRows(db, feedId) {
+  const { rows } = await db.execute({
+    sql: 'select slug, keyword, words, count, source from feed_keywords where feed_id = ?',
+    args: [feedId],
+  });
+  return rows.map((r) => ({
+    slug: String(r.slug),
+    keyword: String(r.keyword),
+    words: Number(r.words ?? 1),
+    count: Number(r.count ?? 0),
+    source: String(r.source ?? 'content'),
+  }));
 }
 
 /**
@@ -559,6 +970,92 @@ export async function countFeedKeywords(db, feedId) {
     args: [feedId],
   });
   return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * The smallest set of writes that turns the stored topics into the new ones.
+ *
+ * `keywordStatements` above replaces the lot: one delete of every row the feed
+ * has, then an insert per extracted topic. It is correct and it is what a first
+ * extraction wants. It is also what every *re-*crawl was doing, and the cost of
+ * that is not obvious until you meter it — the directory was writing about
+ * 945,000 rows a day to keep roughly the same six topics per feed on file, and
+ * rows written is what Turso bills. Combining them into fewer statements saves
+ * nothing at all: the meter counts rows, not statements or transactions.
+ *
+ * So this compares instead. A topic whose every column matches is left alone; a
+ * topic the feed has stopped writing about is deleted; a new one is inserted;
+ * one whose count has drifted is updated in place.
+ *
+ * **Behaviour is identical to a full replace.** That is the point of comparing
+ * every column rather than just the slug: `count` and `source` order the feeds
+ * inside a topic page (`order by source, count desc`), so a guard that ignored
+ * them would quietly freeze that ranking. The rows this skips are the ones a
+ * replace would have rewritten to the values they already held.
+ *
+ * @param {string} feedId
+ * @param {Array<{ slug: string, keyword: string, words?: number, count?: number, source?: string }>} extracted
+ * @param {Array<{ slug: string, keyword: string, words: number, count: number, source: string }>} stored
+ * @returns {Array<{ sql: string, args: unknown[] }>} empty when nothing differs
+ */
+export function keywordDiffStatements(feedId, extracted, stored) {
+  const want = new Map();
+  for (const k of extracted ?? []) {
+    if (!k?.slug) continue;
+    want.set(String(k.slug), {
+      slug: String(k.slug),
+      keyword: String(k.keyword ?? k.slug),
+      words: Number(k.words ?? 1),
+      count: Number(k.count ?? 0),
+      source: String(k.source ?? 'content'),
+    });
+  }
+
+  const have = new Map((stored ?? []).map((k) => [String(k.slug), k]));
+
+  /** @type {Array<{ sql: string, args: unknown[] }>} */
+  const out = [];
+
+  for (const [slug, row] of have) {
+    if (!want.has(slug)) {
+      out.push({
+        sql: 'delete from feed_keywords where feed_id = ? and slug = ?',
+        args: [feedId, slug],
+      });
+    }
+  }
+
+  for (const [slug, k] of want) {
+    const old = have.get(slug);
+
+    if (!old) {
+      out.push({
+        sql: `insert into feed_keywords (feed_id, slug, keyword, words, count, source)
+              values (?, ?, ?, ?, ?, ?)
+              on conflict (feed_id, slug) do nothing`,
+        args: [feedId, k.slug, k.keyword, k.words, k.count, k.source],
+      });
+      continue;
+    }
+
+    const same =
+      old.keyword === k.keyword &&
+      Number(old.words) === k.words &&
+      Number(old.count) === k.count &&
+      String(old.source) === k.source;
+
+    // The whole saving lives in this branch: the row is already right, so the
+    // replace that used to happen here wrote it back unchanged.
+    if (same) continue;
+
+    out.push({
+      sql: `update feed_keywords set keyword = ?, words = ?, count = ?, source = ?
+            where feed_id = ? and slug = ?`,
+      args: [k.keyword, k.words, k.count, k.source, feedId, slug],
+    });
+  }
+
+  return out;
 }
 
 /**
@@ -1023,45 +1520,108 @@ export async function jobBacklogs(db) {
   const now = nowIso();
   const hourAgo = nowIso(-3_600_000);
 
-  const { rows } = await db.execute({
-    sql: `select
-            sum(case when status <> 'dead' and next_fetch_at <= ? then 1 else 0 end) as due,
-            -- Accepted and not yet attempted at all: the first-crawl queue, and
-            -- the same figure the page's "Pending" stat shows, so the two agree.
-            sum(case when status = 'pending' then 1 else 0 end)             as pending,
-            -- Attempted and never once successful. A wider set, and deliberately
-            -- not the queue above: a feed that has failed nine times is not
-            -- waiting for its first crawl, it is failing, and the page counts it
-            -- under Erroring.
-            sum(case when status <> 'dead' and last_success_at is null then 1 else 0 end) as never_crawled,
-            sum(case when status = 'pending' and created_at >= ?
-                     then 1 else 0 end)                                    as submitted_hour,
-            sum(case when card_state is null then 1 else 0 end)            as cards_pending,
-            sum(case when card_state = 'ok' then 1 else 0 end)             as cards_ok,
-            sum(case when card_state = 'none' then 1 else 0 end)           as cards_none,
-            sum(case when card_state = 'error' then 1 else 0 end)          as cards_error,
-            sum(case when card_checked_at >= ? then 1 else 0 end)          as cards_hour
-          from feeds`,
-    // Deliberately no "first crawls completed this hour". Nothing records when a
-    // feed was read for the *first* time, and every way of inferring it from
-    // these columns is a guess — a status board that mixes measurements with
-    // guesses is worse than one that admits the gap. The first-crawl row shows
-    // its backlog and its inflow, and says outright that it shares the update
-    // queue's throughput.
-    args: [now, hourAgo, hourAgo],
-  });
+  // Nine conditional aggregates over all 368k feed rows, exactly as `crawlStats`
+  // used to be, and slow for exactly the same reason: to evaluate a CASE the
+  // planner has to visit the row, so the statement dragged the whole of a 14 GB
+  // table through memory. Measured at 3,713ms, on a page that refreshes itself
+  // every fifteen seconds.
+  //
+  // The fix is not "stop using conditional aggregates" — two of them survive
+  // below. It is to make sure the scan they force is over a *covering index*
+  // rather than over the table, at which point the same CASE is cheap.
+  const [byStatus, backlog, submitted, cards, enriched] = await Promise.all([
+    // One covering scan of feeds_status_success_idx (0028) answering three
+    // questions at once: the status breakdown, and how many feeds in each state
+    // have never once been read successfully.
+    db.execute(`select status, count(*) as n,
+                       sum(case when last_success_at is null then 1 else 0 end) as never
+                from feeds group by status`),
 
-  const row = rows[0] ?? {};
+    // The backlog by its complement — see `crawlStats` and `countDueFeeds`.
+    db.execute({
+      sql: `select count(*) as n from feeds where status <> 'dead' and next_fetch_at > ?`,
+      args: [now],
+    }),
+
+    // A short range read off feeds_created_idx: an hour of submissions is a
+    // handful of rows however large the directory gets.
+    //
+    // `indexed by` because the planner does not agree, and gets it badly wrong.
+    // **This database has never been ANALYZEd** -- there is no `sqlite_stat1` --
+    // so SQLite falls back to its built-in guess that an equality test beats a
+    // range test, picks `feeds_status_success_idx (status=?)`, and visits every
+    // `pending` row to check its `created_at`. `pending` is 330k of 444k rows.
+    // Measured: 17,722ms this way, 654ms forced onto the range, and the same
+    // 5,954 rows come back either way.
+    db.execute({
+      sql: `select count(*) as n from feeds indexed by feeds_created_idx
+             where created_at >= ? and status = 'pending'`,
+      args: [hourAgo],
+    }),
+
+    // One covering scan of feeds_card_state_idx (0029).
+    db.execute({
+      sql: `select card_state, count(*) as n,
+                   sum(case when card_checked_at >= ? then 1 else 0 end) as hour
+            from feeds group by card_state`,
+      args: [hourAgo],
+    }),
+
+    // How far the author enrichment has walked, read off the partial index
+    // 0024 already built for it (`feeds (authors_checked_at) where status =
+    // 'active'`). Counted as the *stamped* set rather than the unstamped one
+    // for the reason this whole function exists: 3,275 of 369,056 feeds carry a
+    // stamp, so this touches a few thousand index entries, while asking for the
+    // complement would visit every row. The backlog is arithmetic afterwards.
+    //
+    // `indexed by` for the same reason as `submitted` above, and it costs even
+    // more here: unforced the planner seeks `status='active'` (109k rows) on
+    // `feeds_status_success_idx` and reads `authors_checked_at` off each one,
+    // when the partial index *is* keyed by exactly the column being counted and
+    // filtered. Measured: 16,067ms unforced, 119ms forced -- 135x, same answer.
+    db.execute({
+      sql: `select count(*) as n,
+                   sum(case when authors_checked_at >= ? then 1 else 0 end) as hour
+            from feeds indexed by feeds_authors_due_idx
+           where status = 'active' and authors_checked_at is not null`,
+      args: [hourAgo],
+    }),
+  ]);
+
+  // Deliberately no "first crawls completed this hour". Nothing records when a
+  // feed was read for the *first* time, and every way of inferring it from
+  // these columns is a guess — a status board that mixes measurements with
+  // guesses is worse than one that admits the gap. The first-crawl row shows
+  // its backlog and its inflow, and says outright that it shares the update
+  // queue's throughput.
+  const states = new Map(byStatus.rows.map((r) => [String(r.status), r]));
+  const n = (status) => Number(states.get(status)?.n ?? 0);
+
+  const total = [...states.values()].reduce((a, r) => a + Number(r.n ?? 0), 0);
+  // Attempted and never once successful, across everything not given up on. A
+  // wider set than the first-crawl queue, and deliberately not the same: a feed
+  // that has failed nine times is not waiting for its first crawl, it is
+  // failing, and the page counts it under Erroring.
+  const neverCrawled = [...states.entries()]
+    .filter(([status]) => status !== 'dead')
+    .reduce((a, [, r]) => a + Number(r.never ?? 0), 0);
+
+  const byCard = new Map(cards.rows.map((r) => [r.card_state === null ? null : String(r.card_state), r]));
+  const card = (state) => Number(byCard.get(state)?.n ?? 0);
+
   return {
-    due: Number(row.due ?? 0),
-    pendingFirstCrawl: Number(row.pending ?? 0),
-    neverCrawled: Number(row.never_crawled ?? 0),
-    submittedLastHour: Number(row.submitted_hour ?? 0),
-    cardsPending: Number(row.cards_pending ?? 0),
-    cardsOk: Number(row.cards_ok ?? 0),
-    cardsNone: Number(row.cards_none ?? 0),
-    cardsError: Number(row.cards_error ?? 0),
-    cardsLastHour: Number(row.cards_hour ?? 0),
+    due: Math.max(0, total - n('dead') - Number(backlog.rows[0]?.n ?? 0)),
+    pendingFirstCrawl: n('pending'),
+    neverCrawled,
+    submittedLastHour: Number(submitted.rows[0]?.n ?? 0),
+    cardsPending: card(null),
+    cardsOk: card('ok'),
+    cardsNone: card('none'),
+    cardsError: card('error'),
+    cardsLastHour: cards.rows.reduce((a, r) => a + Number(r.hour ?? 0), 0),
+    authorsDone: Number(enriched.rows[0]?.n ?? 0),
+    authorsPending: Math.max(0, n('active') - Number(enriched.rows[0]?.n ?? 0)),
+    authorsLastHour: Number(enriched.rows[0]?.hour ?? 0),
   };
 }
 
@@ -1140,10 +1700,41 @@ export async function logActivity(db, hours = 1) {
 /**
  * A snapshot of what the crawler is doing, for /crawlstats.
  *
- * One round trip rather than a dozen counts: the page is public and uncached,
- * so the cost of rendering it has to stay flat as the directory grows. Every
- * figure comes out of the feeds table the poller already maintains — there is
- * no separate metrics store to drift out of step with reality.
+ * This used to be one statement, and one statement was the wrong shape. It read
+ * `select count(*), sum(case when ...) ... from feeds` with twelve conditional
+ * aggregates, and a conditional aggregate cannot use an index: SQLite has to
+ * visit every row to evaluate the CASE. At 368k feeds that measured **20.2
+ * seconds** against production, which was the entirety of the page's fifteen
+ * second time to first byte. The comment it replaces claimed the cost stayed
+ * flat as the directory grew; it grew linearly with it, and nobody noticed
+ * until the directory got eight times bigger in two days.
+ *
+ * It is now four reads, none of which touches more rows than it reports on:
+ *
+ *   1. **the status breakdown**, as a plain `group by status` -- one grouped
+ *      walk of `feeds_status_idx` instead of five separate CASE scans;
+ *   2. **the backlog**, counted by its complement. `due` is 367k of 368k rows,
+ *      so counting the feeds that are due costs a walk of nearly the whole
+ *      index (4.8s measured) while counting the ~1.2k that are *not* due is a
+ *      short range read. The answer is identical arithmetic;
+ *   3. **liveness and staleness**, both served by `feeds_status_success_idx`
+ *      (0028) as index seeks rather than 62k row lookups;
+ *   4. **throughput**, from the `crawl_hourly` rollup rather than from `feeds`.
+ *
+ * That last one is the change worth knowing about, because it is a change of
+ * *definition* and not just of cost. "Fetched in the last day" used to mean
+ * "distinct feeds whose last_fetched_at falls in the window" -- which quietly
+ * caps at the size of the directory and cannot see a feed crawled twice. It now
+ * means "crawls the poller performed", which is what the label on the page
+ * ("crawler throughput") has always claimed and what the rollup was built in
+ * 0017 to record. Expect the 24h numbers to read *higher* than they did, and to
+ * keep rising past `active` where the old ones could not.
+ *
+ * The hour figure is a **rate**, derived from the last two hourly buckets over
+ * the span they actually cover, rather than a count of the current bucket. A
+ * bucket-count would read zero for the first minutes of every hour, and
+ * `fetchedLastHour === 0` is what the page's health badge treats as "stalled" --
+ * an hourly false alarm is worse than an estimate.
  *
  * `stale` is the number the page leads with. A backlog (`due`) is normal and
  * drains; feeds whose last successful fetch is older than a day are the ones
@@ -1154,48 +1745,97 @@ export async function logActivity(db, hours = 1) {
  */
 export async function crawlStats(db) {
   const now = nowIso();
-  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
   const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
 
-  const { rows } = await db.execute({
-    sql: `select
-            count(*)                                                          as total,
-            sum(case when status = 'active'  then 1 else 0 end)               as active,
-            sum(case when status = 'pending' then 1 else 0 end)               as pending,
-            sum(case when status = 'error'   then 1 else 0 end)               as errored,
-            sum(case when status = 'dead'    then 1 else 0 end)               as dead,
-            sum(case when status <> 'dead' and next_fetch_at <= ? then 1 else 0 end) as due,
-            sum(case when last_fetched_at >= ? then 1 else 0 end)             as fetched_hour,
-            sum(case when last_fetched_at >= ? then 1 else 0 end)             as fetched_day,
-            sum(case when last_success_at >= ? then 1 else 0 end)             as succeeded_day,
-            sum(case when status = 'active' and (last_success_at is null or last_success_at < ?)
-                     then 1 else 0 end)                                       as stale,
-            max(last_success_at)                                              as last_success_at,
-            min(case when status <> 'dead' then next_fetch_at end)            as next_fetch_at
-          from feeds`,
-    args: [now, hourAgo, dayAgo, dayAgo, dayAgo],
-  });
+  const [statuses, backlog, liveness, throughput] = await Promise.all([
+    // One grouped walk of feeds_status_idx. Statuses the directory does not
+    // currently contain simply do not come back as rows, which is why each is
+    // read out of the map with a zero default below rather than positionally.
+    db.execute('select status, count(*) as n from feeds group by status'),
 
-  const row = rows[0] ?? {};
-  const items = await db.execute({
-    sql: 'select count(*) as n from feed_items where created_at >= ?',
-    args: [dayAgo],
-  });
+    // The complement of the backlog: feeds that are *not* yet due. See the note
+    // above -- this is a short read where counting the backlog directly is very
+    // nearly a full index walk.
+    db.execute({
+      sql: `select count(*) as n from feeds where status <> 'dead' and next_fetch_at > ?`,
+      args: [now],
+    }),
+
+    // Both halves of the health badge, off feeds_status_success_idx.
+    //
+    // `min(next_fetch_at)` rides along here rather than in its own read: it is
+    // served by feeds_due_idx, the partial index on the same `status <> 'dead'`
+    // predicate, so it is a single seek to the front of it.
+    db.execute({
+      sql: `select
+              (select max(last_success_at) from feeds where status = 'active') as last_success_at,
+              (select count(*) from feeds
+                where status = 'active' and (last_success_at is null or last_success_at < ?)) as stale,
+              (select min(next_fetch_at) from feeds where status <> 'dead') as next_fetch_at`,
+      args: [dayAgo],
+    }),
+
+    // 25 buckets rather than 24: the day window opens inside the oldest one, and
+    // the rate calculation below needs the two most recent buckets present.
+    db.execute({
+      sql: `select hour, fetched, succeeded, items from crawl_hourly
+            where hour >= ? order by hour desc limit 25`,
+      args: [new Date(Date.now() - 25 * 3_600_000).toISOString().slice(0, 13)],
+    }),
+  ]);
+
+  const byStatus = new Map(statuses.rows.map((r) => [String(r.status), Number(r.n ?? 0)]));
+  const count = (status) => byStatus.get(status) ?? 0;
+  const total = [...byStatus.values()].reduce((a, b) => a + b, 0);
+  const dead = count('dead');
+
+  // Everything alive, minus everything alive that is still waiting its turn.
+  const notDue = Number(backlog.rows[0]?.n ?? 0);
+  const live = liveness.rows[0] ?? {};
+
+  const hours = throughput.rows;
+  const day = hours.slice(0, 24);
+  const sum = (rows, key) => rows.reduce((a, r) => a + Number(r[key] ?? 0), 0);
+
+  // The last two buckets span somewhere between one and two hours of real time
+  // depending on where in the current hour we are, so the rate is the work they
+  // recorded over the span they actually cover -- not over a nominal two hours,
+  // which would halve the reported rate at the top of every hour.
+  const recent = hours.slice(0, 2);
+  const minutesIntoHour = new Date().getUTCMinutes();
+  const spanHours = recent.length === 0 ? 0 : recent.length === 1 ? 1 : 1 + minutesIntoHour / 60;
+
+  const lastSuccessAt = live.last_success_at ? String(live.last_success_at) : null;
 
   return {
-    total: Number(row.total ?? 0),
-    active: Number(row.active ?? 0),
-    pending: Number(row.pending ?? 0),
-    errored: Number(row.errored ?? 0),
-    dead: Number(row.dead ?? 0),
-    due: Number(row.due ?? 0),
-    fetchedLastHour: Number(row.fetched_hour ?? 0),
-    fetchedLastDay: Number(row.fetched_day ?? 0),
-    succeededLastDay: Number(row.succeeded_day ?? 0),
-    staleActive: Number(row.stale ?? 0),
-    itemsLastDay: Number(items.rows[0]?.n ?? 0),
-    lastSuccessAt: row.last_success_at ? String(row.last_success_at) : null,
-    nextFetchAt: row.next_fetch_at ? String(row.next_fetch_at) : null,
+    total,
+    active: count('active'),
+    pending: count('pending'),
+    errored: count('error'),
+    dead,
+    due: Math.max(0, total - dead - notDue),
+    fetchedLastHour: spanHours > 0 ? Math.round(sum(recent, 'fetched') / spanHours) : 0,
+    fetchedLastDay: sum(day, 'fetched'),
+    succeededLastDay: sum(day, 'succeeded'),
+    staleActive: Number(live.stale ?? 0),
+    itemsLastDay: sum(day, 'items'),
+    lastSuccessAt,
+    // Minutes since the crawler last read *anything* successfully, and the
+    // signal the health badge is built on. Null only when the directory has
+    // never had a successful crawl at all.
+    //
+    // It is deliberately not derived from the throughput figures above. Those
+    // now come from `crawl_hourly`, and the poller writes that rollup inside a
+    // try/catch that treats a failure as "housekeeping lost, not a crawl lost"
+    // — so a page that inferred "stalled" from a throughput of zero would
+    // report an outage every time a rollup write failed, while the crawler was
+    // working perfectly. This number comes off `feeds` itself, by way of the
+    // same index seek that produced `lastSuccessAt`, so it cannot disagree with
+    // what the crawler actually did.
+    idleMinutes: lastSuccessAt
+      ? Math.max(0, Math.round((Date.now() - Date.parse(lastSuccessAt)) / 60_000))
+      : null,
+    nextFetchAt: live.next_fetch_at ? String(live.next_fetch_at) : null,
     generatedAt: now,
   };
 }
@@ -1220,7 +1860,10 @@ export async function crawlStats(db) {
 export async function recordCrawlHour(db, counts, at = nowIso()) {
   const hour = at.slice(0, 13);
 
-  await db.execute({
+  // Through the queue, like the other rollups — and this one accumulates rather
+  // than overwriting, so a tick lost to a lock it could not get is a hole in the
+  // throughput chart that nothing later fills in.
+  await writeOne(db, {
     sql: `insert into crawl_hourly (hour, ticks, fetched, succeeded, failed, items)
           values (?, 1, ?, ?, ?, ?)
           on conflict (hour) do update set
@@ -1237,6 +1880,110 @@ export async function recordCrawlHour(db, counts, at = nowIso()) {
       Number(counts.items ?? 0),
     ],
   });
+}
+
+/**
+ * Write down how much work is waiting, into this hour's bucket.
+ *
+ * Overwrites rather than accumulating, and that is the whole difference between
+ * this and `recordCrawlHour`: these are gauges. Two samples in one hour are not
+ * two hundred waiting feeds plus two hundred more, they are the same queue
+ * looked at twice, and the later look is the one worth keeping.
+ *
+ * @param {Client} db
+ * @param {{ due?: number, firstCrawl?: number, cards?: number, authors?: number }} depths
+ * @param {string} [at] ISO timestamp deciding the bucket; defaults to now
+ * @returns {Promise<void>}
+ */
+export async function recordQueueHour(db, depths, at = nowIso()) {
+  // Through the queue: this fired every ten minutes and failed every time, not
+  // for being slow but for never getting the lock. See `writeOne`.
+  await writeOne(db, {
+    sql: `insert into queue_hourly (hour, at, due, first_crawl, cards, authors)
+          values (?, ?, ?, ?, ?, ?)
+          on conflict (hour) do update set
+            at          = excluded.at,
+            due         = excluded.due,
+            first_crawl = excluded.first_crawl,
+            cards       = excluded.cards,
+            authors     = excluded.authors`,
+    args: [
+      at.slice(0, 13),
+      at,
+      Number(depths.due ?? 0),
+      Number(depths.firstCrawl ?? 0),
+      Number(depths.cards ?? 0),
+      Number(depths.authors ?? 0),
+    ],
+  });
+}
+
+/**
+ * How many feeds have never been looked at for an author.
+ *
+ * Counted by its complement, because the set is very nearly the whole directory
+ * — 367,518 of 369,054 when this was written — and counting a near-total set
+ * directly means visiting almost every row. The checked side is small and sits
+ * on the partial index 0024 added, so both halves are cheap.
+ *
+ * @param {Client} db
+ * @returns {Promise<number>}
+ */
+export async function countAuthorQueue(db) {
+  const [active, checked] = await Promise.all([
+    db.execute(`select count(*) as n from feeds where status = 'active'`),
+    db.execute(
+      `select count(*) as n from feeds where status = 'active' and authors_checked_at is not null`,
+    ),
+  ]);
+
+  return Math.max(0, Number(active.rows[0]?.n ?? 0) - Number(checked.rows[0]?.n ?? 0));
+}
+
+/**
+ * Drop queue samples older than the charts can show.
+ *
+ * @param {Client} db
+ * @param {number} [days]
+ * @returns {Promise<number>} rows removed
+ */
+export async function pruneQueueHours(db, days = 90) {
+  const { rowsAffected } = await db.execute({
+    sql: 'delete from queue_hourly where hour < ?',
+    args: [nowIso(-days * 86_400_000).slice(0, 13)],
+  });
+  return Number(rowsAffected ?? 0);
+}
+
+/**
+ * Every queue's depth hour by hour, ready to plot.
+ *
+ * Sparse on purpose, unlike the throughput series. A missing hour here means
+ * nobody took a sample, and a burndown that interpolates across an outage
+ * invents a descent that never happened — so the gap is returned as a gap and
+ * the chart draws it as one.
+ *
+ * @param {Client} db
+ * @param {number} [hours]
+ * @returns {Promise<Array<{ hour: string, at: string, due: number, firstCrawl: number, cards: number, authors: number }>>}
+ */
+export async function queueHistory(db, hours = 48) {
+  const { rows } = await db.execute({
+    sql: `select hour, at, due, first_crawl, cards, authors
+            from queue_hourly
+           where hour >= ?
+           order by hour asc`,
+    args: [nowIso(-hours * 3_600_000).slice(0, 13)],
+  });
+
+  return rows.map((r) => ({
+    hour: String(r.hour),
+    at: String(r.at),
+    due: Number(r.due ?? 0),
+    firstCrawl: Number(r.first_crawl ?? 0),
+    cards: Number(r.cards ?? 0),
+    authors: Number(r.authors ?? 0),
+  }));
 }
 
 /**
@@ -1301,9 +2048,16 @@ export async function indexingHistory(db, hours = 48) {
 /**
  * Write lines to the crawler's log.
  *
- * One batch per call, because the poller buffers a couple of seconds of lines
- * and hands them over together: a crawl batch produces twenty-five of these and
- * twenty-five separate round trips to Turso would cost more than the crawl.
+ * One statement per call, because the poller buffers a couple of seconds of
+ * lines and hands them over together. This used to be one INSERT statement per
+ * line inside an explicit write transaction. Under Turso write throttling that
+ * transaction joined the same scarce queue as feed storage, timed out, and
+ * dropped the very daemon errors /crawlstats was meant to expose.
+ *
+ * A multi-row autocommit INSERT is still one atomic statement, needs no explicit
+ * transaction, and stays off the crawler's transaction queue. The recorder caps
+ * a flush at 501 rows (including a dropped-lines marker), so its 4,008 bound
+ * parameters remain comfortably below SQLite's limit.
  *
  * Every field but `at` and `event` is optional — a line only fills in the
  * columns it has something to say about.
@@ -1316,22 +2070,37 @@ export async function appendCrawlLog(db, entries) {
   const rows = (Array.isArray(entries) ? entries : [entries]).filter((e) => e?.event);
   if (rows.length === 0) return 0;
 
-  const statements = rows.map((entry) => ({
-    sql: `insert into crawl_log (at, event, status, subject, slug, amount, detail, ms)
-          values (?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [
-      entry.at ?? nowIso(),
-      String(entry.event),
-      entry.status == null ? null : String(entry.status),
-      entry.subject == null ? null : String(entry.subject),
-      entry.slug == null ? null : String(entry.slug),
-      entry.amount == null ? null : Number(entry.amount),
-      entry.detail == null ? null : String(entry.detail),
-      entry.ms == null ? null : Number(entry.ms),
-    ],
-  }));
+  const args = rows.flatMap((entry) => [
+    entry.at ?? nowIso(),
+    String(entry.event),
+    entry.status == null ? null : String(entry.status),
+    entry.subject == null ? null : String(entry.subject),
+    entry.slug == null ? null : String(entry.slug),
+    entry.amount == null ? null : Number(entry.amount),
+    entry.detail == null ? null : String(entry.detail),
+    entry.ms == null ? null : Number(entry.ms),
+  ]);
 
-  await db.batch(statements, 'write');
+  // Deliberately *not* through the queue, unlike the rollups and the prune.
+  //
+  // This is the hottest of the daemon's unqueued writes — the recorder flushes
+  // on a two-second timer — so it is also the largest single contributor to the
+  // lock contention those other writes were dying of, and moving it looks like
+  // the obvious win. It is not, and `crawl-log.test.js` says so with a client
+  // whose `batch` throws: the log is the channel that reports on the write
+  // queue, and a diagnostic that queues behind the thing it diagnoses goes
+  // quiet exactly when it is needed.
+  //
+  // It can afford to lose. `log()` writes stdout first and unconditionally, so
+  // Railway keeps every line regardless; this copy exists only so /crawlstats
+  // can show a log from a process it does not share a machine with. A flush
+  // that fails drops lines and says so (`log-dropped`), which is a gap in a
+  // panel rather than a gap in the record.
+  await db.execute({
+    sql: `insert into crawl_log (at, event, status, subject, slug, amount, detail, ms)
+          values ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+    args,
+  });
   return rows.length;
 }
 
@@ -1380,20 +2149,65 @@ export async function crawlLogTail(db, limit = 60) {
 }
 
 /**
+ * Recent daemon failures, independently of the rolling feed log.
+ *
+ * A busy crawler emits hundreds of successful feed lines in minutes, so an
+ * operational error disappears from the live panel's bounded window long
+ * before somebody opens the status page. Feed failures already have their own
+ * table below it; this query deliberately returns only daemon/job failures.
+ *
+ * @param {Client} db
+ * @param {{ limit?: number, hours?: number }} [opts]
+ * @returns {Promise<Array<object>>} newest first
+ */
+export async function crawlOperationalErrors(db, { limit = 20, hours = 24 } = {}) {
+  const { rows } = await db.execute({
+    sql: `select id, at, event, status, subject, slug, amount, detail, ms
+          from crawl_log
+          where status = 'error' and event <> 'feed' and at >= ?
+          order by id desc limit ?`,
+    args: [
+      nowIso(-Math.max(1, Number(hours) || 24) * 3_600_000),
+      Math.max(1, Math.min(Number(limit) || 20, 100)),
+    ],
+  });
+  return rows;
+}
+
+/**
  * Drop log lines older than the window the page shows.
  *
  * Hours rather than days: this table takes a row per feed crawled, so a week of
  * retention would be a quarter of a million rows to hold a log nobody scrolls
  * back through. Railway keeps the durable copy of the same lines.
  *
+ * **Bounded, because the first sweep after a lapse is the dangerous one.** This
+ * ran unbounded for as long as it was reached every hour, when the arrears were
+ * an hour of crawling and the delete was small. It stopped being reached — it
+ * sat below `catchupOnly` in the poller's tick — and the table grew to 64 hours
+ * of a 12-hour window. An unbounded catch-up delete is then ~120,000 rows in one
+ * statement, against a database whose request deadline is thirty seconds and
+ * whose single writer is already the constraint. It would time out, and time out
+ * again every hour after that, never getting far enough to shrink the arrears
+ * that made it too big. A sweep that cannot run is how the table got here.
+ *
+ * So it takes a slice and says how much it took. The caller runs hourly and the
+ * arrears shrink a slice at a time until the delete is once again the small one
+ * this was written for. `id in (select ... limit ?)` rather than
+ * `delete ... limit ?`, which needs a compile-time option SQLite is not
+ * guaranteed to have been built with.
+ *
  * @param {Client} db
  * @param {number} [hours]
+ * @param {number} [max] rows to remove in one statement
  * @returns {Promise<number>} rows removed
  */
-export async function pruneCrawlLog(db, hours = 12) {
-  const { rowsAffected } = await db.execute({
-    sql: 'delete from crawl_log where at < ?',
-    args: [nowIso(-hours * 3_600_000)],
+export async function pruneCrawlLog(db, hours = 12, max = 5000) {
+  const { rowsAffected } = await writeOne(db, {
+    sql: `delete from crawl_log where id in (
+            select id from crawl_log where at < ? limit ?
+          )`,
+    args: [nowIso(-hours * 3_600_000), Math.max(1, Math.floor(max))],
   });
   return Number(rowsAffected ?? 0);
 }
@@ -1566,14 +2380,69 @@ export async function recentlyCrawled(db, limit = 20) {
   return rows;
 }
 
+/** The columns a crawl needs off a feed row. Shared by both due queries. */
+const DUE_COLUMNS = `id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
+                 item_count, last_published_at,
+                 http_etag, http_last_modified, content_hash, change_log`;
+
 /**
- * Feeds whose next_fetch_at has passed.
+ * The share of a tick reserved for hand-submitted feeds.
+ *
+ * Half, so the express lane cannot starve the backlog no matter how many
+ * submissions arrive: a tick always spends at least half of itself on the
+ * ordinary queue. In practice the reservation is never taken up — real people
+ * submit a handful of blogs an hour against a batch of twenty-five — so this
+ * is a ceiling on the pathological case rather than a division of normal work.
+ */
+const EXPRESS_SHARE = 0.5;
+
+/**
+ * Feeds a person submitted by hand and that have never been crawled.
+ *
+ * The express lane. Read before the ordinary queue because ordering the two
+ * together cannot work: they are ordered by `next_fetch_at asc` and the backlog
+ * is *older*, so a submission stamped `now` sorts last behind ~307,000 feeds
+ * that were overdue before it arrived. Sorting by priority instead would put a
+ * 416,000-row sort in front of every tick. Two reads, the first against a
+ * partial index that is normally empty, is the cheap way to say "these first".
+ *
+ * `last_fetched_at is null` is in the predicate rather than being cleared after
+ * the fact, so this expedites the *first* crawl only — which is the whole of
+ * what a submitter is waiting for. Afterwards the feed is scheduled on its own
+ * publishing rhythm like everything else.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function expressFeeds(db, limit = 25) {
+  if (limit <= 0) return [];
+
+  const { rows } = await db.execute({
+    sql: `select ${DUE_COLUMNS}
+          from feeds
+          where priority > 0 and last_fetched_at is null
+            and status <> 'dead' and next_fetch_at <= ?
+          order by next_fetch_at asc limit ?`,
+    args: [nowIso(), limit],
+  });
+  return rows;
+}
+
+/**
+ * Feeds whose next_fetch_at has passed, hand-submitted ones first.
  *
  * @param {Client} db
  * @param {number} [limit]
  * @returns {Promise<object[]>}
  */
 export async function dueFeeds(db, limit = 25) {
+  // Bounded rather than unbounded even though the express table is tiny: the
+  // point of a reserved share is that it is reserved in both directions.
+  const express = await expressFeeds(db, Math.floor(limit * EXPRESS_SHARE));
+  const remaining = limit - express.length;
+  if (remaining <= 0) return express;
+
   const { rows } = await db.execute({
     // slug and title are along for the log: a crawler log line that names the
     // blog and links to its page is worth two columns the crawl itself is
@@ -1581,14 +2450,31 @@ export async function dueFeeds(db, limit = 25) {
     // crawl still needs it to know what it is fetching.
     // item_count comes along so a crawl that stored nothing can pass the number
     // straight back instead of paying for a count(*) to be told it is unchanged.
-    sql: `select id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
-                 item_count
+    //
+    // last_published_at is what the crawl compares the document against to
+    // decide whether this publisher has published since we last looked -- the
+    // guard that keeps topics and credits from being rewritten on every crawl of
+    // an unchanged feed. It was missing from this select, so `knownPublished`
+    // read null for every feed the poller crawled and the guard was open in
+    // production the whole time.
+    //
+    // The last four are the conditional-request and change-detection signals
+    // added in 0032: what the server's validators were, what the feed contained,
+    // and when we last saw that change. They are what lets a feed stating no
+    // dates be scheduled on evidence rather than on the doubling ladder.
+    //
+    // The express rows are excluded rather than deduplicated afterwards: they
+    // have just been read and are about to be crawled, and handing the same
+    // feed to two workers in one tick is two crawls of it.
+    sql: `select ${DUE_COLUMNS}
           from feeds
           where status <> 'dead' and next_fetch_at <= ?
+            and not (priority > 0 and last_fetched_at is null)
           order by next_fetch_at asc limit ?`,
-    args: [nowIso(), limit],
+    args: [nowIso(), remaining],
   });
-  return rows;
+
+  return express.concat(rows);
 }
 
 /**
@@ -1602,11 +2488,20 @@ export async function dueFeeds(db, limit = 25) {
  * @returns {Promise<number>}
  */
 export async function countDueFeeds(db) {
+  // Counted by its complement, for the same reason `crawlStats` does: the
+  // backlog is very nearly every feed in the directory (367k of 368k), so
+  // counting the due rows walks almost the whole index — 4.8 seconds measured
+  // against production — while counting the ~1,200 rows that are *not* due is
+  // a short range read at 292ms. The poller called this once per tick to write
+  // one number into its log line, and paid five seconds for it every time.
   const { rows } = await db.execute({
-    sql: `select count(*) as n from feeds where status <> 'dead' and next_fetch_at <= ?`,
+    sql: `select
+            (select count(*) from feeds where status <> 'dead') as alive,
+            (select count(*) from feeds where status <> 'dead' and next_fetch_at > ?) as waiting`,
     args: [nowIso()],
   });
-  return Number(rows[0]?.n ?? 0);
+  const alive = Number(rows[0]?.alive ?? 0);
+  return Math.max(0, alive - Number(rows[0]?.waiting ?? 0));
 }
 
 /**
@@ -1701,13 +2596,14 @@ export async function insertFeedsBulk(db, feeds) {
 
   const now = nowIso();
   const row = `(?, ?, ?, ?, ?, null, null, null, null, '[]', 'pending', null, null, null, 0,
-                60, ?, 0, ?, ?, ?)`;
+                60, ?, 0, ?, ?, ?, ?)`;
 
   const result = await db.execute({
     sql: `insert into feeds
       (id, slug, feed_url, site_url, title, description, language, image_url, author,
        categories, status, last_fetched_at, last_success_at, last_error, error_count,
-       fetch_interval_minutes, next_fetch_at, item_count, submission_id, created_at, updated_at)
+       fetch_interval_minutes, next_fetch_at, item_count, submission_id, created_at, updated_at,
+       priority)
       values ${feeds.map(() => row).join(', ')}
       on conflict do nothing`,
     args: feeds.flatMap((f) => [
@@ -1720,6 +2616,10 @@ export async function insertFeedsBulk(db, feeds) {
       f.submission_id ?? null,
       now,
       now,
+      // Zero unless the caller is putting a hand-submitted feed in the express
+      // lane. Written here rather than defaulted by the column so that a row
+      // inserted by an import is explicit about not being expedited.
+      Number(f.priority) > 0 ? 1 : 0,
     ]),
   });
 
@@ -2022,6 +2922,52 @@ export async function youtubeChannelIds(db) {
 }
 
 /**
+ * Settle a feed that was read successfully and had not changed.
+ *
+ * The cheapest crawl there is, and the one this whole change exists to make
+ * common. Nothing was published, so there are no items to upsert, no topics to
+ * re-derive, no byline to re-check and no count to recompute -- a single-row
+ * update by primary key, which on this database is one write transaction where a
+ * full crawl is one write transaction doing considerably more inside it.
+ *
+ * `item_count` is deliberately not recomputed. It cannot have changed: nothing
+ * was written. Recomputing it would add a `count(*)` over feed_items to the one
+ * path in the crawler that has no reason to touch that table at all.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {number} minutes when to come back
+ * @param {{ etag?: string|null, lastModified?: string|null, contentHash?: string|null, changeLog?: string|null }} [signals]
+ */
+export async function markUnchanged(db, id, minutes, signals = {}) {
+  const now = nowIso();
+  await db.execute({
+    sql: `update feeds set
+            status = 'active', last_fetched_at = ?, last_success_at = ?,
+            last_error = null, error_count = 0,
+            fetch_interval_minutes = ?, next_fetch_at = ?,
+            http_etag = coalesce(?, http_etag),
+            http_last_modified = coalesce(?, http_last_modified),
+            content_hash = coalesce(?, content_hash),
+            change_log = coalesce(?, change_log),
+            updated_at = ?
+          where id = ?`,
+    args: [
+      now,
+      now,
+      minutes,
+      nowIso(minutes * 60_000),
+      signals.etag ?? null,
+      signals.lastModified ?? null,
+      signals.contentHash ?? null,
+      signals.changeLog ?? null,
+      now,
+      id,
+    ],
+  });
+}
+
+/**
  * Record a failed crawl and push the next attempt out.
  *
  * @param {Client} db
@@ -2049,6 +2995,95 @@ export async function markCrawlFailure(db, id, error, errorCount, minutes) {
       id,
     ],
   });
+}
+
+/**
+ * Come back later, and hold every judgement about this feed.
+ *
+ * The counterpart to `markCrawlFailure` for a server that answered 429 -- or 503
+ * with a Retry-After. Only the schedule moves: `status`, `error_count` and
+ * `last_error` are left exactly as they were, and `last_success_at` with them.
+ *
+ * `last_fetched_at` is *not* stamped either, and that is the subtle one. It
+ * means "when we last read this publisher", and a throttle is precisely the case
+ * where we did not read them. Stamping it would make a feed we have been bounced
+ * from for a day look freshly crawled on every page that reports staleness.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {number} minutes
+ * @returns {Promise<void>}
+ */
+export async function markThrottled(db, id, minutes) {
+  const wait = Math.max(1, Math.round(Number(minutes) || 30));
+  await db.execute({
+    sql: 'update feeds set next_fetch_at = ?, updated_at = ? where id = ?',
+    args: [nowIso(wait * 60_000), nowIso(), id],
+  });
+}
+
+/**
+ * Come back later for every feed still queued on a host that just throttled us.
+ *
+ * `markThrottled` answers the one feed that was refused. This answers the rest
+ * of that publisher's queue, and it exists because the one-feed version is the
+ * wrong shape of reply to a 429: a throttle is a fact about the *host*, not
+ * about the feed that happened to be at the front of it. Measured on
+ * 2026-08-29, a bulk import put 50,099 feeds on `www.reddit.com` — 41% of the
+ * whole due queue — and because a host's feeds are crawled strictly in series,
+ * one worker walked that queue into the same 429 over and over: 84% of every
+ * crawl attempt in an hour went to reddit and 1,015 of 1,074 were refused,
+ * while the rest of the directory got 218 crawls. Stopping at the first refusal
+ * turns that whole wasted walk into a single request.
+ *
+ * **The spread is the point, not a detail.** Rescheduling a thousand held-back
+ * feeds to one instant just moves the pile-up, and they would come due together
+ * and walk into the same wall in one tick's time. Each feed is given its own
+ * offset across `spreadMinutes`, so the host's queue returns as a trickle that
+ * its rate limit can actually absorb.
+ *
+ * Like `markThrottled`, only the schedule moves: `status`, `error_count`,
+ * `last_error`, `last_success_at` and `last_fetched_at` are all left alone.
+ * These feeds were never even asked, so there is nothing to judge them on —
+ * recording a failure here is how a rate limit would retire a whole platform.
+ *
+ * @param {Client} db
+ * @param {string[]} ids feeds left unread on the throttled host
+ * @param {number} minutes how long before the first of them is tried again
+ * @param {number} [spreadMinutes] window to scatter them across
+ * @returns {Promise<number>} how many were rescheduled
+ */
+export async function markHostThrottled(db, ids, minutes, spreadMinutes = 60) {
+  const queued = (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id);
+  if (queued.length === 0) return 0;
+
+  const wait = Math.max(1, Math.round(Number(minutes) || 30));
+  const spread = Math.max(0, Math.round(Number(spreadMinutes) || 0));
+  const now = nowIso();
+
+  // Bucketed by minute rather than one statement per feed, and that is a
+  // constraint rather than a tidiness preference. A throttled host's queue here
+  // runs to hundreds of feeds, and this database gives the whole cluster one
+  // writer: a batch of nine hundred statements holds it long enough to push the
+  // jobs behind it past their deadline, which is the failure
+  // `TURSO_QUEUE_GROUP_STATEMENTS` was lowered to 10 to avoid. Bucketing makes
+  // the statement count a property of the *window* -- at most `spread` + 1,
+  // sixty-odd -- no matter how many feeds are held back.
+  const buckets = new Map();
+  for (let index = 0; index < queued.length; index += 1) {
+    const offset = spread === 0 ? 0 : Math.round((index / queued.length) * spread);
+    const bucket = buckets.get(offset);
+    if (bucket) bucket.push(queued[index]);
+    else buckets.set(offset, [queued[index]]);
+  }
+
+  const statements = [...buckets.entries()].map(([offset, members]) => ({
+    sql: `update feeds set next_fetch_at = ?, updated_at = ? where id in (${members.map(() => '?').join(',')})`,
+    args: [nowIso((wait + offset) * 60_000), now, ...members],
+  }));
+
+  await db.batch(statements, 'write');
+  return queued.length;
 }
 
 /* ------------------------------------------------------------- feed cards */
@@ -2382,7 +3417,7 @@ export async function insertSubmission(db, row) {
 export async function submissionById(db, id) {
   const { rows } = await db.execute({
     sql: `select id, kind, raw_input, accepted_count, rejected_count, queued_count, errors,
-                 notify_email, notified_at, created_at
+                 entries_total, entries_ready_at, notify_email, notified_at, created_at
           from submissions where id = ? limit 1`,
     args: [id],
   });
@@ -2757,4 +3792,135 @@ export async function feedsForSitemapChunk(db, { month, part = 1, chunkSize = 20
     args: [from, to, chunkSize, (part - 1) * chunkSize],
   });
   return rows;
+}
+
+/**
+ * What the directory can actually claim about its own reliability.
+ *
+ * Every figure here is measured rather than promised, which is the whole point
+ * of the page it feeds. A published uptime *target* is a claim about the
+ * future that nobody can check; these are claims about the past that anybody
+ * can, and they get stronger as the service does rather than becoming
+ * embarrassing when it does not.
+ *
+ * Four numbers, and what each is honestly evidence of:
+ *
+ *   * **hours the crawler recorded work in**, over the last 30 days. The poller
+ *     writes one `crawl_hourly` row per tick, so an hour with no row is an hour
+ *     it did nothing — a deploy, a crash, or a stall. It is a real availability
+ *     measure for the crawler and it is *not* a measure of whether the website
+ *     answered, which is a different question this database cannot see. The
+ *     page says so rather than letting one stand in for the other.
+ *   * **crawls in the last 24 hours**, and how many of them succeeded. A
+ *     success rate over somebody else's servers is partly a measure of the open
+ *     web rather than of us, which is also worth saying.
+ *   * **the freshness of the directory itself**: how much of it is dormant. At
+ *     the sampled 15.8% this is the most useful single fact a reader can have
+ *     about what they are searching.
+ *   * **the oldest scheduled check**, which bounds the freshness claim: no feed
+ *     waits longer than this, by construction.
+ *
+ * Cheap by construction. The rollup is ~720 tiny rows; the dormancy counts come
+ * off `feeds_last_published_idx` (0030); nothing here touches feed_items, which
+ * is the join 0017 established must never appear on a page.
+ *
+ * @param {Client} db
+ * @param {number} [days]
+ * @returns {Promise<object>}
+ */
+export async function reliability(db, days = 30) {
+  const hours = days * 24;
+  const start = nowIso(-hours * 3_600_000).slice(0, 13);
+  const dayAgo = nowIso(-86_400_000).slice(0, 13);
+  const yearAgo = nowIso(-365 * 86_400_000);
+
+  const [recorded, lastDay, states, dormant] = await Promise.all([
+    // `min(hour)` rides along because without it this figure lies in the one
+    // direction that matters. The rollup is younger than the window — it began
+    // recording when 0017 shipped — so "30 hours with work out of 720" reads as
+    // 4% availability when the truth is that the other 690 hours have no
+    // records at all, not an outage. The window is therefore bounded by the
+    // oldest row rather than by the calendar, and a hand-backfilled row
+    // (`ticks = 0`, see 0017) is not evidence of the crawler running either.
+    db.execute({
+      sql: `select count(*) as n, min(hour) as oldest
+            from crawl_hourly where hour >= ? and ticks > 0`,
+      args: [start],
+    }),
+    db.execute({
+      sql: `select coalesce(sum(fetched), 0) as fetched, coalesce(sum(succeeded), 0) as succeeded
+            from crawl_hourly where hour >= ?`,
+      args: [dayAgo],
+    }),
+    db.execute('select status, count(*) as n from feeds group by status'),
+    // Split three ways rather than two: a feed we have not re-crawled since
+    // 0030 shipped has no last_published_at, and counting those as "not
+    // dormant" would overstate how alive the directory is. Unknown is its own
+    // answer and shrinks on its own as the crawler comes round.
+    //
+    // Caught rather than allowed to throw, because the poller owns migration
+    // and the web service does not wait for it: between a deploy going out and
+    // the crawler booting, `last_published_at` does not exist yet and this
+    // statement is a hard error. A reliability page that 500s during a deploy
+    // is a bad joke, so the dormancy figures go missing for a few minutes
+    // instead and the page says it does not know them.
+    db
+      .execute({
+        sql: `select
+                (select count(*) from feeds
+                  where last_published_at is not null and last_published_at < ?) as dormant,
+                (select count(*) from feeds
+                  where last_published_at is not null and last_published_at >= ?) as publishing,
+                (select min(next_fetch_at) from feeds where status <> 'dead') as soonest,
+                (select max(next_fetch_at) from feeds where status <> 'dead') as furthest`,
+        args: [yearAgo, yearAgo],
+      })
+      .catch(() => ({ rows: [] })),
+  ]);
+
+  const byStatus = new Map(states.rows.map((r) => [String(r.status), Number(r.n ?? 0)]));
+  const total = [...byStatus.values()].reduce((a, b) => a + b, 0);
+  // Absent entirely when the read above was refused, which is different from
+  // "we looked and the answer is zero" — hence null rather than 0 below.
+  const d = dormant.rows[0] ?? null;
+  const known = d === null ? null : Number(d.dormant ?? 0) + Number(d.publishing ?? 0);
+
+  const fetched = Number(lastDay.rows[0]?.fetched ?? 0);
+  const succeeded = Number(lastDay.rows[0]?.succeeded ?? 0);
+
+  // How far back the evidence actually goes. Whichever is shorter: the window
+  // asked for, or the time since the first hour we have a record of.
+  const oldest = recorded.rows[0]?.oldest ? Date.parse(`${recorded.rows[0].oldest}:00:00.000Z`) : null;
+  const observed = oldest === null
+    ? 0
+    : Math.min(hours, Math.max(1, Math.ceil((Date.now() - oldest) / 3_600_000)));
+
+  return {
+    windowDays: days,
+    // Hours the crawler recorded any work in, out of the hours we have been
+    // watching — not out of the calendar window, which the rollup is younger
+    // than. Capped at the observed window: a rollup row for an hour that has
+    // not finished yet is still an hour it worked in.
+    hoursRecorded: Math.min(Number(recorded.rows[0]?.n ?? 0), observed),
+    hoursInWindow: observed,
+    // Stated separately so the page can say "we have only been keeping this
+    // record for two days" rather than quietly implying a month of history.
+    hoursRequested: hours,
+    fetchedLastDay: fetched,
+    succeededLastDay: succeeded,
+    successRate: fetched > 0 ? succeeded / fetched : null,
+    feeds: total,
+    active: byStatus.get('active') ?? 0,
+    pending: byStatus.get('pending') ?? 0,
+    errored: byStatus.get('error') ?? 0,
+    // Null, not zero, when the column is not there yet: "we do not know how
+    // much of the directory is dormant" and "none of it is dormant" are
+    // opposite claims and the page has to be able to tell them apart.
+    dormant: d === null ? null : Number(d.dormant ?? 0),
+    publishing: d === null ? null : Number(d.publishing ?? 0),
+    freshnessUnknown: known === null ? null : Math.max(0, total - known),
+    soonestCheck: d?.soonest ? String(d.soonest) : null,
+    furthestCheck: d?.furthest ? String(d.furthest) : null,
+    generatedAt: nowIso(),
+  };
 }

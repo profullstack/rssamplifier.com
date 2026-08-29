@@ -1,7 +1,16 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
-import { q } from '@rssamplifier/db';
+import { q, authors } from '@rssamplifier/db';
 
-import { storeCredits } from './enrich.js';
+import { prepareCredits } from './enrich.js';
+import {
+  intervalFromDates,
+  intervalFromChanges,
+  nextInterval,
+  newestPublished,
+  contentSignature,
+  recordChange,
+  neverSooner,
+} from './cadence.js';
 
 /** Backoff ladder in minutes, indexed by consecutive error count. */
 const BACKOFF = [60, 180, 360, 720, 1440];
@@ -11,6 +20,14 @@ const MAX_INTERVAL = 10_080; // one week
 const MIN_INTERVAL = 60;
 /** Longest gap for a feed that is merely quiet rather than broken. */
 const MAX_QUIET_INTERVAL = 1440; // one day
+
+// Topics and bylines are useful projections, not part of deciding whether a
+// feed is healthy. A large first-crawl catch-up can pause them so its scarce
+// database writes are spent on feeds and posts; feeds with no projection are
+// picked up once this is switched back on.
+const AUXILIARY_WRITES = !['0', 'false'].includes(
+  String(process.env['CRAWL_AUXILIARY_WRITES'] ?? '').toLowerCase(),
+);
 
 /**
  * How long to wait before the next attempt on a feed.
@@ -26,24 +43,51 @@ export function backoffMinutes(errorCount) {
   return Math.min(BACKOFF[Math.min(errorCount - 1, BACKOFF.length - 1)], MAX_INTERVAL);
 }
 
+/** How long to wait after a throttle that named no interval of its own. */
+const THROTTLE_DEFAULT = 30;
+
 /**
- * How long to wait before re-crawling a feed that answered.
+ * How long to wait after being throttled.
  *
- * Re-fetching every feed hourly is affordable for a hundred blogs and not for
- * fifty thousand: at one crawl per feed per hour a 47k directory needs 783
- * fetches a minute, forever. Most of the small web posts monthly, so a feed
- * that produced nothing new doubles its gap up to a day, and one that did
- * publish drops straight back to hourly. The directory ends up spending its
- * request budget on the blogs that are actually active.
+ * The server's own `Retry-After` wins, because it is the only party that knows
+ * when its limit resets. Floored at a minute so a `Retry-After: 0` cannot spin,
+ * and capped at a day so a misread date cannot mothball the feed.
+ *
+ * Deliberately much shorter than the error ladder: this feed is healthy and we
+ * want it back soon. It is the *rate* that has to come down, and lengthening one
+ * feed's interval is the wrong instrument for that -- see POLL_CONCURRENCY.
+ *
+ * @param {number|null|undefined} retryAfter seconds the server asked for
+ * @returns {number} minutes
+ */
+export function throttleMinutes(retryAfter) {
+  const seconds = Number(retryAfter);
+  if (!Number.isFinite(seconds) || seconds <= 0) return THROTTLE_DEFAULT;
+  return Math.min(Math.max(1, Math.ceil(seconds / 60)), 1440);
+}
+
+/**
+ * How long to wait before re-crawling a feed whose document carried no dates.
+ *
+ * This is now only the fallback half of the schedule — see cadence.js, which
+ * decides from the feed's own publishing rhythm whenever the document gives it
+ * two believable dates to work with, and which is what the crawl actually
+ * calls. This remains as the answer for an undated feed, and it is deliberately
+ * the *old* answer, ceiling included: without dates there is no evidence that a
+ * quiet feed has been abandoned, only that it is quiet, and a 90-day gap is too
+ * strong a conclusion to draw from no data at all.
+ *
+ * Delegated rather than reimplemented so there is one statement of the policy.
+ * The same ladder also exists in SQL inside `storeCrawl`, because this branch
+ * depends on how many posts the crawl stored and that is not known until the
+ * write has run; the tests pin the two together.
  *
  * @param {number} newItems items stored by the crawl that just ran
  * @param {number} currentMinutes the feed's existing interval
  * @returns {number} minutes
  */
 export function nextIntervalMinutes(newItems, currentMinutes = MIN_INTERVAL) {
-  if (newItems > 0) return MIN_INTERVAL;
-  const current = Number(currentMinutes) || MIN_INTERVAL;
-  return Math.min(Math.max(current, MIN_INTERVAL) * 2, MAX_QUIET_INTERVAL);
+  return nextInterval({ items: [], newItems, currentMinutes });
 }
 
 /**
@@ -62,14 +106,36 @@ export function nextIntervalMinutes(newItems, currentMinutes = MIN_INTERVAL) {
  */
 export async function refreshFeedKeywords(db, feedId, feed = {}) {
   const items = await q.itemsForKeywords(db, feedId);
+  const topics = topicsFrom(feed, items);
+  await q.replaceFeedKeywords(db, feedId, topics);
+  return topics.length;
+}
 
+/**
+ * A feed's topics, from its own metadata and everything it has published.
+ *
+ * Pure, and separated from the read on purpose: `crawlFeed` reads the stored
+ * items *before* it writes the new ones so that the topics can go into the same
+ * transaction as everything else. Given the stored items and the document, this
+ * produces the same answer either way round.
+ *
+ * Both sources are used because neither is sufficient. The document alone would
+ * narrow a blog's topics to whatever it published this month, since a feed only
+ * carries its recent items; the stored items alone would miss the post that has
+ * just arrived and is the reason we are recomputing at all.
+ *
+ * @param {{ title?: string, description?: string, categories?: string[], items?: object[] }} feed
+ * @param {object[]} [storedItems] rows from `itemsForKeywords`
+ * @returns {Array<{ slug: string, keyword: string, words?: number, count?: number, source?: string }>}
+ */
+export function topicsFrom(feed = {}, storedItems = []) {
   const blocks = [];
   if (feed.title) blocks.push(String(feed.title));
   if (feed.description) blocks.push(String(feed.description));
 
   const categories = Array.isArray(feed.categories) ? [...feed.categories] : [];
 
-  for (const item of items) {
+  for (const item of storedItems ?? []) {
     if (item.title) blocks.push(String(item.title));
     if (item.summary) blocks.push(String(item.summary));
 
@@ -80,14 +146,20 @@ export async function refreshFeedKeywords(db, feedId, feed = {}) {
       const parsed = JSON.parse(String(item.categories ?? '[]'));
       if (Array.isArray(parsed)) categories.push(...parsed.map((c) => String(c)));
     } catch {
-      // Not JSON, so there are no categories on this item. Nothing to report:
-      // the topics of the other items are unaffected.
+      // Not JSON, so there are no categories on this item. The topics of the
+      // other items are unaffected.
     }
   }
 
-  const topics = feedTopics({ blocks, categories });
-  await q.replaceFeedKeywords(db, feedId, topics);
-  return topics.length;
+  // The document's own items, which are the ones not yet stored. Their
+  // categories are already arrays rather than JSON text.
+  for (const item of feed.items ?? []) {
+    if (item?.title) blocks.push(String(item.title));
+    if (item?.summary) blocks.push(String(item.summary));
+    if (Array.isArray(item?.categories)) categories.push(...item.categories.map((c) => String(c)));
+  }
+
+  return feedTopics({ blocks, categories });
 }
 
 /**
@@ -109,9 +181,63 @@ export async function refreshFeedKeywords(db, feedId, feed = {}) {
 export async function crawlFeed(db, feed, opts = {}) {
   const id = String(feed.id);
   const scraped = feed.source_kind === 'scraped';
+
+  // What the server told us last time, sent back so it can answer "still the
+  // same" without sending the document again. Scraped sources are excluded: what
+  // is fetched there is a page of prose whose validators describe the page, and
+  // a marketing site that has not changed its header is not evidence that the
+  // posts extracted from it have not.
+  const conditional = scraped
+    ? {}
+    : { etag: feed.http_etag ?? null, lastModified: feed.http_last_modified ?? null };
+
   const resolved = scraped
     ? await (opts.scrape ?? scrapeFeed)(String(feed.feed_url))
-    : await (opts.resolve ?? resolveFeed)(String(feed.feed_url));
+    : await (opts.resolve ?? resolveFeed)(String(feed.feed_url), conditional);
+
+  // The publisher says nothing has changed. This is the cheapest and the most
+  // trustworthy answer the crawler can get: no body was sent, nothing is parsed,
+  // and the claim comes from the only party in a position to make it.
+  //
+  // The interval is recomputed from the change log, because a 304 is itself an
+  // observation -- "we looked and it was still the same" -- and that is exactly
+  // what the log is for. `neverSooner` is what makes it safe: evidence of *no*
+  // change may only push the next read further out, never pull it closer, so a
+  // feed resting at the ceiling is not dragged back by being checked.
+  if (resolved.notModified) {
+    const minutes =
+      neverSooner(intervalFromChanges(feed.change_log), feed.fetch_interval_minutes) ??
+      Number(feed.fetch_interval_minutes) ??
+      MIN_INTERVAL;
+    await q.markUnchanged(db, id, minutes, {
+      etag: resolved.etag ?? null,
+      lastModified: resolved.lastModified ?? null,
+      changeLog: recordChange(feed.change_log, false),
+    });
+    return { ok: true, newItems: 0, notModified: true };
+  }
+
+  // Throttled, which is a different fact from failed and must not be recorded as
+  // one. `markCrawlFailure` sets status='error', increments error_count and walks
+  // the backoff ladder -- and at ten consecutive failures it marks the feed dead.
+  // A publisher answering 429 is telling us we are asking too often; recording
+  // that against *their* health would retire a working feed for our own
+  // impatience, and it would do it to a whole platform at once, since one
+  // backend's rate limit is hit by every feed hosted on it in the same minute.
+  //
+  // So: come back when asked, leave every health column exactly as it was.
+  if (resolved.throttled) {
+    await q.markThrottled(db, id, throttleMinutes(resolved.retryAfter));
+    // `retryAfter` travels with the result so the caller can hold the rest of
+    // this host's queue back by the same interval the server itself named.
+    return {
+      ok: false,
+      newItems: 0,
+      throttled: true,
+      retryAfter: resolved.retryAfter ?? null,
+      error: resolved.error,
+    };
+  }
 
   if (!resolved.ok) {
     const errorCount = Number(feed.error_count ?? 0) + 1;
@@ -119,59 +245,192 @@ export async function crawlFeed(db, feed, opts = {}) {
     return { ok: false, newItems: 0, error: resolved.error };
   }
 
-  // `upsertItems` reports how many items the document *offered*, not how many
-  // were stored — every crawl re-offers the whole feed and the conflict clause
-  // quietly updates the rows that already existed. Taking that as "new items"
-  // is the bug this line fixes, and it was an expensive one: `sent` was never
-  // zero, so `nextIntervalMinutes` always returned the floor and **every feed
-  // in the directory was re-crawled hourly for ever**. The backoff ladder that
-  // is supposed to let a quiet blog drift out to a day had never once engaged.
+  // The ordinary path writes the whole crawl in one transaction. Production
+  // catch-up mode instead uses serialized autocommits in `storeCrawl`, because
+  // its remote explicit transactions are currently the slow path.
   //
-  // The honest count is the difference the crawl made to the stored total. Both
-  // halves are already in hand — `item_count` rides along on the due row and the
-  // total has to be recounted anyway — so this costs nothing.
-  await q.upsertItems(db, id, resolved.feed.items);
-  const total = await q.countItems(db, id);
-  const sent = Math.max(0, total - Number(feed.item_count ?? 0));
-  await q.markCrawlSuccess(
+  // This is the number that decides the crawler's throughput and nothing else
+  // does. SQLite permits a single writer, so writes serialize -- a crawl costs
+  // very nearly the count of transactions it opens, not the work inside them.
+  // Measured on production: three transactions per feed gave a 300-feed tick of
+  // 19.5 minutes, about 860 feeds an hour, against 2,400 before any of this.
+  // Folding three into one is a threefold change; making any one of them
+  // cheaper is not.
+  //
+  // The ordering below is what makes one transaction possible. Everything that
+  // has to be *read* is read first, in parallel, and everything to be written
+  // is assembled in memory before a single statement is sent.
+  // Did the contents change since last time, judged by a fingerprint of what
+  // the document identifies rather than of the bytes it arrived in? This is the
+  // fallback for the majority of servers that send no validators at all, and it
+  // answers the same question a 304 would, one parse later.
+  //
+  // A first crawl has nothing to compare against and counts as a change, which
+  // is right: everything in the document is new to us. That is the *only* way to
+  // be undecided here -- an empty document has a fingerprint like any other, so
+  // a feed that consistently lists nothing reads as unchanged and decays,
+  // instead of reading as changed and being fetched hourly for ever.
+  const signature = contentSignature(resolved.feed.items);
+  const knownSignature = feed.content_hash ? String(feed.content_hash) : null;
+  const contentsChanged = knownSignature === null || signature !== knownSignature;
+  const changeLog = recordChange(feed.change_log, contentsChanged);
+
+  // How long to wait, in order of how good the evidence is.
+  //
+  // The document's own dates are best and cost nothing, since they were parsed
+  // anyway. Failing those -- and about two percent of the directory states no
+  // dates at all, while accounting for forty-four percent of the crawl demand --
+  // the times we watched the contents change say the same thing about the same
+  // publisher, measured on our clock instead of theirs. Only a feed with neither
+  // falls to the old doubling ladder, which `storeCrawl` evaluates in SQL
+  // because it needs a number this crawl cannot know until it has written.
+  //
+  // The asymmetry in the second branch is the important part. A crawl that saw
+  // no change is evidence in one direction only, so it may lengthen the interval
+  // and never shorten it; a crawl that saw one recomputes freely, which is what
+  // lets an abandoned feed that starts publishing again accelerate on its first
+  // new post.
+  const dated = intervalFromDates(resolved.feed.items);
+  const observed = intervalFromChanges(changeLog);
+  const interval =
+    dated ?? (contentsChanged ? observed : neverSooner(observed, feed.fetch_interval_minutes));
+
+  // When this publisher last published, as distinct from when we last read
+  // them. Stored on the feed row so a page can say "current, and dormant since
+  // 2023" without a feed_items join -- see 0030. It falls out of the same date
+  // scan the interval needed, so it is free.
+  const published = newestPublished(resolved.feed.items);
+
+  // Did this feed publish anything since we last looked?
+  //
+  // The old guard asked "did this crawl store new items", which is only knowable
+  // *after* the write -- and needing that answer first is exactly what forced
+  // topics and credits into transactions of their own. This asks the same
+  // question of the document instead, from two values already in hand, so it can
+  // be answered before anything is written.
+  //
+  // A feed with no usable dates cannot answer by date, and used to fall through
+  // to the "have we ever done this" checks below -- which meant its topics and
+  // credits were derived once, on its first crawl, and never revised however
+  // much it went on to publish. The signature answers for it: no dates, but the
+  // contents demonstrably changed, is the same fact arrived at differently.
+  const knownPublished = feed.last_published_at ? String(feed.last_published_at) : null;
+  const publishedSomethingNew =
+    published !== null
+      ? knownPublished === null || published > knownPublished
+      : contentsChanged && knownSignature !== null;
+
+  // Every read the crawl needs, at once, before any of it is written.
+  //
+  // `itemsForKeywords` is the interesting one. Topics are deliberately derived
+  // from what is *stored* rather than from the document -- a feed carries only
+  // its recent items, so extracting from the response alone would narrow a
+  // blog's topics to whatever it published this month. Reading the stored items
+  // *before* the upsert and adding the document's items in memory gives the
+  // same set without the read-after-write that used to force a second
+  // transaction.
+  let storedItems = [];
+  let hasAuthors = true;
+  /** @type {Array<{ slug: string, keyword: string, words: number, count: number, source: string }>} */
+  let storedTopics = [];
+  if (AUXILIARY_WRITES) {
+    // The topics come back in full rather than as a count, so the write below
+    // can be a diff instead of a wholesale replace. Same round trip, same
+    // index; see `keywordDiffStatements` for what it saves.
+    [storedItems, storedTopics, hasAuthors] = await Promise.all([
+      q.itemsForKeywords(db, id).catch(() => []),
+      q.feedKeywordRows(db, id).catch(() => []),
+      authors.feedHasAuthors(db, id).catch(() => true),
+    ]);
+  }
+
+  // Topics, re-derived on every crawl.
+  //
+  // This used to be gated on `publishedSomethingNew || existingTopics === 0`,
+  // which asked the wrong question. Topics come from `topicsFrom(feed, items)`
+  // -- the *channel's* own categories, title and description as well as the
+  // items -- so a publisher who retags their feed, renames it, or rewrites its
+  // description has changed its topics without publishing anything at all. The
+  // old guard could not see that, and a feed that went quiet was pinned to
+  // whatever it was about on the last day it posted. `feeds.category` has
+  // always been re-derived on every successful crawl for exactly this reason
+  // (`upsertFeed` writes it unconditionally); topics now agree with it.
+  //
+  // This is affordable because of the diff below, not in spite of it. The three
+  // reads it needs are already issued above whenever auxiliary writes are on,
+  // so re-deriving adds no round trip -- `topicsFrom` is pure computation and
+  // `keywordDiffStatements` returns an empty array when the extracted set
+  // matches what is stored, which for a quiet feed is every time. The cost that
+  // forced `CRAWL_AUXILIARY_WRITES=0` is *first* crawls, where every topic is a
+  // genuine insert and no diff can help; that is a property of the backlog and
+  // is unchanged by this.
+  let topics = 0;
+  /** @type {Array<{ sql: string, args: unknown[] }>} */
+  let topicStatements = [];
+  if (AUXILIARY_WRITES) {
+    try {
+      const extracted = topicsFrom(resolved.feed, storedItems);
+      // A diff rather than a replace. Most re-crawls extract the topics the
+      // feed already has, and rewriting six rows to the values they already
+      // hold is the single largest avoidable write in the crawl.
+      topicStatements = q.keywordDiffStatements(id, extracted, storedTopics);
+      topics = extracted.length;
+    } catch {
+      // Topics are a browsing aid. Failing to extract them must not fail the
+      // crawl -- that would back the feed off and eventually mark a perfectly
+      // healthy blog dead.
+      topicStatements = [];
+      topics = 0;
+    }
+  }
+
+  // Credits, on the same condition and for the same reason. "Stored for free"
+  // was true of the parsing and false of the storing: this used to be three
+  // write transactions per crawl, all of which rewrote the byline already on
+  // file whenever the feed had not changed.
+  let people = 0;
+  /** @type {Array<{ sql: string, args: unknown[] }>} */
+  let creditStatements = [];
+  if (AUXILIARY_WRITES && (publishedSomethingNew || !hasAuthors)) {
+    try {
+      // The contacts are the feed's own, and they are passed here rather than
+      // left to the enrichment pass because they cost nothing: the document is
+      // already parsed, so a publisher who names no usable person but prints a
+      // mailbox is reachable from the first crawl instead of from whenever the
+      // week-long site walk gets to them.
+      const prepared = await prepareCredits(
+        db,
+        { id, feed_url: String(feed.feed_url) },
+        resolved.feed.credits ?? [],
+        resolved.feed.contacts ?? [],
+      );
+      creditStatements = prepared.statements;
+      people = prepared.people;
+    } catch {
+      // Same trade as topics: a byline that fails to store is a missing name,
+      // where a byline that fails the crawl is a healthy blog on its way to
+      // being marked dead.
+      creditStatements = [];
+      people = 0;
+    }
+  }
+
+  const { stored: sent } = await q.storeCrawl(
     db,
     id,
+    resolved.feed.items,
     resolved.feed,
-    total,
-    nextIntervalMinutes(sent, feed.fetch_interval_minutes),
+    Number(feed.item_count ?? 0),
+    interval,
+    published,
+    [...topicStatements, ...creditStatements],
+    {
+      etag: resolved.etag ?? null,
+      lastModified: resolved.lastModified ?? null,
+      contentHash: signature,
+      changeLog,
+    },
   );
-
-  // Only when the feed actually published something, or when it has no topics
-  // yet. Re-extracting on every crawl would rewrite twenty-five rows per feed
-  // per hour across the whole directory to arrive at the same answer — the text
-  // cannot have changed if nothing was added to it.
-  //
-  // Topics are a browsing aid, so failing to extract them must not turn a crawl
-  // that stored its items into a failure — that would back the feed off and
-  // eventually mark a perfectly healthy blog dead.
-  let topics = 0;
-  try {
-    if (sent > 0 || (await q.countFeedKeywords(db, id)) === 0) {
-      topics = await refreshFeedKeywords(db, id, resolved.feed);
-    }
-  } catch (err) {
-    return { ok: true, newItems: sent, topics: 0, topicError: String(err?.message ?? err) };
-  }
-
-  // Whoever the document names, stored for free: the feed is already parsed
-  // and the credits came out of it with it. The links half of enrichment costs
-  // requests and lives in enrichDue instead.
-  //
-  // Guarded for the same reason topics are. A byline that fails to store is a
-  // missing name; a byline that fails the *crawl* backs the feed off and
-  // eventually marks a healthy blog dead, which is a far worse trade.
-  let people = 0;
-  try {
-    const stored = await storeCredits(db, { id, feed_url: String(feed.feed_url) }, resolved.feed.credits ?? []);
-    people = stored.people;
-  } catch (err) {
-    return { ok: true, newItems: sent, topics, authorError: String(err?.message ?? err) };
-  }
 
   return { ok: true, newItems: sent, topics, people };
 }
@@ -324,7 +583,9 @@ function hostOf(feed) {
  * @param {number} [batchSize]
  * @param {number} [concurrency] hosts crawled at once
  * @param {((event: { at: string, event: 'feed', status: 'ok'|'error', subject: string, slug: string|null, amount: number|null, detail: string|null, ms: number }) => void)|null} [onEvent]
- * @param {{ perHost?: number }} [opts]
+ * @param {{ perHost?: number, crawl?: { resolve?: Function, scrape?: Function } }} [opts] `crawl` is
+ *   handed to each `crawlFeed`, which is what makes a whole batch testable without
+ *   the network — the throttle path in particular only exists across a host's queue.
  * @returns {Promise<{ crawled: number, failed: number, items: number, hosts: number }>} items being posts stored, not posts seen
  */
 export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = null, opts = {}) {
@@ -347,6 +608,15 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
   // reports what it added, and the alternative is counting feed_items rows by
   // hour, which is a scan of the largest table in the database.
   let items = 0;
+  // Crawls the publisher answered with a 304, which cost a header exchange and
+  // one small write instead of a document, a parse and an upsert. This is the
+  // number that says whether conditional requests are actually being honoured
+  // out there -- it is entirely up to other people's servers, so it cannot be
+  // predicted and has to be measured.
+  let unchanged = 0;
+  // Hosts abandoned mid-queue because they answered 429. Distinct from `failed`:
+  // nothing is wrong with these feeds and they were mostly never even asked.
+  let throttled = 0;
   let next = 0;
 
   const worker = async () => {
@@ -355,17 +625,21 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
       next += 1;
       if (index >= queues.length) return;
 
-      for (const feed of queues[index]) {
+      const queue = queues[index];
+
+      for (let position = 0; position < queue.length; position += 1) {
+        const feed = queue[position];
         const started = Date.now();
 
         // One feed that throws — a write that times out, a URL that breaks the
         // parser — must not reject the whole batch and take the other workers'
         // completed crawls down with it.
         try {
-          const res = await crawlFeed(db, feed);
+          const res = await crawlFeed(db, feed, opts.crawl);
           if (res.ok) {
             crawled += 1;
             items += Number(res.newItems ?? 0);
+            if (res.notModified) unchanged += 1;
           } else failed += 1;
 
           report(onEvent, feed, started, {
@@ -373,6 +647,20 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
             amount: res.ok ? Number(res.newItems ?? 0) : null,
             detail: res.ok ? null : (res.error ?? 'unknown'),
           });
+
+          // A 429 is the host speaking for all of its feeds, so believe it once
+          // and leave. The rest of this queue is the same server, and asking it
+          // the same question another eight hundred times is precisely what it
+          // just told us to stop doing — see `markHostThrottled` for the
+          // measurement that put this here.
+          if (res.throttled) {
+            throttled += 1;
+            const rest = queue.slice(position + 1);
+            if (rest.length > 0) {
+              await holdBackHost(db, rest, throttleMinutes(res.retryAfter), onEvent, feed);
+            }
+            break;
+          }
         } catch (err) {
           failed += 1;
           report(onEvent, feed, started, {
@@ -391,7 +679,67 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
   // `hosts` is what says whether the spread is working: a batch of 300 feeds
   // across 4 hosts cannot go faster than its biggest queue however many workers
   // are pointed at it, and the number is otherwise invisible from outside.
-  return { crawled, failed, items, hosts: queues.length };
+  return { crawled, failed, items, unchanged, throttled, hosts: queues.length };
+}
+
+/**
+ * Put back the feeds a throttled host never got asked about.
+ *
+ * Separated from the worker so the worker reads as the policy — believe the
+ * 429, leave — rather than as the bookkeeping. Two things it must not do, and
+ * both are why it exists as its own function:
+ *
+ *   * it must not fail the batch. These feeds are fine; the reschedule is an
+ *     optimisation and the crawl has already done its useful work. If the write
+ *     times out they keep their existing `next_fetch_at` and are simply offered
+ *     again next tick, which is the behaviour this replaces.
+ *   * it must not report the held-back feeds as errors. Nothing was wrong with
+ *     them and nothing was even sent, so a per-feed line would put hundreds of
+ *     healthy feeds on the failure panel. One line for the host says it.
+ *
+ * @param {import('@libsql/client').Client} db
+ * @param {Array<{ id: string }>} rest feeds left unread on this host
+ * @param {number} minutes how long before the first is tried again
+ * @param {((event: object) => void)|null} onEvent
+ * @param {{ feed_url: string, title?: unknown }} feed the one that was refused
+ * @returns {Promise<void>}
+ */
+async function holdBackHost(db, rest, minutes, onEvent, feed) {
+  const started = Date.now();
+
+  try {
+    // Spread across an hour rather than returned all at once: a thousand feeds
+    // handed back to the same instant is the same pile-up one tick later.
+    await q.markHostThrottled(
+      db,
+      rest.map((f) => f.id),
+      minutes,
+      60,
+    );
+  } catch {
+    // The schedule is unchanged, so they come back next tick exactly as they
+    // would have without this. Losing the batch over it would be worse.
+    return;
+  }
+
+  if (typeof onEvent !== 'function') return;
+
+  try {
+    onEvent({
+      at: new Date().toISOString(),
+      event: 'host-throttled',
+      status: 'info',
+      subject: hostOf(feed),
+      slug: null,
+      amount: rest.length,
+      // Not `message`: `toEntry` reads any row carrying one as an error, and
+      // this is the crawler behaving correctly. See the daemon error panel note.
+      detail: `held back ${rest.length} feeds for ${minutes}m`,
+      ms: Date.now() - started,
+    });
+  } catch {
+    // A broken listener loses its line and nothing else.
+  }
 }
 
 /**

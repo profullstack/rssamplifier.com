@@ -5,8 +5,12 @@ import { AD_TEXT, adPlan } from '../lib/ads.js';
 import { CATEGORIES } from '../lib/categories.js';
 import Ad from './Ad.jsx';
 import AdBanner from './AdBanner.jsx';
+import ListFilter from './ListFilter.jsx';
+import SubscribeLinks from './SubscribeLinks.jsx';
+import { FILTER_FROM } from '../lib/listFilter.js';
 import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
+import { jsonLdScript } from '../lib/jsonld.js';
 
 /** Feeds per category page. Matches the home page's run length. */
 export const PAGE_SIZE = 60;
@@ -65,11 +69,16 @@ export default async function CategoryIndex({ kind, page = 1 }) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       <h1>{category.heading}</h1>
       <p className="lede">{category.lede}</p>
+
+      {/* This category, as a feed of what has just been added to it — the
+          listing below, in a form a reader can be told about instead of having
+          to come back and check. */}
+      <SubscribeLinks base={category.path} what={`the ${category.noun} directory`} />
 
       <Ad format={AD_TEXT} />
 
@@ -79,6 +88,18 @@ export default async function CategoryIndex({ kind, page = 1 }) {
           {total} {total === 1 ? category.one : category.noun}
         </span>
       </h2>
+
+      {/* Narrows the page you are on, not the category: sixty rows is a lot to
+          read through for one name, and the pager is still how you reach the
+          rest of them. */}
+      {rows.length >= FILTER_FROM && (
+        <ListFilter
+          target=".feed-list .feed-row"
+          noun={category.one}
+          plural={category.noun}
+          searchHref="/search?q="
+        />
+      )}
 
       {rows.length === 0 ? (
         <p className="empty">

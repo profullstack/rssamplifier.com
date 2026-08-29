@@ -1,7 +1,13 @@
 import { q } from '@rssamplifier/db';
-import { SYNDICATION_FORMATS, buildSyndication } from '@rssamplifier/feed';
+import {
+  SYNDICATION_FORMATS,
+  adSlotsFor,
+  buildSyndication,
+  interleaveAds,
+} from '@rssamplifier/feed';
 
 import { db, siteUrl } from './db.js';
+import { fetchFeedAds } from './feedAds.js';
 import { playerPath, wantsPlayer } from './player.js';
 import { slugFromUrl, topicGroup } from './topicGroups.js';
 
@@ -140,17 +146,25 @@ export async function topicFeed({
     selfUrl: `${page}.${format}`,
   };
 
-  const body = buildSyndication(
-    format,
-    channel,
-    rows.map((row) => ({
-      ...row,
-      // The publisher's guid is the item's identity everywhere else in this
-      // codebase, and it is what keeps a reader from showing the same post
-      // twice after a re-crawl renumbers our own row ids.
-      id: String(row.guid ?? row.url ?? ''),
-    })),
-  );
+  const items = rows.map((row) => ({
+    ...row,
+    // The publisher's guid is the item's identity everywhere else in this
+    // codebase, and it is what keeps a reader from showing the same post
+    // twice after a re-crawl renumbers our own row ids.
+    id: String(row.guid ?? row.url ?? ''),
+  }));
+
+  // Sponsored items, one in ten. Only the document formats: a playlist carries
+  // an ordered list of things to *play*, and a sponsored line has nothing for a
+  // player to open — VLC handed one shows the reader an error, which is the
+  // same reason `video/youtube` enclosures are excluded from them.
+  //
+  // The count is worked out before the fetch rather than after, so a feed too
+  // short to carry an ad never pays for the round trip.
+  const wanted = spec.media ? 0 : adSlotsFor(items.length);
+  const ads = wanted > 0 ? await fetchFeedAds(wanted, { src: 'topic' }) : [];
+
+  const body = buildSyndication(format, channel, interleaveAds(items, ads));
 
   return new Response(body, {
     headers: {
@@ -160,7 +174,7 @@ export async function topicFeed({
         format,
       )}"`,
       'access-control-allow-origin': '*',
-      'cache-control': 'public, max-age=300',
+      'cache-control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=3600',
     },
   });
 }

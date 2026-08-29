@@ -3,20 +3,34 @@ import { q, alerts, queue, authors as people } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
-import { adPlan } from '../../lib/ads.js';
-import { lanesOffered, trackFor } from '../../lib/queue.js';
+import { feedAdPlan } from '../../lib/feedAdPlan.js';
+import {
+  FEED_QUEUE_LIMIT,
+  alreadyQueued,
+  entryLanes,
+  lanesOffered,
+  playableEntries,
+  trackFor,
+} from '../../lib/queue.js';
 import { shareText } from '../../lib/share.js';
 import { feedCard, postThumb } from '../../lib/thumbs.js';
+import { feedAlternates } from '../../lib/subscribe.js';
 import Ad from '../Ad.jsx';
 import AdBanner from '../AdBanner.jsx';
 import AuthorLinks from '../AuthorLinks.jsx';
 import FollowControls from '../FollowControls.jsx';
+import ListFilter from '../ListFilter.jsx';
+import { FILTER_FROM } from '../../lib/listFilter.js';
+import Freshness from '../Freshness.jsx';
 import PlayButton from '../PlayButton.jsx';
+import QueueAll from '../QueueAll.jsx';
 import QueueButton from '../QueueButton.jsx';
 import Share from '../Share.jsx';
+import SubscribeLinks from '../SubscribeLinks.jsx';
 import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
+import { jsonLdScript } from '../../lib/jsonld.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +59,15 @@ export async function generateMetadata({ params }) {
   return {
     title,
     description,
-    alternates: { canonical: url },
+    // Our copy of this feed, at our address, announced the way every feed
+    // reader and browser extension looks for one. Before this the page had no
+    // rel="alternate" at all and autodiscovery found nothing — the one link
+    // offered pointed at the publisher's own URL, which is a strange thing for
+    // a directory to hand out: the reader subscribes somewhere else and none of
+    // the work this site did (cleaned summaries, credited authors, the reader)
+    // goes with them. The publisher's original is still on the page, one line
+    // down and labelled as theirs.
+    alternates: { canonical: url, types: feedAlternates(url, title) },
 
     // Spread rather than set to undefined, and this is not a style choice: a key
     // that is *present* and undefined is read by Next as "this page has no
@@ -94,7 +116,7 @@ export default async function FeedPage({ params }) {
   if (!feed) notFound();
 
   const [posts, nav, topics, credited, feedLinks, user] = await Promise.all([
-    q.itemsForFeed(client, String(feed.id), 50),
+    q.itemsForFeed(client, String(feed.id), FEED_QUEUE_LIMIT),
     q.neighbours(client, String(feed.created_at)),
     q.keywordsForFeed(client, String(feed.id)),
     people.authorsForFeed(client, String(feed.id)),
@@ -121,12 +143,26 @@ export default async function FeedPage({ params }) {
         /** @type {Record<string, ('read'|'listen'|'watch')[]>} */ ({}),
       ];
 
+  // What "queue all" would act on, worked out from the posts already in hand
+  // rather than asked for separately. The endpoint runs this same function over
+  // this same query when the form comes back, which is what stops the number on
+  // the button and the rows it adds from ever being two different sets.
+  const playable = playableEntries(posts);
+
   // A blog page is the longest read on the site — up to fifty summaries — so it
   // is the one place a rectangle earns its keep, sat in the flow where somebody
-  // has already stopped to read. Three units across fifty posts, alternating so
-  // it never becomes a column of boxes, and none at all on a blog with only a
-  // handful of entries.
-  const ads = adPlan(posts.length, { first: 3, every: 12, max: 3 });
+  // has already stopped to read. At most three across fifty posts, alternating
+  // so it never becomes a column of boxes, and none at all on a blog with only
+  // a handful of entries.
+  //
+  // One in ten, which is not merely the same number the syndicated documents
+  // use but the same function: feedAdPlan asks @rssamplifier/feed's adPositions
+  // where the ads go, so /phoenix-fm and /phoenix-fm.rss place them after the
+  // same posts. Restating the cadence here is what let the two drift before —
+  // it was one in twelve starting at the fourth post, and a reader who meets an
+  // ad after four posts on the page and after ten in the feed is being told two
+  // different things about how heavily this site advertises.
+  const ads = feedAdPlan(posts.length);
 
   const podcast = feed.category === 'podcast';
 
@@ -187,7 +223,7 @@ export default async function FeedPage({ params }) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
 
       {/* The eyebrow is a link, not a label: it is the only place on a feed's
@@ -205,13 +241,33 @@ export default async function FeedPage({ params }) {
             {hostOf(String(feed.site_url))} ↗
           </a>
         )}
+        {/* The publisher's own feed, named as theirs and pointed at plainly.
+            It is no longer the page's subscribe link — that is ours, below —
+            but a directory that hides where a feed came from is a worse
+            directory, and somebody who wants to go straight to the source
+            should not have to view-source to find it. */}
         <a href={String(feed.feed_url)} rel="noopener">
-          RSS feed ↗
+          Source feed ↗
         </a>
         <span>
           {feed.item_count} {category.item}
         </span>
       </div>
+
+      {/* Subscribe here, to us. The same posts, our summaries, and links that
+          come back to the reader on this site rather than leaving it. `.md` is
+          in the row because half of what reads this directory is not a person. */}
+      <SubscribeLinks
+        base={`/${slug}`}
+        what={`this ${category.one}`}
+        formats={podcast || feed.category === 'music' ? ['rss', 'atom', 'json', 'md', 'm3u', 'pls'] : undefined}
+      />
+
+      {/* How current this page is, and whether the feed behind it is still
+          publishing — two different questions, both answered, always. See
+          lib/freshness.js. The newest post's date comes off the list this page
+          has already loaded, so the signal costs no extra query. */}
+      <Freshness feed={feed} newestPost={posts[0]?.published_at ?? null} />
 
       {/* Follow and share, side by side, because they are the two things to do
           with a feed you have just found and only one of them needs an
@@ -315,6 +371,30 @@ export default async function FeedPage({ params }) {
 
       <h2>Latest {category.item}</h2>
 
+      {/* Above the list, on the same reasoning the topic player uses: somebody
+          who has decided to keep the whole show has decided that on the
+          strength of the blurb, and should not have to scroll fifty rows to act
+          on it. Renders nothing at all when the feed carries no files, which is
+          every blog — QueueAll returns null on a total of zero. */}
+      <QueueAll
+        feed={slug}
+        total={playable.length}
+        queued={alreadyQueued(playable, queued)}
+        lanes={entryLanes(playable)}
+        next={`/${slug}`}
+      />
+
+      {/* An archive page can carry a hundred entries, and looking for one you
+          half-remember the title of is the commonest thing to do with it. */}
+      {posts.length >= FILTER_FROM && (
+        <ListFilter
+          target="article.entry"
+          noun={category.item.replace(/s$/, '')}
+          plural={category.item}
+          searchHref="/search?q="
+        />
+      )}
+
       {posts.length === 0 ? (
         <p className="empty">
           No {category.item} collected yet — the crawler will pick this up shortly.
@@ -392,7 +472,7 @@ export default async function FeedPage({ params }) {
         next={nav.next}
         current={String(feed.title)}
         siteUrl={feed.site_url ? String(feed.site_url) : null}
-        feedUrl={String(feed.feed_url)}
+        feedUrl={`/${slug}.rss`}
       />
     </>
   );

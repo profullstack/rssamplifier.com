@@ -55,10 +55,18 @@ export const INSTRUCTIONS = [
   'returns its full text — the feed slug and guid it needs travel on every post the other',
   'tools return.',
   '',
-  'Two things worth knowing. Categories and topics are derived from each feed document on',
+  'Three things worth knowing. Categories and topics are derived from each feed document on',
   'every crawl, so they describe the feed rather than what its submitter claimed. And the',
   'directory is a crawl of the open web: a feed may be indexed but not yet read, which',
   '`directory_stats` will tell you before you conclude something is missing.',
+  '',
+  'The third is about trusting what you get back. Every feed carries a `freshness` of',
+  'live, dormant, overdue, failing or unread, alongside `lastSuccessAt` (when we last read',
+  'the publisher) and `lastPublishedAt` (when the publisher last posted). Those are',
+  'different facts and both can mislead alone: about a sixth of the directory is dormant —',
+  'read minutes ago, current, and publishing nothing since 2023 — so a recent',
+  '`lastSuccessAt` is not evidence that a feed is alive. Prefer `live` when recency',
+  'matters, and say so rather than guessing when quoting something `dormant`.',
 ].join('\n');
 
 /**

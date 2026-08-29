@@ -528,6 +528,98 @@ export async function followedTopics(db, userId, limit = 200) {
   return rows;
 }
 
+/* ------------------------------------------------------------------ *
+ * Following a person
+ * ------------------------------------------------------------------ */
+
+/**
+ * Follow an author.
+ *
+ * Takes the author's id rather than their slug, unlike the topic pair above,
+ * because that is what `author_follows` is keyed on and an author has a real
+ * one. The route resolves the slug it was given first, which is also where a
+ * request for somebody who does not exist is refused.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} authorId
+ */
+export async function followAuthor(db, userId, authorId) {
+  await db.execute({
+    sql: `insert into author_follows (user_id, author_id, created_at) values (?, ?, ?)
+          on conflict do nothing`,
+    args: [userId, authorId, nowIso()],
+  });
+}
+
+/**
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} authorId
+ */
+export async function unfollowAuthor(db, userId, authorId) {
+  await db.execute({
+    sql: 'delete from author_follows where user_id = ? and author_id = ?',
+    args: [userId, authorId],
+  });
+}
+
+/**
+ * @param {Client} db
+ * @param {string} userId
+ * @param {string} authorId
+ * @returns {Promise<boolean>}
+ */
+export async function isFollowingAuthor(db, userId, authorId) {
+  const { rows } = await db.execute({
+    sql: 'select 1 as n from author_follows where user_id = ? and author_id = ? limit 1',
+    args: [userId, authorId],
+  });
+  return rows.length > 0;
+}
+
+/**
+ * The people one reader follows, most recently followed first.
+ *
+ * The name and slug are joined back rather than copied into the follow, for
+ * the reason `followedTopics` gives: the authors table is where a person's
+ * name lives, and a second copy here would be a second copy to keep in step
+ * with an extractor that improves its answer over time.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function followedAuthors(db, userId, limit = 200) {
+  const { rows } = await db.execute({
+    sql: `select a.id, a.slug, a.name, a.avatar_url, af.created_at as followed_at,
+                 (select count(*) from feed_authors fa where fa.author_id = a.id) as feed_count
+          from author_follows af
+          join authors a on a.id = af.author_id
+          where af.user_id = ?
+          order by af.created_at desc
+          limit ?`,
+    args: [userId, limit],
+  });
+  return rows;
+}
+
+/**
+ * How many readers follow one author.
+ *
+ * @param {Client} db
+ * @param {string} authorId
+ * @returns {Promise<number>}
+ */
+export async function authorFollowerCount(db, authorId) {
+  const { rows } = await db.execute({
+    sql: 'select count(*) as n from author_follows where author_id = ?',
+    args: [authorId],
+  });
+  return Number(rows[0]?.n ?? 0);
+}
+
 /**
  * How many readers follow a topic, or one category of it.
  *

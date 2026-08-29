@@ -2,6 +2,7 @@ import { COMMANDS, GLOBAL_OPTIONS, VERSION } from '@profullstack/rssamplifier';
 
 import { siteUrl } from '../../lib/db.js';
 import Toolbar from '../Toolbar.jsx';
+import { jsonLdScript } from '../../lib/jsonld.js';
 
 export const metadata = {
   title: 'Command line',
@@ -30,7 +31,7 @@ export default function CliPage() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd(site)) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd(site)) }}
       />
 
       <h1>Command line</h1>

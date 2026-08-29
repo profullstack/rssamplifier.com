@@ -29,7 +29,15 @@
 // now, so the shell is one URL shorter. Without the bump an install that
 // precached the pair under v5 would hold the retired file forever, since
 // nothing requests it any more and only the version sweep can evict it.
-const VERSION = 'v6';
+//
+// v7 is a manifest bump: the manifest gained a launch_handler and it is one of
+// the shell URLs, so the copy taken at install is now out of date. Nothing
+// serves that copy today — the fetch handler below lets .webmanifest fall
+// through to the network — but the shell is meant to hold what the site
+// currently ships, and the version sweep is the only thing that can replace
+// it. The browser reads launch_handler over the network either way, so this
+// bump is hygiene rather than the fix.
+const VERSION = 'v7';
 const SHELL = `shell-${VERSION}`;
 const ASSETS = `assets-${VERSION}`;
 

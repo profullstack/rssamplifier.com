@@ -6,7 +6,7 @@ import Uploader from './Uploader.jsx';
 export const metadata = {
   title: 'Submit a blog',
   description:
-    'Add a URL, a playlist, a list of URLs or an OPML file to the directory. No account needed.',
+    'Add a URL, a playlist, a list of URLs, an OPML export or a text file of feed URLs to the directory. No account needed.',
 };
 
 /**
@@ -33,8 +33,9 @@ export default async function SubmitPage({ searchParams }) {
         <p className="notice">
           That file is too big to send in one piece. The uploader below reads it in your browser and
           sends the feeds a few thousand at a time instead, which has no size limit worth the name —
-          but it needs JavaScript. With JavaScript off, split the file, or post the feeds to{' '}
-          <code>/api/submit</code> yourself.
+          but it needs JavaScript. With JavaScript off, split the file into pieces under 10 MB —
+          each one may hold as many feeds as it likes — or post them to <code>/api/submit</code>{' '}
+          yourself.
         </p>
       ) : (
         params.error && (
