@@ -298,7 +298,8 @@ export default function RootLayout({ children }) {
                 apart also stops the row growing a third arm every time a
                 platform is added. */}
             <p>
-              Platforms: <a href="/r">Reddit</a> · <a href="/x">X</a>
+              Platforms: <a href="/r">Reddit</a> · <a href="/x">X</a> ·{' '}
+              <a href="/ig">Instagram</a> · <a href="/fb">Facebook</a>
             </p>
             <p>
               Machine-readable: <a href="/mcp">MCP server</a> · <a href="/cli">CLI</a> ·{' '}

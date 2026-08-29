@@ -242,6 +242,18 @@ const nextConfig = {
           source: '/r/:subreddit.:format(rss|atom|json|xml|md)',
           destination: '/api/r/:subreddit/feed/:format',
         },
+        {
+          source: '/ig/tag/:tag.:format(rss|atom|json|xml|md)',
+          destination: '/api/ig/tag/:tag/feed/:format',
+        },
+        {
+          source: '/ig/:username.:format(rss|atom|json|xml|md)',
+          destination: '/api/ig/:username/feed/:format',
+        },
+        {
+          source: '/fb/:page.:format(rss|atom|json|xml|md)',
+          destination: '/api/fb/:page/feed/:format',
+        },
 
         // One category of it. The segments are the category pages' own paths,
         // duplicated from CATEGORIES in apps/web/src/lib/categories.js — this

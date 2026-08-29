@@ -65,8 +65,12 @@ pnpm --filter @rssamplifier/db migrate
 | `/x/list/<id>` | One X list |
 | `/x/search?q=` | An X search as a feed — X's own operators pass through |
 | `/x/status` | Which provider is collecting X, and how it is doing |
+| `/ig` | Every Instagram account and hashtag in the directory |
+| `/ig/<handle>` | One account: `/ig/nasa`, and `/ig/tag/<tag>` for a hashtag |
+| `/fb` | Facebook Pages whose operators have connected them |
+| `/fb/<page>` | One connected Page |
 
-### The two social namespaces
+### The four social namespaces
 
 Reddit and X both live under a prefix of their own, and for the same reason from
 opposite directions. Reddit publishes real RSS, so a subreddit resolves down the
@@ -74,8 +78,12 @@ ordinary path and lands as an untyped row at a slug of its own — which is how
 50,099 of them ended up filed among the blogs. X publishes nothing at all, so
 without a provider it is not submittable in the first place.
 
-`packages/social` answers one question for both: **what is the canonical identity
-of this thing?** `@OpenAI`, `x.com/OpenAI` and `https://twitter.com/openai/` are
+Instagram is X's shape again — no feeds, collected through RSSHub — and cost
+almost nothing to add, which is the point of having built the namespace once.
+Facebook is its own thing entirely; see below.
+
+`packages/social` answers one question for all four: **what is the canonical
+identity of this thing?** `@OpenAI`, `x.com/OpenAI` and `https://twitter.com/openai/` are
 one source (`x:user:openai`, at `/x/OpenAI`); `/r/programming`, `/r/Programming/`
 and `/r/programming/new/.rss` are one community (`r:sub:programming`, at
 `/r/programming`). One identity means one row, which means **one polling job no
@@ -92,6 +100,49 @@ to tell them apart.
 `/{slug}` still answers for both, and always will: it is the permanent identity
 of a row and links already point at it. The `/r/` and `/x/` address is the
 canonical one, which is what search engines are told.
+
+## Facebook, and what `/fb/` can honestly be
+
+**There is no way to read an arbitrary public Facebook Page.** Three doors, all
+measured on 2026-08-29 rather than assumed:
+
+- the old `facebook.com/feeds/page.php?format=rss20` endpoint answers **404** —
+  removed, not deprecated
+- `mbasic.facebook.com/<page>` answers 200 with a **login wall**
+- RSSHub, which carries a thousand namespaces and maintains Twitter and
+  Instagram, has **no Facebook namespace at all**
+
+The one remaining door is Meta's Graph API, and it only opens for Pages the
+caller **administers**. Reading somebody else's public Page needs the
+`Page Public Content Access` feature, which requires App Review plus business
+verification and is granted rarely.
+
+So `/fb/` is the one namespace here that does not take open submissions: a Page
+appears when its operator connects it, by putting a Page Access Token in
+`FB_PAGE_TOKENS`. A Page nobody has connected is not "not crawled yet", it is
+not collectable, and the page says exactly that rather than offering a button
+that would quietly do nothing.
+
+```bash
+FB_PAGE_TOKENS='[{"page":"MyPage","token":"EAA..."}]'
+```
+
+What is deliberately absent: anything that drives a logged-in Facebook session
+against that login wall. It breaks constantly, it is against Meta's terms, and
+it would risk an account of ours to serve a directory nobody pays for.
+
+## Collecting Instagram
+
+Same shape as X, through the same RSSHub daemon — the `/instagram/2/…` web-api
+routes, which authenticate with a cookie rather than the private-api routes,
+which want a username and password.
+
+```bash
+IG_COOKIE=            # on the RSSHub side; see apps/poller/src/rsshub.js
+```
+
+Accounts and hashtags only. Stories expire, and a feed of things that have
+already gone is worse than no feed.
 
 ## Collecting X
 

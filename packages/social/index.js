@@ -53,4 +53,33 @@ export {
   redditSpecFromRef,
 } from './src/reddit/canonical.js';
 
+export {
+  parseInstagramInput,
+  instagramRef,
+  instagramUrl,
+  instagramPath,
+  instagramSlug,
+  instagramTitle,
+  instagramSource,
+  instagramSpecFromRef,
+  INSTAGRAM_MODES,
+} from './src/instagram/canonical.js';
+export { fetchInstagramSource } from './src/instagram/fetch.js';
+
+export {
+  parseFacebookInput,
+  facebookRef,
+  facebookUrl,
+  facebookPath,
+  facebookSlug,
+  facebookTitle,
+  facebookSource,
+  facebookSpecFromRef,
+} from './src/facebook/canonical.js';
+export { fetchFacebookSource, pageToken, connectedPages } from './src/facebook/fetch.js';
+
+export { failureResult, retryAfterFor, ANOMALY_SECONDS, UNCONFIGURED_SECONDS } from './src/failure.js';
+export { fetchSocialSource, isCollected } from './src/collect.js';
+
 export { socialSourceFrom, socialPathFor, SOCIAL_NETWORKS } from './src/identify.js';
+export { socialDisplayTitle } from './src/display.js';

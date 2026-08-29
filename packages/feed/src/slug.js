@@ -34,6 +34,12 @@ const RESERVED = new Set([
   // above are listed for.
   'r',
   'x',
+  'ig',
+  'fb',
+  // Reserved as well as the short forms, so a feed cannot take the name we
+  // would use if either namespace is ever spelled out.
+  'instagram',
+  'facebook',
   // The people index, for the same reason as the categories above: a feed
   // slugged 'authors' would still be served, but only Next's static segment
   // would answer and the blog's own page would be unreachable.
