@@ -1,4 +1,5 @@
 import { newId, nowIso } from './client.js';
+import { topicLabelSql } from './topicLabel.js';
 
 /**
  * Everything the accounts layer reads and writes.
@@ -518,7 +519,7 @@ export async function followedTopics(db, userId, limit = 200) {
                  -- The topic's own spelling, so a page can say "AI" rather than
                  -- "ai". Left join: a topic whose feeds have all died still has
                  -- a follow, and the slug is a serviceable fallback.
-                 (select min(k.keyword) from feed_keywords k where k.slug = tf.slug) as keyword
+                 ${topicLabelSql('tf.slug')} as keyword
           from topic_follows tf
           where tf.user_id = ?
           order by tf.created_at desc
