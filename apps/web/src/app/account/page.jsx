@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { accounts, apikeys } from '@rssamplifier/db';
+import { accounts, apikeys, dataset } from '@rssamplifier/db';
 
 import Toolbar from '../Toolbar.jsx';
 import { AddPasskey } from '../Passkey.jsx';
@@ -7,6 +7,7 @@ import { db } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { topicLabel } from '../../lib/following.js';
 import { ANONYMOUS_HOURLY } from '../../lib/ratelimit.js';
+import { latestClosedWindow } from '../../lib/datasetWindow.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,12 +30,18 @@ export default async function AccountPage({ searchParams }) {
   const client = db();
   const userId = String(user.id);
 
-  const [follows, credentials, topics, keys] = await Promise.all([
+  const [follows, credentials, topics, keys, grant] = await Promise.all([
     accounts.followedFeeds(client, userId),
     accounts.credentialsForUser(client, userId),
     accounts.followedTopics(client, userId),
     apikeys.keysForUser(client, userId),
+    dataset.activeGrant(client, userId),
   ]);
+
+  // Only for an account that has one, so the overwhelming majority of readers —
+  // who will never license the corpus — do not pay a query to be told they have
+  // no downloads.
+  const pulls = grant ? await dataset.recentDownloads(client, String(grant.id), 5) : [];
 
   // Revoked keys are kept in the table so a stale key found in a log can still
   // be identified, but there is nothing for their owner to do about them.
@@ -137,6 +144,62 @@ export default async function AccountPage({ searchParams }) {
         <input type="text" name="name" placeholder="What is it for? (e.g. my crawler)" maxLength={60} />
         <button type="submit">Create a key</button>
       </form>
+
+      {/* Shown to every account, licensed or not, and that is deliberate. An
+          account with no licence is told so in one line with a link, which is
+          the answer to "did my access get set up?" — a question that otherwise
+          arrives by email. There is no button here because there is nothing to
+          press: a licence is written by hand after a conversation, and a page
+          that implied otherwise would be promising a checkout that does not
+          exist. */}
+      <h2>Training data</h2>
+      {grant ? (
+        <>
+          <p className="hint">
+            This account holds a <strong>{String(grant.plan)}</strong> corpus licence, granted{' '}
+            {formatDate(grant.granted_at)}
+            {grant.expires_at ? ` and running until ${formatDate(grant.expires_at)}` : ''}. Pull{' '}
+            {Number(grant.per_window_downloads)} times per dataset per window, and{' '}
+            {Number(grant.full_dumps_per_day)} full-history dump
+            {Number(grant.full_dumps_per_day) === 1 ? '' : 's'} a day. Use a session or any of your
+            API keys as a bearer token — the licence belongs to the account, so rotating a key costs
+            you nothing.
+          </p>
+          <p className="hint">
+            Newest complete window: <code>{latestClosedWindow()}</code>. The shape of every row is
+            at <a href="/api/dataset">/api/dataset</a>.
+          </p>
+          {pulls.length === 0 ? (
+            <p className="empty">Nothing pulled yet.</p>
+          ) : (
+            <dl className="stats">
+              {pulls.map((p, i) => (
+                <div key={`${String(p.created_at)}-${i}`}>
+                  <dt>{String(p.dataset)}</dt>
+                  <dd style={{ fontSize: '0.9rem' }}>
+                    {p.full_dump ? 'full history' : String(p.window_start)}
+                    <br />
+                    {/* A pull with no completed_at did not finish. Said plainly,
+                        because it is the difference between "that window really
+                        was small" and "your pipeline lost the connection", and
+                        only one of those is worth investigating. */}
+                    {p.completed_at
+                      ? `${Number(p.rows_sent).toLocaleString('en-US')} rows · ${formatDate(p.created_at)}`
+                      : `did not finish · started ${formatDate(p.created_at)}`}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </>
+      ) : (
+        <p className="hint">
+          This account has no corpus licence, and needs none for anything the directory serves
+          openly — the API, the OPML export and the MCP server all answer without one. Bulk access
+          to the whole directory as a training corpus is licensed separately:{' '}
+          <a href="/sales">what is in it, and how to ask</a>.
+        </p>
+      )}
 
       {/* What is followed, but not what it published: the river moved to
           /following, which is the one place the blogs and the topics are merged

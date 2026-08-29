@@ -25,7 +25,12 @@ export function emailEnabled() {
 /**
  * Send one plain-text email.
  *
- * @param {{ to: string, subject: string, text: string, from?: string }} message
+ * `replyTo` exists for mail we send to ourselves about somebody else — a sales
+ * enquiry arrives from the site's own sending domain, and without it hitting
+ * reply writes back to noreply@. It is omitted from the payload entirely when
+ * unset rather than sent as null, because Resend rejects a null there.
+ *
+ * @param {{ to: string, subject: string, text: string, from?: string, replyTo?: string }} message
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function sendEmail(message) {
@@ -43,6 +48,7 @@ export async function sendEmail(message) {
         to: [message.to],
         subject: message.subject,
         text: message.text,
+        ...(message.replyTo ? { reply_to: message.replyTo } : {}),
       }),
     });
 
