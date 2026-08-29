@@ -3022,6 +3022,70 @@ export async function markThrottled(db, id, minutes) {
   });
 }
 
+/**
+ * Come back later for every feed still queued on a host that just throttled us.
+ *
+ * `markThrottled` answers the one feed that was refused. This answers the rest
+ * of that publisher's queue, and it exists because the one-feed version is the
+ * wrong shape of reply to a 429: a throttle is a fact about the *host*, not
+ * about the feed that happened to be at the front of it. Measured on
+ * 2026-08-29, a bulk import put 50,099 feeds on `www.reddit.com` — 41% of the
+ * whole due queue — and because a host's feeds are crawled strictly in series,
+ * one worker walked that queue into the same 429 over and over: 84% of every
+ * crawl attempt in an hour went to reddit and 1,015 of 1,074 were refused,
+ * while the rest of the directory got 218 crawls. Stopping at the first refusal
+ * turns that whole wasted walk into a single request.
+ *
+ * **The spread is the point, not a detail.** Rescheduling a thousand held-back
+ * feeds to one instant just moves the pile-up, and they would come due together
+ * and walk into the same wall in one tick's time. Each feed is given its own
+ * offset across `spreadMinutes`, so the host's queue returns as a trickle that
+ * its rate limit can actually absorb.
+ *
+ * Like `markThrottled`, only the schedule moves: `status`, `error_count`,
+ * `last_error`, `last_success_at` and `last_fetched_at` are all left alone.
+ * These feeds were never even asked, so there is nothing to judge them on —
+ * recording a failure here is how a rate limit would retire a whole platform.
+ *
+ * @param {Client} db
+ * @param {string[]} ids feeds left unread on the throttled host
+ * @param {number} minutes how long before the first of them is tried again
+ * @param {number} [spreadMinutes] window to scatter them across
+ * @returns {Promise<number>} how many were rescheduled
+ */
+export async function markHostThrottled(db, ids, minutes, spreadMinutes = 60) {
+  const queued = (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id);
+  if (queued.length === 0) return 0;
+
+  const wait = Math.max(1, Math.round(Number(minutes) || 30));
+  const spread = Math.max(0, Math.round(Number(spreadMinutes) || 0));
+  const now = nowIso();
+
+  // Bucketed by minute rather than one statement per feed, and that is a
+  // constraint rather than a tidiness preference. A throttled host's queue here
+  // runs to hundreds of feeds, and this database gives the whole cluster one
+  // writer: a batch of nine hundred statements holds it long enough to push the
+  // jobs behind it past their deadline, which is the failure
+  // `TURSO_QUEUE_GROUP_STATEMENTS` was lowered to 10 to avoid. Bucketing makes
+  // the statement count a property of the *window* -- at most `spread` + 1,
+  // sixty-odd -- no matter how many feeds are held back.
+  const buckets = new Map();
+  for (let index = 0; index < queued.length; index += 1) {
+    const offset = spread === 0 ? 0 : Math.round((index / queued.length) * spread);
+    const bucket = buckets.get(offset);
+    if (bucket) bucket.push(queued[index]);
+    else buckets.set(offset, [queued[index]]);
+  }
+
+  const statements = [...buckets.entries()].map(([offset, members]) => ({
+    sql: `update feeds set next_fetch_at = ?, updated_at = ? where id in (${members.map(() => '?').join(',')})`,
+    args: [nowIso((wait + offset) * 60_000), now, ...members],
+  }));
+
+  await db.batch(statements, 'write');
+  return queued.length;
+}
+
 /* ------------------------------------------------------------- feed cards */
 
 /**
