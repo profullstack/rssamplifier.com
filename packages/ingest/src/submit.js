@@ -1,6 +1,6 @@
 import { resolveFeed, scrapeFeed, normalizeUrl, parseOpml, uniqueSlug } from '@rssamplifier/feed';
 import { q, social } from '@rssamplifier/db';
-import { socialSourceFrom } from '@rssamplifier/social';
+import { floorMinutesFor, socialSourceFrom } from '@rssamplifier/social';
 
 import { queueFeeds } from './queue.js';
 import { refreshFeedKeywords } from './crawl.js';
@@ -208,6 +208,10 @@ async function submitSocial(db, source) {
     feedUrl: source.feedUrl,
     siteUrl: source.siteUrl,
     priority: 1,
+    // The platform's floor, so a new row starts at the fastest it will ever be
+    // asked and the crawler backs it off from there. A Facebook Page read with
+    // a personal session starts hourly; an X timeline starts at five minutes.
+    intervalMinutes: floorMinutesFor({ social_network: source.network }),
   });
 
   if (!stored.id) {

@@ -20,6 +20,9 @@ import { newId, nowIso } from './client.js';
  * @typedef {import('@libsql/client').Client} Client
  */
 
+/** The interval a source starts on when its caller names none. */
+const DEFAULT_START_MINUTES = 60;
+
 /**
  * The one source behind a canonical ref.
  *
@@ -110,7 +113,11 @@ export async function countSocialFeeds(db, network) {
  * @param {{
  *   network: string, ref: string, slug: string, title: string, feedUrl: string,
  *   siteUrl?: string|null, config?: object|null, priority?: number,
- * }} source
+ *   intervalMinutes?: number,
+ * }} source `intervalMinutes` is the platform's floor, supplied by the caller —
+ *   this package deliberately does not import @rssamplifier/social to look it
+ *   up, because the dependency would run the wrong way: social already reads
+ *   nothing from db, and db has no other reason to know what a platform is.
  * @returns {Promise<{ id: string, slug: string, created: boolean }>}
  */
 export async function upsertSocialSource(db, source) {
@@ -147,7 +154,7 @@ export async function upsertSocialSource(db, source) {
       // Reddit is excluded deliberately — it is a real feed on somebody else's
       // server, and 50,026 of them at five minutes is how you get rate-limited
       // off a platform. See markHostThrottled in queries.js.
-      source.network === 'reddit' ? 60 : 5,
+      Math.max(1, Number(source.intervalMinutes) || DEFAULT_START_MINUTES),
       now,
       now,
       now,

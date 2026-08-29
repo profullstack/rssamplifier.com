@@ -1,27 +1,30 @@
 /**
- * Collecting Facebook, for the Pages somebody has actually connected.
+ * Collecting Facebook, by session first and by API where one is available.
  *
- * See `./canonical.js` for why this is the only shape available: there is no
- * way to read an arbitrary public Page, so a Facebook source is not something a
- * stranger submits — it is something a Page's operator connects by supplying a
- * Page Access Token.
+ * Two ways in, and the better one is not the default because it is almost never
+ * possible. Meta's Graph API returns a Page's posts only to somebody who
+ * administers that Page — reading anyone else's needs `Page Public Content
+ * Access`, which wants App Review and business verification — so a token
+ * reaches a handful of Pages and a session reaches the rest. `FB_PAGE_TOKENS`
+ * is consulted first and `FB_COOKIE` carries everything else.
  *
- * **Tokens live in the environment, keyed by Page**, never in a table, for
- * exactly the reason X's session cookies do not: a Page Access Token can post
- * as the Page. `FB_PAGE_TOKENS` is a JSON array, and a Page with no entry in it
- * is not "not crawled yet" — it is not collectable, and both the crawler and
- * the page say so rather than retrying for ever.
+ * Both produce the same items, keyed the same way (`fb:<post id>`), so a Page
+ * that gains a token later does not change identity and nobody's reader marks
+ * the feed unread.
  *
- * This is the one collector in the package that talks to a real, supported,
- * documented API rather than a bridge, which makes it the least likely of the
- * three to break and the one with the smallest reach. That trade is Meta's, not
- * ours.
+ * **Credentials live in the environment, never in a table**, for the reason X's
+ * session cookies do not: a Page token can post as the Page, and a Facebook
+ * session cookie is a login to somebody's account. See §36 and AC-7.
+ *
+ * On what this is worth, and the failure handling that follows from it, see
+ * `./scrape.js`.
  */
 
 import { providerGet } from '../x/providers/http.js';
 import { XUnavailable, XNoSuchSource } from '../x/errors.js';
 import { failureResult } from '../failure.js';
 import { facebookSpecFromRef } from './canonical.js';
+import { scrapeFacebookPage } from './scrape.js';
 
 /**
  * Pinned rather than floating. Graph deprecates a version roughly every two
@@ -64,12 +67,53 @@ export async function fetchFacebookSource(feed, opts) {
   const display = displayName(feed?.feed_url) ?? spec.page;
 
   try {
+    // Two ways in, and the cheap one is not the default.
+    //
+    // A Page Access Token is strictly better where it exists — a supported API,
+    // structured posts, no markup to guess at — but it only ever exists for a
+    // Page somebody administers, which is almost none of them. So Graph is used
+    // when a token happens to be configured for this Page, and the session
+    // scrape carries everything else. Neither needs configuring per source.
     const token = pageToken(env, spec.page);
+
     if (!token) {
-      // Not an outage and not a broken Page: nobody has connected it. Phrased
-      // so `retryAfterFor` gives it the hour it deserves rather than retrying
-      // every twenty minutes for a token that is not coming.
-      throw new XUnavailable(`facebook: page ${spec.page} is not connected`);
+      const cookie = String(env.FB_COOKIE ?? '').trim();
+      onEvent('facebook.fetch.started', { ref: feed.social_ref, via: 'mbasic' });
+
+      const scraped = await scrapeFacebookPage(spec, {
+        cookie,
+        timeoutMs: Number(env.X_FETCH_TIMEOUT_MS) || undefined,
+        fetch: opts.runtime?.fetch,
+        signal: opts.signal,
+      });
+
+      const items = scraped.posts.map((post) => fromScrape(post, display)).filter(Boolean);
+
+      if (items.length === 0 && Number(feed?.item_count ?? 0) > 0) {
+        onEvent('facebook.fetch.failed', { ref: feed.social_ref, error: 'empty-result' });
+        return { ok: false, throttled: true, retryAfter: 20 * 60, error: 'empty-result' };
+      }
+
+      onEvent('facebook.fetch.success', {
+        ref: feed.social_ref,
+        via: 'mbasic',
+        itemCount: items.length,
+      });
+
+      return {
+        ok: true,
+        feedUrl: feed.feed_url,
+        feed: {
+          title: `${scraped.displayName ?? display} on Facebook`,
+          description: `Posts from the ${display} Page on Facebook, mirrored by RSS Amplifier.`,
+          siteUrl: String(feed.feed_url),
+          language: null,
+          imageUrl: null,
+          categories: [],
+          kind: 'blog',
+          items,
+        },
+      };
     }
 
     const url = new URL(`${GRAPH}/${encodeURIComponent(spec.page)}/posts`);
@@ -129,6 +173,37 @@ export async function fetchFacebookSource(feed, opts) {
     onEvent('facebook.fetch.failed', { ref: feed.social_ref, error: String(error?.message ?? error) });
     return failureResult(error);
   }
+}
+
+/**
+ * One scraped post as one of our items.
+ *
+ * Deliberately the same shape `toItem` produces from Graph, so that a Page
+ * which gains a token later does not change identity: both key on the post id,
+ * so `fb:<id>` is the same guid whichever way the post was read, and switching
+ * does not mark a subscriber's whole feed unread.
+ *
+ * @param {{ id: string, url: string, text: string, createdAt: string|null, image: string|null }} post
+ * @param {string} display
+ */
+function fromScrape(post, display) {
+  if (!post?.id) return null;
+
+  const first = String(post.text ?? '').split('\n').find(Boolean) ?? '';
+  const title = first ? clip(first, 110) : '(photo)';
+
+  return {
+    guid: `fb:${post.id}`,
+    url: post.url,
+    title: `${display}: ${title}`,
+    summary: clip(post.text, 400) || null,
+    contentHtml: html(post.text, post.image, post.url),
+    author: display,
+    publishedAt: post.createdAt,
+    imageUrl: post.image,
+    categories: [],
+    audio: null,
+  };
 }
 
 /**
@@ -243,7 +318,7 @@ export function connectedPages(env = process.env) {
  * @returns {string|null}
  */
 function displayName(feedUrl) {
-  const match = /facebook\.com\/([A-Za-z0-9.]{5,60})\/?$/.exec(String(feedUrl ?? ''));
+  const match = /facebook\.com\/([A-Za-z0-9.]{3,60})\/?$/.exec(String(feedUrl ?? ''));
   return match ? match[1] : null;
 }
 

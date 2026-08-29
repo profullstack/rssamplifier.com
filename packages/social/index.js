@@ -79,7 +79,14 @@ export {
 export { fetchFacebookSource, pageToken, connectedPages } from './src/facebook/fetch.js';
 
 export { failureResult, retryAfterFor, ANOMALY_SECONDS, UNCONFIGURED_SECONDS } from './src/failure.js';
-export { fetchSocialSource, isCollected } from './src/collect.js';
+export {
+  fetchSocialSource,
+  isCollected,
+  floorMinutesFor,
+  FLOOR_MINUTES,
+  DEFAULT_FLOOR_MINUTES,
+} from './src/collect.js';
+export { scrapeFacebookPage } from './src/facebook/scrape.js';
 
 export { socialSourceFrom, socialPathFor, SOCIAL_NETWORKS } from './src/identify.js';
 export { socialDisplayTitle } from './src/display.js';

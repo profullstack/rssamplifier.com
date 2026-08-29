@@ -122,15 +122,18 @@ test('Page tokens come from structured config, keyed case-insensitively', () => 
   assert.deepEqual(connectedPages({}), []);
 });
 
-test('an unconnected Page reschedules for an hour rather than being retired', async () => {
+test('a Page with neither a token nor a session reschedules, and is not retired', async () => {
   const result = await fetchFacebookSource(
     { social_ref: 'fb:page:somepage', feed_url: 'https://www.facebook.com/SomePage' },
     { runtime: { env: {}, onEvent: () => {} } },
   );
 
   assert.equal(result.ok, false);
-  assert.equal(result.throttled, true, 'not collectable is not the same as broken');
+  // Nothing is configured to read with, which is a deployment state rather than
+  // a broken Page — an hour, and no mark against the source.
+  assert.equal(result.throttled, true, 'not configured is not the same as broken');
   assert.equal(result.retryAfter, UNCONFIGURED_SECONDS);
+  assert.match(result.error, /FB_COOKIE/);
 });
 
 test('Graph answering 200 with an error object is still a failure', async () => {

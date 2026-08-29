@@ -10,11 +10,10 @@ export const dynamic = 'force-dynamic';
 /**
  * One Facebook Page, at `/fb/SomePage`.
  *
- * The one namespace of the four where "not here yet" usually means "not
- * possible" rather than "nobody has got round to it". Facebook has no public
- * feed, no unauthenticated HTML and no provider — the only way in is a Page
- * Access Token from whoever administers the Page — so the empty state explains
- * that rather than offering a button that would quietly do nothing.
+ * Read with a session against mbasic, like X and Instagram are — so this takes
+ * open submissions like they do. It is the least reliable of the four by some
+ * distance; see @rssamplifier/social's facebook/scrape.js for why, and for the
+ * one place to look when it stops working.
  *
  * @param {{ params: Promise<{ page: string }> }} props
  */

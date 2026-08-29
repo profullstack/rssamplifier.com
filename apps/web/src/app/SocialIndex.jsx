@@ -60,12 +60,12 @@ const LOOKS = {
   },
   facebook: {
     platform: 'Facebook',
-    noun: 'connected Pages',
+    noun: 'Pages',
     base: '/fb',
-    placeholder: '',
-    addLabel: '',
+    placeholder: 'fb/SomePage',
+    addLabel: 'Add a Facebook Page',
     blurb:
-      'Facebook is the one platform here that cannot be added by whoever wants it. There is no public feed, no page without a login, and no bridge — only Meta’s Graph API, which returns a Page’s posts to somebody who administers that Page. So these are Pages whose operators connected them, and nothing else can be.',
+      'Facebook publishes no feeds and shows nothing without a login, so these are read on your behalf and mirrored here. Expect them to be the least dependable part of this directory: Facebook changes its markup without warning and works harder than the others to stop anyone reading it this way, so a Page here goes quiet from time to time. Pages only — a personal profile cannot be read at all.',
   },
 };
 
@@ -95,16 +95,11 @@ export default async function SocialIndex({ network, page = 1 }) {
 
       <p>{blurb}</p>
 
-      {/* Facebook has no add form, and that is not an oversight: a Page can
-          only be connected by somebody who administers it, so a box inviting
-          anyone to paste a Page would be a box that quietly does nothing. */}
-      {network === 'facebook' ? null : (
-        <form method="post" action="/api/submit" className="add-source">
-          <label htmlFor="social-input">{addLabel}</label>
-          <input id="social-input" name="input" type="text" placeholder={placeholder} required />
-          <button type="submit">Add</button>
-        </form>
-      )}
+      <form method="post" action="/api/submit" className="add-source">
+        <label htmlFor="social-input">{addLabel}</label>
+        <input id="social-input" name="input" type="text" placeholder={placeholder} required />
+        <button type="submit">Add</button>
+      </form>
 
       {rows.length >= FILTER_FROM ? (
         <ListFilter
