@@ -58,7 +58,8 @@ const FEED_COLS = `id, slug, feed_url, site_url, title, description, language, i
   author, categories, kind, category, category_source, status, last_fetched_at, last_success_at, last_error, error_count,
   fetch_interval_minutes, next_fetch_at, item_count, last_published_at, created_at, updated_at, source_kind,
   card_url, card_width, card_height, card_type, authors_checked_at,
-  http_etag, http_last_modified, content_hash, change_log`;
+  http_etag, http_last_modified, content_hash, change_log,
+  social_network, social_ref, social_config`;
 
 /** The categories the directory is browsable by. */
 export const KINDS = ['blog', 'news', 'podcast', 'music', 'video', 'comic', 'live', 'reel'];
