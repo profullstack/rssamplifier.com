@@ -11,3 +11,5 @@ allowBuilds:
   # inside the image would add a toolchain to it for a speedup nothing is
   # waiting on.
   msgpackr-extract: false
+minimumReleaseAgeExclude:
+  - '@profullstack/player@0.2.0 || 0.3.1'

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { attachSource } from '@profullstack/player';
 import { useRouter } from 'next/navigation';
 
 import { dockable, embedded } from '../lib/queue.js';
@@ -658,6 +659,56 @@ export default function DockPlayer() {
     };
   }, [remember]);
 
+  /**
+   * Get the track's bytes into the element.
+   *
+   * Was `src={track.src}` on both the <video> and the <audio>, which is right
+   * until a feed's enclosure is something the browser cannot open by itself.
+   * The directory is a crawl of the open web, so what turns up in an enclosure
+   * is whatever the publisher chose -- and an HLS playlist handed straight to a
+   * <video> plays nothing and reports a bare media error, which reads as a
+   * broken episode rather than a missing library.
+   *
+   * `attachSource` picks the delivery per source: native for the ordinary MP3
+   * or MP4, hls.js for a playlist. Everything the dock does around it -- the
+   * queue, the position it remembers, the popout, surviving a soft navigation
+   * -- is untouched.
+   *
+   * Skipped entirely for an embed: a YouTube or PeerTube track is an <iframe>,
+   * and there is no media element here to attach anything to.
+   *
+   * Attaching is asynchronous, because a delivery engine is only downloaded
+   * when a source needs one. `cancelled` is what stops a fast walk through a
+   * playlist leaving an earlier attachment running under a later one.
+   */
+  useEffect(() => {
+    const el = mediaRef.current;
+    const src = track?.src;
+    if (!el || !src || embedded(track.kind)) return;
+
+    let cancelled = false;
+    /** @type {{ destroy: () => void } | null} */
+    let attached = null;
+
+    void attachSource(el, { src })
+      .then((result) => {
+        if (cancelled) {
+          result.destroy();
+          return;
+        }
+        attached = result;
+      })
+      .catch(() => {
+        // The element keeps whatever the browser made of it; the dock's own
+        // error handling still applies.
+      });
+
+    return () => {
+      cancelled = true;
+      attached?.destroy();
+    };
+  }, [track?.src, track?.kind]);
+
   if (!track) return null;
 
   const embed = embedded(track.kind);
@@ -714,7 +765,6 @@ export default function DockPlayer() {
           // not started has nothing to paint, and a black rectangle in the
           // corner of the window says nothing about what is in it.
           poster={track.image ?? undefined}
-          src={track.src}
           onEnded={() => advance(1, true)}
           onPause={remember}
           onPlay={remember}
@@ -726,7 +776,6 @@ export default function DockPlayer() {
           className="episode-audio"
           controls
           preload="metadata"
-          src={track.src}
           onEnded={() => advance(1, true)}
           onPause={remember}
           onPlay={remember}
