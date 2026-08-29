@@ -37,8 +37,21 @@ const TTL_MS = 60 * 60 * 1000;
  */
 const MAX_STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Shorter than the client's own deadline, so a hung read gives the page back. */
-const TIMEOUT_MS = 8 * 1000;
+/**
+ * Shorter than the client's own deadline, so a hung read gives the page back.
+ *
+ * Fifteen seconds against roughly three of measured work, and the headroom is
+ * the lesson rather than the number. This shipped at eight against a read that
+ * took twenty-three, and the failure was not "the page was slow once" — it was
+ * that `remember` stores nothing when the computation fails, so the entry never
+ * filled and the two figures it feeds were missing from the sales page for good.
+ * A timeout under the cost of the work is not a safety margin, it is an off
+ * switch with a delay on it.
+ *
+ * Paid only on a genuinely cold cache: one success, by anyone, serves every
+ * later reader for an hour and is refreshed behind them after that.
+ */
+const TIMEOUT_MS = 15 * 1000;
 
 /**
  * Corpus-specific counts: full-text articles, authors, and publishers opted out.

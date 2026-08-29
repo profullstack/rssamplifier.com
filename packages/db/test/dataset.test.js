@@ -374,6 +374,32 @@ test('an author arrives with their links parsed apart, and never with their addr
   assert.ok(!('email' in author), 'authors.email must never leave in the corpus');
 });
 
+// ---------------------------------------------------------------- figures
+
+test('the article sample stays small enough to actually complete', async () => {
+  // A bound rather than an equality, because the number itself is a judgement
+  // call and may reasonably move. What must not move is the order of magnitude.
+  //
+  // `text_length` is covered by no index, so this read costs one row lookup per
+  // sampled row and nothing else: 2,000 measured at 584ms against production
+  // where 20,000 measured at 22,662ms. The second number exceeded the caller's
+  // timeout, and because a read-through cache stores nothing on failure, the two
+  // figures this feeds were absent from /sales permanently rather than briefly.
+  //
+  // So this guards the failure that actually happened. Raising the sample past
+  // this bound does not make the page slower — it makes it empty.
+  const figures = await dataset.articleFigures(db);
+
+  assert.ok(
+    figures.sampleSize <= 5_000,
+    `sample of ${figures.sampleSize} risks exceeding the caller's timeout; see the note on articleFigures`,
+  );
+  // Reported alongside the average so the page can say "sampled over N" rather
+  // than presenting an estimate as a total.
+  assert.equal(typeof figures.sampledAvgChars, 'number');
+  assert.equal(figures.articles, 4, 'one ok extract per seeded feed');
+});
+
 // ---------------------------------------------------------------- enquiries
 
 test('an enquiry is stored, and repeats from one address are countable', async () => {
