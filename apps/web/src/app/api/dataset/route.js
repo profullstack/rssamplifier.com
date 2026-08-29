@@ -51,7 +51,17 @@ export function GET() {
           'Each window is the half-open range [start, end) on the row timestamp named in `cutOn`. Windows are fixed against the Unix epoch, so a window is the same set of rows whoever asks and whenever they ask. Walk them in order to see every row exactly once.',
         latestClosedWindow: newest,
         latestWindowEnd: windowEnd(newest),
-        nextWindowOpensAt: windowEnd(newest),
+        // When the *next* slice becomes takeable, which is not when the next
+        // window opens — it is when that window closes.
+        //
+        // This field shipped as `nextWindowOpensAt` returning `windowEnd(newest)`,
+        // which is the same value as `latestWindowEnd` directly above it and is
+        // the wrong instant to hand a scheduler. The window starting at that
+        // moment is the one still filling, so a pipeline that woke then would
+        // re-pull the slice it already had and loop until the real boundary
+        // passed. One window further on is the first moment there is anything
+        // new to take.
+        nextWindowAvailableAt: windowEnd(windowEnd(newest)),
       },
 
       datasets: {

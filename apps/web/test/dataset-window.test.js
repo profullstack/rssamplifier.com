@@ -111,6 +111,30 @@ test('a window that is not a timestamp is refused', () => {
   assert.equal(got.error, 'bad-window');
 });
 
+test('the moment the next slice becomes takeable is always in the future', () => {
+  // The invariant the manifest got wrong on its first day. It advertised
+  // `windowEnd(latestClosedWindow())` as when to come back, and that instant has
+  // *already passed* — it is the boundary that closed the window being served.
+  // A scheduler obeying it would wake immediately, re-pull the slice it already
+  // had, and spin until the real boundary arrived.
+  //
+  // Asserting "strictly in the future" rather than a fixed string is the point:
+  // it fails for any now, and it is exactly the property a caller depends on.
+  for (const offsetMinutes of [1, 59, 60, 121, 239]) {
+    const now = Date.parse('2026-08-29T12:00:00.000Z') + offsetMinutes * 60_000;
+    const newest = latestClosedWindow(now);
+
+    assert.ok(
+      Date.parse(windowEnd(newest)) <= now,
+      'the served window has closed, so its own end is in the past',
+    );
+    assert.ok(
+      Date.parse(windowEnd(windowEnd(newest))) > now,
+      `next slice must be takeable in the future, at +${offsetMinutes}m`,
+    );
+  }
+});
+
 test('the UTC day starts at midnight UTC wherever the server thinks it is', () => {
   // The full-dump allowance is a per-UTC-day count, and a server in a westward
   // timezone using local midnight would hand out a second full dump hours early
