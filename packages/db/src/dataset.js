@@ -680,11 +680,33 @@ export async function optedOutCount(db) {
  * it snippets?") for a cost the site can pay, and calling it a sample costs
  * nothing but a word.
  *
+ * ## Why the sample is 2,000 and not 20,000
+ *
+ * It shipped at 20,000 and that number silently emptied two rows off the sales
+ * page. Every row in the sample is a row lookup for a column no index covers, so
+ * the cost is linear in the sample and nothing else. Measured against production
+ * on 2026-08-29:
+ *
+ *     count(*) where status='ok'      1,946ms   274,885
+ *     avg over 20,000                22,662ms     7,810
+ *     avg over 2,000                    584ms     7,929
+ *
+ * The 20,000 blew through `corpusFigures`' timeout, so the whole read failed —
+ * and a read-through cache stores nothing on failure, which is the exact trap
+ * `cache.js` was written to describe: it does not fail once and recover, it
+ * fails for ever, and the page renders its graceful fallback (no article count,
+ * no author count) permanently.
+ *
+ * Ten times the sample bought a difference of 1.5% in a figure already labelled
+ * "sampled", against 39 times the cost and a page that could not show it at all.
+ * If a defensible exact total is ever wanted, the answer is a `sum(text_length)`
+ * warmed by the poller on its patient connection, not a bigger sample here.
+ *
  * @param {Client} db
  * @returns {Promise<{ articles: number, sampledAvgChars: number, sampleSize: number }>}
  */
 export async function articleFigures(db) {
-  const sampleSize = 20_000;
+  const sampleSize = 2_000;
 
   const [count, sample] = await Promise.all([
     db.execute(`select count(*) as n from item_extracts where status = 'ok'`),
