@@ -38,6 +38,26 @@ import { createHash } from 'node:crypto';
 export const MIN_INTERVAL = 60;
 
 /**
+ * The floor for a source we collect through a provider rather than fetch.
+ *
+ * An hour is the right floor for the open web: a blog post that appears
+ * fifty-five minutes late is not late, and the floor is what stops 368,000
+ * feeds from being asked more often than they can possibly have changed.
+ *
+ * A timeline is the one thing in this directory where it is plainly wrong.
+ * §17 asks for five minutes on an active source and that is what a reader
+ * expects of a social feed — an hour-old timeline reads as broken rather than
+ * as cached. It is affordable for the same reason it would not be for the
+ * directory at large: there are dozens of X sources, not hundreds of thousands,
+ * and one upstream refresh serves every subscriber to it (§39).
+ *
+ * Every function below takes this as a parameter rather than reading it, so the
+ * floor is a property of the *source* and there is exactly one place — the
+ * crawl — that decides which one a given row gets.
+ */
+export const SOCIAL_MIN_INTERVAL = 5;
+
+/**
  * Never wait longer than this, however dead a feed looks.
  *
  * Ninety days rather than never, because "abandoned" is a guess and a wrong
@@ -177,10 +197,10 @@ export function newestPublished(items, now = Date.now()) {
  * @returns {number|null} minutes, or null when the document carries fewer than
  *   two believable dates
  */
-export function intervalFromDates(items, now = Date.now()) {
+export function intervalFromDates(items, now = Date.now(), floor = MIN_INTERVAL) {
   const times = publishedTimes(items, now);
   if (times.length < 2) return null;
-  return scheduleFrom(times, now);
+  return scheduleFrom(times, now, floor);
 }
 
 /**
@@ -197,7 +217,7 @@ export function intervalFromDates(items, now = Date.now()) {
  * @param {number} now epoch ms
  * @returns {number} minutes, between MIN_INTERVAL and MAX_INTERVAL
  */
-function scheduleFrom(times, now) {
+function scheduleFrom(times, now, floor = MIN_INTERVAL) {
   const silence = Math.max(0, (now - times[0]) / 60_000);
 
   // The typical gap, not the mean. A blog that posted forty times during one
@@ -210,7 +230,7 @@ function scheduleFrom(times, now) {
   // archive dumped in one go, or a generator that stamps every entry with the
   // build time. There is no cadence to infer, so schedule it on its silence
   // alone, which is the only real evidence available.
-  if (spacing.length === 0) return clamp(silence / 4, MIN_INTERVAL, MAX_INTERVAL);
+  if (spacing.length === 0) return clamp(silence / 4, floor, MAX_INTERVAL);
 
   const rhythm = median(spacing);
 
@@ -219,14 +239,14 @@ function scheduleFrom(times, now) {
   // through the next one — the directory's freshness promise is about how long
   // a post can sit unseen, and this is the term that bounds it.
   if (silence <= rhythm * QUIET_MULTIPLE) {
-    return clamp(rhythm / 2, MIN_INTERVAL, MAX_INTERVAL);
+    return clamp(rhythm / 2, floor, MAX_INTERVAL);
   }
 
   // Gone quiet relative to its own history. Schedule on the silence instead,
   // which makes the back-off self-scaling: the longer a feed stays dead the
   // less often it is asked, without a table of thresholds to maintain and
   // without ever quite giving up on it.
-  return clamp(silence / 4, MIN_INTERVAL, MAX_INTERVAL);
+  return clamp(silence / 4, floor, MAX_INTERVAL);
 }
 
 /**
@@ -411,10 +431,10 @@ export function recordChange(raw, changed, now = Date.now()) {
  * @returns {number|null} minutes, or null when the log holds nothing usable and
  *   the caller should fall back to the ladder
  */
-export function intervalFromChanges(raw, now = Date.now()) {
+export function intervalFromChanges(raw, now = Date.now(), floor = MIN_INTERVAL) {
   const times = changeTimes(raw, now);
   if (times.length === 0) return null;
-  return scheduleFrom(times, now);
+  return scheduleFrom(times, now, floor);
 }
 
 /**
@@ -433,9 +453,9 @@ export function intervalFromChanges(raw, now = Date.now()) {
  * @param {unknown} current the feed's `fetch_interval_minutes`
  * @returns {number|null} null when there was nothing to compute either
  */
-export function neverSooner(computed, current) {
+export function neverSooner(computed, current, floor = MIN_INTERVAL) {
   if (computed === null || computed === undefined) return null;
   const held = Number(current);
-  if (!Number.isFinite(held) || held <= 0) return clamp(computed, MIN_INTERVAL, MAX_INTERVAL);
-  return clamp(Math.max(computed, held), MIN_INTERVAL, MAX_INTERVAL);
+  if (!Number.isFinite(held) || held <= 0) return clamp(computed, floor, MAX_INTERVAL);
+  return clamp(Math.max(computed, held), floor, MAX_INTERVAL);
 }

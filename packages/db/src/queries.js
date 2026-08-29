@@ -2383,7 +2383,8 @@ export async function recentlyCrawled(db, limit = 20) {
 /** The columns a crawl needs off a feed row. Shared by both due queries. */
 const DUE_COLUMNS = `id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
                  item_count, last_published_at,
-                 http_etag, http_last_modified, content_hash, change_log`;
+                 http_etag, http_last_modified, content_hash, change_log,
+                 social_network, social_ref, social_config`;
 
 /**
  * The share of a tick reserved for hand-submitted feeds.

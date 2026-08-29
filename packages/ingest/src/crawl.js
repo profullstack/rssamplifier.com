@@ -1,5 +1,6 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
+import { fetchXSource } from '@rssamplifier/social';
 
 import { prepareCredits } from './enrich.js';
 import {
@@ -10,6 +11,8 @@ import {
   contentSignature,
   recordChange,
   neverSooner,
+  MIN_INTERVAL as FLOOR_DEFAULT,
+  SOCIAL_MIN_INTERVAL,
 } from './cadence.js';
 
 /** Backoff ladder in minutes, indexed by consecutive error count. */
@@ -178,22 +181,66 @@ export function topicsFrom(feed = {}, storedItems = []) {
  *   exercised end to end against a local server without this seam.
  * @returns {Promise<{ ok: boolean, newItems: number, error?: string }>}
  */
+/**
+ * Collect an X source, or decline politely if there is nothing to collect with.
+ *
+ * The declining is the point. The X runtime is built once at boot by whoever
+ * runs the crawl, and a process that has not built one — a test, a script, a
+ * deploy where `X_ENABLED` is off — must not treat that as the *source*
+ * failing. `markCrawlFailure` retires a feed after ten consecutive failures, so
+ * a poller started without X configured would quietly kill every X source in
+ * the directory over a few hours and leave no trace of why.
+ *
+ * So it returns a throttle instead: come back in an hour, change nothing about
+ * the feed's health. That is also the correct behaviour for the kill switch of
+ * §42 — turning X off must not damage what has already been collected, and the
+ * public routes go on serving it (§40, AC-5).
+ *
+ * @param {object} feed
+ * @param {{ x?: Function, xRuntime?: object }} opts
+ */
+async function collectSocial(feed, opts) {
+  const runtime = opts.xRuntime ?? null;
+  if (!runtime) {
+    return { ok: false, throttled: true, retryAfter: 3600, error: 'x-runtime-unavailable' };
+  }
+
+  return (opts.x ?? fetchXSource)(feed, { runtime });
+}
+
 export async function crawlFeed(db, feed, opts = {}) {
   const id = String(feed.id);
   const scraped = feed.source_kind === 'scraped';
+
+  // The third way in. A feed is fetched, a scraped source is read off a page,
+  // and a social source is collected through a provider — three methods, one
+  // return shape, and everything past this point is identical for all three.
+  // That is what keeps X out of the rest of the pipeline entirely: dedupe,
+  // interval learning, keyword extraction, credits, FTS and syndication never
+  // learn that it exists (§30, AC-8).
+  const social = feed.social_network === 'x' ? 'x' : null;
+
+  // A provider-backed source polls on a five-minute floor rather than an hour's
+  // — see SOCIAL_MIN_INTERVAL. The floor is passed to every scheduling call
+  // below rather than read from a global, so this row's cadence is decided here
+  // and nowhere else.
+  const floor = social ? SOCIAL_MIN_INTERVAL : FLOOR_DEFAULT;
 
   // What the server told us last time, sent back so it can answer "still the
   // same" without sending the document again. Scraped sources are excluded: what
   // is fetched there is a page of prose whose validators describe the page, and
   // a marketing site that has not changed its header is not evidence that the
   // posts extracted from it have not.
-  const conditional = scraped
-    ? {}
-    : { etag: feed.http_etag ?? null, lastModified: feed.http_last_modified ?? null };
+  const conditional =
+    scraped || social
+      ? {}
+      : { etag: feed.http_etag ?? null, lastModified: feed.http_last_modified ?? null };
 
-  const resolved = scraped
-    ? await (opts.scrape ?? scrapeFeed)(String(feed.feed_url))
-    : await (opts.resolve ?? resolveFeed)(String(feed.feed_url), conditional);
+  const resolved = social
+    ? await collectSocial(feed, opts)
+    : scraped
+      ? await (opts.scrape ?? scrapeFeed)(String(feed.feed_url))
+      : await (opts.resolve ?? resolveFeed)(String(feed.feed_url), conditional);
 
   // The publisher says nothing has changed. This is the cheapest and the most
   // trustworthy answer the crawler can get: no body was sent, nothing is parsed,
@@ -206,7 +253,7 @@ export async function crawlFeed(db, feed, opts = {}) {
   // feed resting at the ceiling is not dragged back by being checked.
   if (resolved.notModified) {
     const minutes =
-      neverSooner(intervalFromChanges(feed.change_log), feed.fetch_interval_minutes) ??
+      neverSooner(intervalFromChanges(feed.change_log, undefined, floor), feed.fetch_interval_minutes, floor) ??
       Number(feed.fetch_interval_minutes) ??
       MIN_INTERVAL;
     await q.markUnchanged(db, id, minutes, {
@@ -290,10 +337,11 @@ export async function crawlFeed(db, feed, opts = {}) {
   // and never shorten it; a crawl that saw one recomputes freely, which is what
   // lets an abandoned feed that starts publishing again accelerate on its first
   // new post.
-  const dated = intervalFromDates(resolved.feed.items);
-  const observed = intervalFromChanges(changeLog);
+  const dated = intervalFromDates(resolved.feed.items, undefined, floor);
+  const observed = intervalFromChanges(changeLog, undefined, floor);
   const interval =
-    dated ?? (contentsChanged ? observed : neverSooner(observed, feed.fetch_interval_minutes));
+    dated ??
+    (contentsChanged ? observed : neverSooner(observed, feed.fetch_interval_minutes, floor));
 
   // When this publisher last published, as distinct from when we last read
   // them. Stored on the feed row so a page can say "current, and dormant since

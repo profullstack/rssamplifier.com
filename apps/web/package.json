@@ -19,6 +19,7 @@
     "@rssamplifier/mail": "workspace:*",
     "@rssamplifier/notify": "workspace:*",
     "@rssamplifier/search": "workspace:*",
+    "@rssamplifier/social": "workspace:*",
     "@rssamplifier/translate": "workspace:*",
     "@simplewebauthn/browser": "^13.0.0",
     "@swc/helpers": "^0.5.23",

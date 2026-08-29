@@ -89,5 +89,9 @@ export async function feedRiver({ slug: rawSlug, format: rawFormat, limit: rawLi
     items,
     filename: slug,
     src: 'feed',
+    // The request, so an unchanged river can answer 304 (§18). Every other
+    // caller of riverResponse is free to leave this off and keep the behaviour
+    // it had; passing it is what opts a surface in.
+    req,
   });
 }

@@ -12,6 +12,7 @@
     "@rssamplifier/discover": "workspace:*",
     "@rssamplifier/feed": "workspace:*",
     "@rssamplifier/ingest": "workspace:*",
-    "@rssamplifier/notify": "workspace:*"
+    "@rssamplifier/notify": "workspace:*",
+    "@rssamplifier/social": "workspace:*"
   }
 }

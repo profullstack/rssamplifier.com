@@ -1,5 +1,6 @@
 import { resolveFeed, scrapeFeed, normalizeUrl, parseOpml, uniqueSlug } from '@rssamplifier/feed';
-import { q } from '@rssamplifier/db';
+import { q, social } from '@rssamplifier/db';
+import { socialSourceFrom } from '@rssamplifier/social';
 
 import { queueFeeds } from './queue.js';
 import { refreshFeedKeywords } from './crawl.js';
@@ -79,6 +80,18 @@ export async function claimSlug(db, title, feedUrl) {
  * @returns {Promise<{ ok: true, slug: string, existing: boolean } | { ok: false, url: string, error: string }>}
  */
 export async function submitOne(db, input) {
+  // Asked first, before the URL is even normalised, and that order is the whole
+  // difference between `/r/programming` and a subreddit filed among the blogs.
+  //
+  // Reddit publishes real RSS, so `https://www.reddit.com/r/programming/`
+  // resolves perfectly well down the ordinary path and lands as an untyped row
+  // at a slug of its own — which is exactly how 50,099 of them got here. X
+  // resolves to nothing at all, so without this it is simply not submittable.
+  // Recognising both up here means one answer to "what is this?" rather than a
+  // special case in each caller.
+  const source = socialSourceFrom(input);
+  if (source) return submitSocial(db, source);
+
   const url = normalizeUrl(input);
   if (!url) return { ok: false, url: String(input), error: 'invalid-url' };
 
@@ -157,6 +170,59 @@ export async function submitOne(db, input) {
 }
 
 /**
+ * Accept a social source: claim its identity, queue its first collection.
+ *
+ * Nothing is fetched here, unlike `submitOne`'s ordinary path, and that is
+ * deliberate on a public endpoint that anybody may call. §37 is about exactly
+ * this: feed creation is the cheapest way to make somebody else's server do
+ * work, and an X source in particular would make it *our* upstream and *our*
+ * session paying for it. So a submission writes one row and leaves; the poller
+ * collects on its next tick, expedited by `priority` into the express lane, and
+ * the submitter lands on a page that fills in within the minute.
+ *
+ * Idempotent by canonical ref rather than by URL, which is the stronger claim:
+ * `@OpenAI`, `x.com/OpenAI` and `https://twitter.com/openai/` are one source
+ * here where they would be three feed rows anywhere else.
+ *
+ * @param {import('@libsql/client').Client} db
+ * @param {ReturnType<typeof socialSourceFrom>} source
+ * @returns {Promise<{ ok: true, slug: string, existing: boolean } | { ok: false, url: string, error: string }>}
+ */
+async function submitSocial(db, source) {
+  const existing = await social.feedBySocialRef(db, source.ref);
+  if (existing) return { ok: true, slug: String(existing.slug), existing: true };
+
+  // The canonical slug first, then the collision-avoiding one. `r-programming`
+  // is a better name than `programming-2` for a row whose public address is
+  // /r/programming, and it is only unavailable if something already holds it.
+  const taken = await q.takenSlugs(db, source.slug);
+  const slug = taken.has(source.slug)
+    ? uniqueSlug(source.slug, source.feedUrl, (candidate) => taken.has(candidate))
+    : source.slug;
+
+  const stored = await social.upsertSocialSource(db, {
+    network: source.network,
+    ref: source.ref,
+    slug,
+    title: source.title,
+    feedUrl: source.feedUrl,
+    siteUrl: source.siteUrl,
+    priority: 1,
+  });
+
+  if (!stored.id) {
+    // The ref was free and the slug was not, or another request took both
+    // between the two statements above. Either way there is a row now.
+    const raced = await social.feedBySocialRef(db, source.ref);
+    return raced
+      ? { ok: true, slug: String(raced.slug), existing: true }
+      : { ok: false, url: source.feedUrl, error: 'slug-taken' };
+  }
+
+  return { ok: true, slug: stored.slug, existing: !stored.created, path: source.path };
+}
+
+/**
  * Accept a list of URLs.
  *
  * Sequential on purpose: each entry triggers outbound HTTP, and a hundred
@@ -173,7 +239,12 @@ export async function submitMany(db, urls) {
 
   for (const url of urls.slice(0, MAX_BATCH)) {
     const res = await submitOne(db, url);
-    if (res.ok) accepted.push({ slug: res.slug, existing: res.existing });
+    // `path` travels with the slug so a caller can redirect to the address a
+    // source actually lives at. For an ordinary feed that is `/{slug}` and the
+    // field is absent; for a social source it is `/r/programming` or
+    // `/x/OpenAI`, and sending somebody to the slug instead would land them on
+    // the same page at the address the namespace exists to replace.
+    if (res.ok) accepted.push({ slug: res.slug, existing: res.existing, path: res.path ?? null });
     else rejected.push({ url: res.url, error: res.error });
   }
 

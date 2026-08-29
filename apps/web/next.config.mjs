@@ -206,6 +206,43 @@ const nextConfig = {
         // The directory itself: what was added to it, newest first.
         { source: '/feed.:format(rss|atom|json|xml|md)', destination: '/api/directory/feed/:format' },
 
+        // The two social namespaces.
+        //
+        // No playlist spellings, for the same reason /following has none: a
+        // timeline and a subreddit carry no enclosures, so an `.m3u` of one
+        // would be an empty file with a confident name.
+        //
+        // Ordered narrowest-first within each prefix, because `:username` and
+        // `:subreddit` match anything: every fixed address under /x has to be
+        // named before /x/:username, and /r/u before /r/:subreddit. A rewrite
+        // parameter never spans a slash, so the two-segment rules cannot be
+        // shadowed by the one-segment ones — but the fixed segments can be, and
+        // silently.
+        {
+          source: '/x/search.:format(rss|atom|json|xml|md)',
+          destination: '/api/x/search/feed/:format',
+        },
+        {
+          source: '/x/list/:listId.:format(rss|atom|json|xml|md)',
+          destination: '/api/x/list/:listId/feed/:format',
+        },
+        {
+          source: '/x/:username/:mode(replies|media).:format(rss|atom|json|xml|md)',
+          destination: '/api/x/:username/:mode/feed/:format',
+        },
+        {
+          source: '/x/:username.:format(rss|atom|json|xml|md)',
+          destination: '/api/x/:username/feed/:format',
+        },
+        {
+          source: '/r/u/:username.:format(rss|atom|json|xml|md)',
+          destination: '/api/r/u/:username/feed/:format',
+        },
+        {
+          source: '/r/:subreddit.:format(rss|atom|json|xml|md)',
+          destination: '/api/r/:subreddit/feed/:format',
+        },
+
         // One category of it. The segments are the category pages' own paths,
         // duplicated from CATEGORIES in apps/web/src/lib/categories.js — this
         // file is evaluated before the workspace resolves, so it cannot import

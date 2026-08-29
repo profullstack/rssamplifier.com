@@ -18,6 +18,7 @@
     "@rssamplifier/feed": "workspace:*",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/mail": "workspace:*",
-    "@rssamplifier/search": "workspace:*"
+    "@rssamplifier/search": "workspace:*",
+    "@rssamplifier/social": "workspace:*"
   }
 }

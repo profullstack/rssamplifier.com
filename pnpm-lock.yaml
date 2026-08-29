@@ -37,6 +37,9 @@ importers:
       '@rssamplifier/notify':
         specifier: workspace:*
         version: link:../../packages/notify
+      '@rssamplifier/social':
+        specifier: workspace:*
+        version: link:../../packages/social
 
   apps/web:
     dependencies:
@@ -67,6 +70,9 @@ importers:
       '@rssamplifier/search':
         specifier: workspace:*
         version: link:../../packages/search
+      '@rssamplifier/social':
+        specifier: workspace:*
+        version: link:../../packages/social
       '@rssamplifier/translate':
         specifier: workspace:*
         version: link:../../packages/translate
@@ -151,6 +157,9 @@ importers:
       '@rssamplifier/search':
         specifier: workspace:*
         version: link:../search
+      '@rssamplifier/social':
+        specifier: workspace:*
+        version: link:../social
 
   packages/mail: {}
 
@@ -164,6 +173,12 @@ importers:
         version: link:../mail
 
   packages/search: {}
+
+  packages/social:
+    dependencies:
+      '@rssamplifier/feed':
+        specifier: workspace:*
+        version: link:../feed
 
   packages/translate:
     dependencies:
