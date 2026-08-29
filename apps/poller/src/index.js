@@ -28,6 +28,7 @@ import { deliverAlerts, vapidConfig } from '@rssamplifier/notify';
 import { createXRuntime, xEnabled } from '@rssamplifier/social';
 
 import { createRecorder, toEntry, writeFailure } from './log.js';
+import { shouldRunRsshub, startRsshub } from './rsshub.js';
 
 /**
  * Feed crawler daemon.
@@ -603,6 +604,19 @@ try {
  * that into a five-second answer — the same reason the push half of the alerts
  * stack prints `push=true` here.
  */
+/**
+ * RSSHub, if this process is the one running it.
+ *
+ * Started *before* the runtime below, because `createXRuntime` reads
+ * `RSSHUB_BASE_URL` when it builds the provider and a provider built with no
+ * base URL declines every request for the life of the process. The daemon does
+ * not have to be listening yet — the first crawl is a tick away and a refused
+ * request costs a reschedule, not a source's health — but the address has to be
+ * known.
+ */
+const rsshub = shouldRunRsshub(env) ? startRsshub({ env, log }) : null;
+if (rsshub) env.RSSHUB_BASE_URL = rsshub.url;
+
 const xRuntime = xEnabled(env)
   ? await createXRuntime({
       env,
@@ -618,7 +632,11 @@ const xRuntime = xEnabled(env)
 log('x-runtime', {
   enabled: Boolean(xRuntime),
   providers: xRuntime ? xRuntime.registry.candidates().map((p) => p.name) : [],
+  // How many X logins are configured. Zero with RSSHub embedded is the state
+  // worth spotting on a boot line: the daemon starts, answers, and returns
+  // nothing for every timeline, because it has no session to read X with.
   sessions: xRuntime ? xRuntime.sessions.size : 0,
+  rsshub: rsshub ? 'embedded' : (env.RSSHUB_BASE_URL ? 'external' : 'none'),
 });
 
 /**
@@ -1084,6 +1102,12 @@ function shutdown(signal) {
   // failure a queue is supposed to prevent, and Railway sends SIGTERM on every
   // deploy — so this runs several times a day.
   void writeWorker?.close();
+
+  // The embedded daemon goes down with us. Without this its supervisor would
+  // see the child die during shutdown and dutifully restart it, and a container
+  // Railway is trying to stop would keep spawning a new Node process every few
+  // seconds until it is killed outright.
+  void rsshub?.stop();
 
   // Recorded before the buffer is closed, so the live log's last line is the
   // daemon saying it stopped rather than the log simply going quiet — which is
