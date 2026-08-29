@@ -1,43 +1,46 @@
 /**
- * Facebook — and the honest limits on what `/fb/` can ever be.
+ * Facebook — and the honest limits on what `/fb/` is worth.
  *
  * Read this before adding to it, because the shape of this file is decided by
  * something outside the codebase.
  *
- * **There is no way to read an arbitrary public Facebook Page.** Three doors,
- * all measured rather than assumed, on 2026-08-29:
+ * **Facebook publishes nothing readable without a login.** Three doors,
+ * measured rather than assumed on 2026-08-29:
  *
  *   - the old `facebook.com/feeds/page.php?format=rss20` endpoint answers 404;
  *     it was removed, not deprecated
- *   - `mbasic.facebook.com/<page>` answers 200 with a login wall
+ *   - `mbasic.facebook.com/<page>` answers 200 and redirects to `login.php`
  *   - RSSHub, which carries a thousand namespaces and maintains Twitter and
  *     Instagram, has no Facebook namespace at all
  *
- * The remaining door is the Graph API, and it only opens for Pages the caller
- * **administers**: reading somebody else's public Page needs the
- * `Page Public Content Access` feature, which requires App Review and business
- * verification and is granted rarely. So a Facebook source here is not
- * something a stranger can submit — it is something the Page's own operator
- * connects, by supplying a Page Access Token.
+ * So a Page is read the way X and Instagram are read: with a logged-in session,
+ * off the HTML that mbasic renders server-side. That is `./scrape.js`, and it
+ * is the default. `./fetch.js` will use Meta's Graph API instead for a Page
+ * somebody administers and has a token for, because a supported API beats
+ * guessing at markup — but a token is never required and almost never present.
  *
- * That is a different bargain from the rest of this directory, where anyone may
- * submit anything, and `/fb/` should not pretend otherwise: a page nobody has
- * connected a token for is not "not crawled yet", it is "not collectable", and
- * the page says so.
+ * **What that third bullet is telling you.** RSSHub maintains Twitter and
+ * Instagram and not this, and that is a verdict rather than an oversight:
+ * Facebook is the most hostile of the three to being read this way. Expect the
+ * markup to change, expect the reading account to be challenged, and expect
+ * `/fb/` to be the least dependable namespace on the site. The failure handling
+ * downstream is built for that — a checkpoint retires the *session*, never the
+ * Page — but no amount of care makes the underlying surface stable.
  *
- * What is deliberately *not* here: anything that drives a logged-in Facebook
- * session against the login wall. It breaks constantly, it is against Meta's
- * terms, and it would put an account of ours at risk to serve a directory
- * nobody is paying for.
+ * A personal profile is not readable by any of this. `profile.php` and friends
+ * are rejected below rather than half-supported.
  */
 
 /**
  * A Page's public name — the `/PageName` in a Facebook URL.
  *
- * Facebook calls it a "username" or "vanity URL" and permits letters, digits
- * and dots, minimum five characters.
+ * Letters, digits and dots. Facebook documents a five-character minimum and
+ * that minimum is wrong to enforce: it applies to usernames created now, and
+ * plenty of long-standing Pages are shorter — facebook.com/NASA is four. A
+ * regex written from the documentation rejects real Pages, so the floor is
+ * three and `NOT_A_PAGE` below does the work of excluding furniture.
  */
-const VANITY = /^[A-Za-z0-9.]{5,60}$/;
+const VANITY = /^[A-Za-z0-9.]{3,60}$/;
 
 /** A numeric Page id, which is what the Graph API actually addresses. */
 const PAGE_ID = /^[0-9]{6,25}$/;
@@ -95,7 +98,7 @@ export function parseFacebookInput(input) {
   if (!raw) return null;
 
   // `fb/SomePage` and `fb.com/SomePage` shorthands, plus a bare numeric id.
-  const short = /^\/?(?:fb|facebook)\/([A-Za-z0-9.]{5,60})\/?$/i.exec(raw);
+  const short = /^\/?(?:fb|facebook)\/([A-Za-z0-9.]{3,60})\/?$/i.exec(raw);
   if (short) return { mode: 'page', page: short[1] };
 
   // A bare string of digits is deliberately NOT read as a Page id. It is also a
@@ -196,6 +199,6 @@ export function facebookSource(input) {
  * @returns {{ mode: 'page', page: string }|null}
  */
 export function facebookSpecFromRef(ref) {
-  const match = /^fb:page:([A-Za-z0-9.]{5,60}|[0-9]{6,25})$/.exec(String(ref ?? ''));
+  const match = /^fb:page:([A-Za-z0-9.]{3,60}|[0-9]{6,25})$/.exec(String(ref ?? ''));
   return match ? { mode: 'page', page: match[1] } : null;
 }

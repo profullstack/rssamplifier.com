@@ -34,7 +34,7 @@ const MAX_BYTES = 4 * 1024 * 1024;
  *   fetch?: typeof fetch,
  *   signal?: AbortSignal,
  * }} [opts]
- * @returns {Promise<{ body: string, status: number, headers: Headers }>}
+ * @returns {Promise<{ body: string, status: number, headers: Headers, url: string }>}
  */
 export async function providerGet(url, opts = {}) {
   const {
@@ -75,7 +75,10 @@ export async function providerGet(url, opts = {}) {
     });
     if (failure) throw failure;
 
-    return { body, status: res.status, headers: res.headers };
+    // `url` is where the response actually came from after redirects. The
+    // Facebook scraper needs it: mbasic answers a missing session with a 302
+    // to login.php and a 200 body, so the status alone says nothing.
+    return { body, status: res.status, headers: res.headers, url: res.url ?? String(url) };
   } catch (error) {
     if (error?.name?.startsWith('X')) throw error;
     throw new XUnavailable(`${provider}: ${redact(error)}`, { provider, sessionId, cause: null });

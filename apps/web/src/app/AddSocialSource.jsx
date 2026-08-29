@@ -16,10 +16,10 @@ import { siteUrl } from '../lib/db.js';
  * its next tick, and this page is replaced by the real one within the minute
  * (§17, §37).
  *
- * **Facebook is the exception, and says so.** There is no public feed, no
- * unauthenticated HTML and no provider; the only way in is a Page Access Token
- * from whoever administers the Page. Offering an "add" button there would be a
- * button that quietly does nothing, so it gets an explanation instead.
+ * Facebook was the exception here for one revision, on the grounds that only a
+ * Page's own administrator could connect it. That is no longer true: it is read
+ * with a session like X and Instagram are, so it takes open submissions like
+ * they do — see facebook/scrape.js for what that costs in reliability.
  *
  * @param {{ network: 'x'|'reddit'|'instagram'|'facebook', label: string, input: string, canonical: string }} props
  *   `input` is what gets submitted — the canonical upstream URL, not what was
@@ -37,39 +37,6 @@ export default function AddSocialSource({ network, label, input, canonical }) {
       <code>.json</code> and <code>.md</code>
     </>
   );
-
-  if (network === 'facebook') {
-    return (
-      <main className="prose">
-        <h1>{label}</h1>
-
-        <p>
-          This Facebook Page is not connected, and unlike the rest of the directory it cannot be
-          added by anyone who happens to want it.
-        </p>
-
-        <p>
-          Facebook publishes no feed for a Page, serves no page without a login, and has no
-          third-party bridge we can use. The only remaining route is Meta&rsquo;s own Graph API,
-          and it will only return a Page&rsquo;s posts to somebody who <strong>administers that
-          Page</strong> — reading a stranger&rsquo;s public Page needs a permission Meta grants
-          rarely and only after review.
-        </p>
-
-        <p>
-          So if this is your Page, it can be connected: an administrator supplies a Page Access
-          Token and it appears here at {address}, collected on the same schedule as everything
-          else. If it is not your Page, there is nothing we can honestly offer — and we would
-          rather say that than mirror a scraper that breaks every few weeks.
-        </p>
-
-        <p>
-          <a href="/fb">What is connected</a> · <a href="/x">X</a> · <a href="/ig">Instagram</a> ·{' '}
-          <a href="/r">Reddit</a>
-        </p>
-      </main>
-    );
-  }
 
   return (
     <main className="prose">
@@ -113,5 +80,10 @@ const PLATFORMS = {
     name: 'Instagram',
     index: '/ig',
     note: 'Instagram publishes no feeds, so this is collected on your behalf and mirrored here. Private accounts are not collected, and stories are not either — they expire, and a feed of things that have already gone is worse than no feed.',
+  },
+  facebook: {
+    name: 'Facebook',
+    index: '/fb',
+    note: 'Facebook publishes no feeds and shows nothing without a login, so this is read on your behalf and mirrored here. It is the least reliable of the four by some distance — Facebook changes its markup often and without warning — and it is checked hourly rather than every few minutes, because asking faster is how the reading account gets locked.',
   },
 };

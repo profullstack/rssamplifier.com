@@ -31,6 +31,40 @@ const COLLECTORS = {
 };
 
 /**
+ * The fastest each platform may be asked, in minutes.
+ *
+ * Not one number, because the three are not one risk. X goes through RSSHub,
+ * which is built to be polled and is reading a medium where an hour old is
+ * visibly stale — five minutes is the point of the exercise. Instagram and
+ * Facebook are read with a personal session against a platform that watches for
+ * exactly that, and the cost of asking too often is not a 429, it is a
+ * checkpoint on the account and every source on that platform going dark at
+ * once.
+ *
+ * So the slow ones are slow on purpose. A Facebook Page that posts twice a week
+ * loses nothing to an hourly floor, and the account survives to keep reading it.
+ *
+ * These are floors, not intervals: the crawler's cadence code still backs a
+ * quiet source further off on its own. Nothing here makes a source faster.
+ */
+export const FLOOR_MINUTES = {
+  x: 5,
+  instagram: 30,
+  facebook: 60,
+};
+
+/** The default for anything fetched rather than collected. */
+export const DEFAULT_FLOOR_MINUTES = 60;
+
+/**
+ * @param {{ social_network?: string|null }} feed
+ * @returns {number} minutes
+ */
+export function floorMinutesFor(feed) {
+  return FLOOR_MINUTES[String(feed?.social_network ?? '')] ?? DEFAULT_FLOOR_MINUTES;
+}
+
+/**
  * Is this row collected through a provider rather than fetched from a document?
  *
  * @param {{ social_network?: string|null }} feed

@@ -101,35 +101,54 @@ to tell them apart.
 of a row and links already point at it. The `/r/` and `/x/` address is the
 canonical one, which is what search engines are told.
 
-## Facebook, and what `/fb/` can honestly be
+## Facebook, and what `/fb/` is honestly worth
 
-**There is no way to read an arbitrary public Facebook Page.** Three doors, all
-measured on 2026-08-29 rather than assumed:
+Facebook publishes nothing readable without a login. Three doors, measured on
+2026-08-29 rather than assumed:
 
 - the old `facebook.com/feeds/page.php?format=rss20` endpoint answers **404** —
   removed, not deprecated
-- `mbasic.facebook.com/<page>` answers 200 with a **login wall**
+- `mbasic.facebook.com/<page>` answers 200 and **redirects to `login.php`**
 - RSSHub, which carries a thousand namespaces and maintains Twitter and
   Instagram, has **no Facebook namespace at all**
 
-The one remaining door is Meta's Graph API, and it only opens for Pages the
-caller **administers**. Reading somebody else's public Page needs the
-`Page Public Content Access` feature, which requires App Review plus business
-verification and is granted rarely.
-
-So `/fb/` is the one namespace here that does not take open submissions: a Page
-appears when its operator connects it, by putting a Page Access Token in
-`FB_PAGE_TOKENS`. A Page nobody has connected is not "not crawled yet", it is
-not collectable, and the page says exactly that rather than offering a button
-that would quietly do nothing.
+So a Page is read the way X and Instagram are read: with a logged-in session,
+off the HTML that `mbasic.facebook.com` still renders server-side.
 
 ```bash
-FB_PAGE_TOKENS='[{"page":"MyPage","token":"EAA..."}]'
+FB_COOKIE='c_user=...; xs=...'        # a normal browser session, not an app
+FB_PAGE_TOKENS=                       # optional; see below
 ```
 
-What is deliberately absent: anything that drives a logged-in Facebook session
-against that login wall. It breaks constantly, it is against Meta's terms, and
-it would risk an account of ours to serve a directory nobody pays for.
+Where a Page Access Token happens to exist for a Page, Meta's Graph API is used
+instead — a supported API beats guessing at markup. It is never required and
+almost never present, because Graph only returns a Page's posts to somebody who
+**administers** that Page.
+
+**What that third bullet is telling you.** RSSHub maintains Twitter and
+Instagram and not this, and that is a verdict rather than an oversight: Facebook
+is the most hostile of the three to being read this way. Expect the markup to
+change, expect the reading account to be challenged, and expect `/fb/` to be the
+least dependable namespace on the site.
+
+Three things follow from that, and they are in the code rather than in this
+paragraph:
+
+- **Every selector is in one place.** `SELECTORS` in
+  `packages/social/src/facebook/scrape.js`. When it breaks, fetch a page with a
+  live cookie, look at the HTML, and edit that object — nothing else.
+- **A checkpoint retires the session, never the Page.** A login wall is
+  classified as an auth failure, which reschedules and leaves every health
+  column alone. Ten of those in a row would otherwise mark every Facebook Page
+  in the directory dead, since a feed is retired after ten failures.
+- **It is polled hourly, not every five minutes.** Each platform has its own
+  floor (`FLOOR_MINUTES`): X 5, Instagram 30, Facebook 60. The cost of asking
+  too often here is not a 429, it is a lock on the account and every Facebook
+  source going dark at once. A Page that posts twice a week loses nothing to an
+  hourly floor.
+
+A personal profile cannot be read by any of this and is rejected rather than
+half-supported.
 
 ## Collecting Instagram
 

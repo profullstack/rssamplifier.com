@@ -1,6 +1,6 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
-import { fetchSocialSource, isCollected } from '@rssamplifier/social';
+import { fetchSocialSource, floorMinutesFor, isCollected } from '@rssamplifier/social';
 
 import { prepareCredits } from './enrich.js';
 import {
@@ -226,11 +226,13 @@ export async function crawlFeed(db, feed, opts = {}) {
   // distinction, so adding a platform never edits this file.
   const social = isCollected(feed);
 
-  // A provider-backed source polls on a five-minute floor rather than an hour's
-  // — see SOCIAL_MIN_INTERVAL. The floor is passed to every scheduling call
-  // below rather than read from a global, so this row's cadence is decided here
-  // and nowhere else.
-  const floor = social ? SOCIAL_MIN_INTERVAL : FLOOR_DEFAULT;
+  // How fast this row may be asked, which is a property of its platform rather
+  // than of this codebase — X through RSSHub tolerates five minutes, a personal
+  // Instagram or Facebook session does not, and asking too often there costs a
+  // checkpoint on the account rather than a 429. @rssamplifier/social owns the
+  // table; the floor is passed to every scheduling call below so this row's
+  // cadence is decided here and nowhere else.
+  const floor = social ? floorMinutesFor(feed) : FLOOR_DEFAULT;
 
   // What the server told us last time, sent back so it can answer "still the
   // same" without sending the document again. Scraped sources are excluded: what

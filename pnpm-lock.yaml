@@ -179,6 +179,9 @@ importers:
       '@rssamplifier/feed':
         specifier: workspace:*
         version: link:../feed
+      linkedom:
+        specifier: ^0.18.13
+        version: 0.18.13
 
   packages/translate:
     dependencies:

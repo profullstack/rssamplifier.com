@@ -61,7 +61,14 @@ export function retryAfterFor(error) {
   // Distinguished by message rather than by type, because `XUnavailable` covers
   // both "nothing is configured" and "the thing that is configured is down",
   // and those deserve very different patience.
-  if (/no .* provider is configured|no RSSHUB_BASE_URL|not connected/i.test(String(error?.message ?? ''))) {
+  // Every shape of "nothing is set up to collect with": no provider in the
+  // registry, no bridge URL, no session cookie. All of them are a deployment
+  // that has not happened, and none of them changes in twenty minutes.
+  if (
+    /no .* provider is configured|no RSSHUB_BASE_URL|not connected|no session/i.test(
+      String(error?.message ?? ''),
+    )
+  ) {
     return UNCONFIGURED_SECONDS;
   }
 
