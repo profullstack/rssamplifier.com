@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { q, alerts, queue, authors as people } from '@rssamplifier/db';
+import { socialDisplayTitle, socialPathFor } from '@rssamplifier/social';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
@@ -42,7 +43,7 @@ export async function generateMetadata({ params }) {
   const feed = await q.feedBySlug(db(), slug);
   if (!feed) return { title: 'Not found' };
 
-  const title = String(feed.title);
+  const title = displayTitle(feed);
   const description = feed.description
     ? String(feed.description)
     : `Latest ${(CATEGORIES[String(feed.category)] ?? CATEGORIES.blog).item} from ${feed.title}.`;
@@ -232,7 +233,11 @@ export default async function FeedPage({ params }) {
       <p className="eyebrow">
         <a href={category.path}>{category.one[0].toUpperCase() + category.one.slice(1)}</a>
       </p>
-      <h1>{feed.title}</h1>
+      {/* The canonical name where the stored title says nothing. Most of the
+          50,026 imported subreddits have not been crawled yet and carry the
+          bare host as their title, so this heading read "reddit.com" on every
+          one of them. A real title always wins; see socialDisplayTitle. */}
+      <h1>{displayTitle(feed)}</h1>
       {feed.description && <p className="lede">{feed.description}</p>}
 
       <div className="feed-meta detail">
@@ -482,6 +487,22 @@ export default async function FeedPage({ params }) {
  * @param {unknown} iso
  * @returns {string}
  */
+/**
+ * What to call this feed on the page.
+ *
+ * Only ever different for a social row whose title was never crawled — every
+ * other feed, and every crawled social one, gets its own title back unchanged.
+ * `socialPathFor` supplies the fallback because the ref already encodes the
+ * canonical name: `/r/programming` becomes `r/programming`.
+ *
+ * @param {{ title?: unknown, feed_url?: unknown, social_ref?: unknown, slug?: unknown }} feed
+ * @returns {string}
+ */
+function displayTitle(feed) {
+  if (!feed?.social_ref) return String(feed?.title ?? '');
+  return socialDisplayTitle(feed, socialPathFor(feed).replace(/^\//, ''));
+}
+
 function formatDate(iso) {
   if (!iso) return 'undated';
   const d = new Date(String(iso));
