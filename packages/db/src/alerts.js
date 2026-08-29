@@ -1,5 +1,6 @@
 import { newId, nowIso } from './client.js';
 import { normalizeSegment } from './accounts.js';
+import { topicLabelSql } from './topicLabel.js';
 
 /**
  * Alerts: the reads and writes behind being told about a new post.
@@ -196,7 +197,7 @@ export async function alertingFollows(db, userId) {
     }),
     db.execute({
       sql: `select tf.slug, tf.segment,
-                   (select min(k.keyword) from feed_keywords k where k.slug = tf.slug) as keyword
+                   ${topicLabelSql('tf.slug')} as keyword
             from topic_follows tf
             where tf.user_id = ? and tf.alerts = 1
             order by tf.created_at desc`,
@@ -628,7 +629,7 @@ export async function newItemsFromAlertedFeeds(db, userId, cursor, limit = 50) {
 export async function alertedTopics(db, userId, limit = 50) {
   const { rows } = await db.execute({
     sql: `select tf.slug, tf.segment,
-                 (select min(k.keyword) from feed_keywords k where k.slug = tf.slug) as keyword
+                 ${topicLabelSql('tf.slug')} as keyword
           from topic_follows tf
           where tf.user_id = ? and tf.alerts = 1
           order by tf.created_at desc

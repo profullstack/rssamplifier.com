@@ -1,6 +1,7 @@
 import { clusterKey, dedupeItems, topicSlug } from '@rssamplifier/feed';
 
 import { newId, nowIso } from './client.js';
+import { topicLabelSql } from './topicLabel.js';
 
 /**
  * Every query the app needs, in one place.
@@ -1092,12 +1093,10 @@ export async function keywordsForFeed(db, feedId, limit = 12) {
 export async function topicBySlug(db, slug) {
   const { rows } = await db.execute({
     sql: `select k.slug,
-                 -- Any spelling will do as the display name: extraction
-                 -- lowercases its keywords and categories are lowercased before
-                 -- they are stored, so the rows under one slug differ only in
-                 -- ways the slug already erased. Same rule as the rollup, so
-                 -- the index and the page always agree on the title.
-                 min(k.keyword) as keyword,
+                 -- The most-used spelling, not any spelling: see topicLabel.js.
+                 -- Same rule as the rollup, so the index and the page always
+                 -- agree on the title.
+                 ${topicLabelSql('k.slug')} as keyword,
                  count(*) as feed_count
           from feed_keywords k
           join feeds f on f.id = k.feed_id and f.status <> 'dead'
@@ -1454,6 +1453,11 @@ export async function countTopics(db, minFeeds = 2, query = null) {
  * blog's vocabulary, they are the overwhelming majority of the rows, and a page
  * listing one feed is not a topic page.
  *
+ * The displayed keyword is the most-used spelling of the slug, chosen by the
+ * shared rule in `topicLabel.js` rather than by this query — the topic page,
+ * the alert queries and the followed-topics list all have to agree with it, and
+ * they did not when each picked its own.
+ *
  * @param {Client} db
  * @param {number} [minFeeds]
  * @returns {Promise<number>} topics in the rollup
@@ -1467,7 +1471,7 @@ export async function refreshTopics(db, minFeeds = 2) {
       {
         sql: `insert into topics (slug, keyword, feed_count, refreshed_at)
               select k.slug,
-                     min(k.keyword),
+                     ${topicLabelSql('k.slug')},
                      count(distinct k.feed_id),
                      ?
               from feed_keywords k
