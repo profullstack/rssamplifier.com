@@ -23,6 +23,7 @@ packages/feed/   Feed discovery, RSS/Atom/JSON Feed parsing, OPML, SSRF guards
 packages/ingest/ Submit + crawl orchestration
 packages/db/     Turso/libSQL client, migrations and every query
 packages/notify/ Alerts — web push, email digests and webhooks
+packages/social/ X and Reddit: canonical identity, and X's provider adapters
 ```
 
 Everything outside the Next app is plain ESM with JSDoc types — no build step, so Docker stays
@@ -56,6 +57,98 @@ pnpm --filter @rssamplifier/db migrate
 | `/discoveries/{id}` | Progress of one keyword run: what was added, and why the rest was not |
 | `/crawlstats` | Crawler and discovery queues, live (`/crawlstatus` redirects here) |
 | `/random` | Redirect to a random blog — the toolbar's ✦ |
+| `/r` | Every subreddit and Reddit user in the directory |
+| `/r/<subreddit>` | One community: `/r/programming`, `.rss` `.atom` `.json` `.md` |
+| `/r/u/<user>` | One Reddit user, under the same prefix |
+| `/x` | Every X account, search and list in the directory |
+| `/x/<handle>` | One timeline: `/x/OpenAI`, plus `/replies` and `/media` |
+| `/x/list/<id>` | One X list |
+| `/x/search?q=` | An X search as a feed — X's own operators pass through |
+| `/x/status` | Which provider is collecting X, and how it is doing |
+
+### The two social namespaces
+
+Reddit and X both live under a prefix of their own, and for the same reason from
+opposite directions. Reddit publishes real RSS, so a subreddit resolves down the
+ordinary path and lands as an untyped row at a slug of its own — which is how
+50,099 of them ended up filed among the blogs. X publishes nothing at all, so
+without a provider it is not submittable in the first place.
+
+`packages/social` answers one question for both: **what is the canonical identity
+of this thing?** `@OpenAI`, `x.com/OpenAI` and `https://twitter.com/openai/` are
+one source (`x:user:openai`, at `/x/OpenAI`); `/r/programming`, `/r/Programming/`
+and `/r/programming/new/.rss` are one community (`r:sub:programming`, at
+`/r/programming`). One identity means one row, which means **one polling job no
+matter how many people subscribe** — the thing that matters most when the
+upstream rate-limits per account.
+
+A social source is an ordinary row in `feeds`, not a parallel `sources` table.
+That is what lets it inherit dedupe, backoff, interval learning, keyword
+extraction, full-text search, alerts, sitemaps and all five syndication formats
+without a line of X-specific code in any of them — and it is why an X post can
+appear in `/topics/artificial-intelligence.rss` beside a blog post with nothing
+to tell them apart.
+
+`/{slug}` still answers for both, and always will: it is the permanent identity
+of a row and links already point at it. The `/r/` and `/x/` address is the
+canonical one, which is what search engines are told.
+
+## Collecting X
+
+X has no feeds, so posts are collected through a provider and mirrored here.
+**Which provider never appears in a public URL** — that is the whole design.
+A reader subscribed to `/x/OpenAI.rss` through RSSHub is still subscribed when
+the collection method is replaced under them.
+
+```
+RSSHub (primary) → Teapot (fallback) → official X API (paid) → cached items
+```
+
+Failover is per attempt and the order is fixed; three failures in a row set a
+provider aside for a few minutes and one success clears it. Nothing here can
+empty a feed: items are only ever written on success, so an outage leaves
+yesterday's posts exactly where they were and the public route goes on serving
+them.
+
+| Variable | Default | What |
+| --- | --- | --- |
+| `X_ENABLED` | `false` | The kill switch. Off means no collection; existing feeds keep serving. |
+| `X_PRIMARY_PROVIDER` | `rsshub` | First provider tried. |
+| `X_FALLBACK_PROVIDERS` | `teapot,official` | Tried in order after it. |
+| `RSSHUB_BASE_URL` | — | A self-hosted RSSHub. Unset means the provider is skipped. |
+| `RSSHUB_ACCESS_KEY` | — | If that instance requires one. |
+| `TEAPOT_BASE_URL` | — | A Teapot or Nitter-shaped instance. |
+| `X_API_BEARER_TOKEN` | — | Official API. Unset means that provider is skipped. |
+| `X_API_DAILY_READS` | `0` | Spend cap, `0` for unlimited. Also `X_API_MONTHLY_READS`, `X_API_MAX_RPM`. |
+| `X_SESSIONS` | — | JSON: `[{"id":"x-1","authToken":"…","ct0":"…"}]` |
+| `X_FETCH_TIMEOUT_MS` | `15000` | Upstream deadline. |
+| `X_SESSION_COOLDOWN_SECONDS` | `900` | How long a rate-limited session rests. |
+
+**Session credentials live in the environment and never in a table.**
+`auth_token` and `ct0` are a full login to an X account — whoever holds them can
+post as it and change its password. `x_sessions` and `x_provider_state` hold
+health state only, so a leaked database dump carries no credentials, and nothing
+renderable about a session is one. Use dedicated accounts, and separate ones for
+production and development.
+
+§47 of the PRD also allows the positional pair `X_AUTH_TOKENS` / `X_CT0_TOKENS`.
+It works, and it is a trap worth naming: the lists are matched by position, so
+deleting one dead account from the middle of the first and forgetting the second
+silently pairs every later token with the wrong cookie — a pool of sessions that
+all authenticate as nobody. `X_SESSIONS` cannot express that state.
+
+Both unofficial providers keep their own logged-in sessions by default, so the
+pool has nothing to hand them unless the deployment exposes a per-request
+parameter (`RSSHUB_SESSION_PARAM`, `TEAPOT_SESSION_HEADER`). Nothing here guesses
+at those names: guessing would mean putting a live cookie on a query string
+somebody else's instance might log.
+
+**Not built:** the `/admin/x` buttons of §34 — disable a provider, clear a
+cooldown, force a refresh. This codebase has no notion of an administrator to
+guard them with, and shipping the levers before the lock is how a kill switch
+becomes a way for anyone to turn collection off. `X_ENABLED` and
+`X_PRIMARY_PROVIDER` cover the two that matter without a code deploy.
+`/x/status` is the read-only half, and is where those buttons go.
 
 ## Agent endpoints
 

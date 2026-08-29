@@ -21,6 +21,8 @@
  * advertiser is metered for reach that never left the building.
  */
 
+import { createHash } from 'node:crypto';
+
 import { SYNDICATION_FORMATS, adSlotsFor, buildSyndication, interleaveAds, playable } from '@rssamplifier/feed';
 
 import { fetchFeedAds } from './feedAds.js';
@@ -89,10 +91,33 @@ export async function riverResponse({
   filename,
   src,
   maxAge = 300,
+  req = null,
 }) {
   // A playlist can only carry files. Filtering here rather than in every query
   // keeps the surfaces from each inventing their own idea of what is playable.
   const rows = spec.media ? items.filter(playable) : items;
+
+  // The validator, computed from what was stored rather than from the document.
+  //
+  // Two reasons it is not a hash of the body, and both matter. A body carries
+  // sponsored items chosen per request, so hashing it would mint a new ETag on
+  // every call and no reader would ever see a 304 — the header would be
+  // decoration. And computing it here, *before* the ad fetch, is what lets an
+  // unchanged river answer without paying for one: a 304 sends no document, so
+  // no ad was delivered, so no impression should be metered. Fetching one and
+  // discarding it would bill an advertiser for reach that never left the
+  // building, which is the same rule the ad count above follows.
+  const etag = riverEtag(format, channel, rows);
+  if (notModified(req, etag)) {
+    return new Response(null, {
+      status: 304,
+      headers: {
+        etag,
+        'access-control-allow-origin': '*',
+        'cache-control': `public, max-age=${maxAge}, s-maxage=${maxAge}, stale-while-revalidate=3600`,
+      },
+    });
+  }
 
   // Sponsored items, one in ten. Never in a playlist: a sponsored line has
   // nothing for a player to open, and VLC handed one shows an error.
@@ -109,9 +134,60 @@ export async function riverResponse({
       'content-type': spec.type,
       'content-disposition': `inline; filename="${riverFilename(filename, format)}"`,
       'access-control-allow-origin': '*',
+      etag,
       'cache-control': `public, max-age=${maxAge}, s-maxage=${maxAge}, stale-while-revalidate=3600`,
     },
   });
+}
+
+/**
+ * A weak validator for a river.
+ *
+ * Weak — `W/"…"` — because it is deliberately not byte-for-byte: two responses
+ * carrying this tag hold the same posts but may hold different sponsored items.
+ * That is exactly what a weak validator is defined to mean, and claiming a
+ * strong one would be a lie that a range request could catch us in.
+ *
+ * The inputs are the format, the channel's own address and every item's
+ * identity and date. Anything that changes a byte of the rendered river changes
+ * one of those — except the ads, which is the point.
+ *
+ * @param {string} format
+ * @param {{ selfUrl?: string, title?: string }} channel
+ * @param {object[]} rows
+ * @returns {string}
+ */
+export function riverEtag(format, channel, rows) {
+  const hash = createHash('sha1');
+  hash.update(`${format}\n${channel?.selfUrl ?? ''}\n${channel?.title ?? ''}\n${rows.length}`);
+
+  for (const row of rows) {
+    hash.update(`\n${row?.id ?? row?.guid ?? ''} ${row?.published_at ?? ''}`);
+  }
+
+  return `W/"${hash.digest('base64url').slice(0, 27)}"`;
+}
+
+/**
+ * Does the caller already hold this exact river?
+ *
+ * `If-None-Match` may carry a list, and `*` matches anything we have. The weak
+ * prefix comes off both sides before comparing — RFC 9110 calls that weak
+ * comparison, and it is the only comparison a weak tag supports.
+ *
+ * @param {Request|null} req
+ * @param {string} etag
+ * @returns {boolean}
+ */
+export function notModified(req, etag) {
+  const header = req?.headers?.get?.('if-none-match');
+  if (!header) return false;
+
+  const mine = etag.replace(/^W\//, '');
+  return header
+    .split(',')
+    .map((value) => value.trim().replace(/^W\//, ''))
+    .some((value) => value === '*' || value === mine);
 }
 
 /**

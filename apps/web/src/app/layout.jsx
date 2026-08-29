@@ -291,6 +291,15 @@ export default function RootLayout({ children }) {
                   which is where somebody wonders who wrote the thing. */}
               <a href="/authors">Authors</a>
             </p>
+            {/* The two platform namespaces, on a line of their own rather than
+                appended to the browse row above. That row is the directory's
+                own categories — what a feed *is* — and these are two places
+                feeds come from, which is a different question. Keeping them
+                apart also stops the row growing a third arm every time a
+                platform is added. */}
+            <p>
+              Platforms: <a href="/r">Reddit</a> · <a href="/x">X</a>
+            </p>
             <p>
               Machine-readable: <a href="/mcp">MCP server</a> · <a href="/cli">CLI</a> ·{' '}
               <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}

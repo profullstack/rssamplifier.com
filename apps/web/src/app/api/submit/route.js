@@ -341,7 +341,11 @@ export async function POST(req) {
       }
 
       const first = result?.accepted?.[0];
-      const location = first ? `/${first.slug}` : '/submit?error=1';
+      // The address the source lives at, which is `/{slug}` for a feed and
+      // `/r/programming` or `/x/OpenAI` for a social one. Both render the same
+      // page; sending somebody to the slug would land them at the address the
+      // namespace exists to replace.
+      const location = first ? (first.path ?? `/${first.slug}`) : '/submit?error=1';
 
       return new Response(null, { status: 303, headers: { location } });
     } finally {

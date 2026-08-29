@@ -5,6 +5,7 @@ import {
   q,
   accounts,
   alerts,
+  social,
   takeWriteTally,
   warmStatsCache,
   warmDirectoryCache,
@@ -24,6 +25,7 @@ import {
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 import { findFeedCard } from '@rssamplifier/feed';
 import { deliverAlerts, vapidConfig } from '@rssamplifier/notify';
+import { createXRuntime, xEnabled } from '@rssamplifier/social';
 
 import { createRecorder, toEntry, writeFailure } from './log.js';
 
@@ -294,7 +296,12 @@ async function tick() {
       batchSize,
       concurrency,
       publishLog ? recorder.record : null,
-      { perHost },
+      // `crawl` is handed to crawlFeed as-is. The X runtime travels here rather
+      // than being built per feed because it is the thing that *remembers*:
+      // which provider is in cooldown, which session is resting. Rebuilt per
+      // crawl it would be a system with no memory, rediscovering the same
+      // outage on every source in the batch.
+      { perHost, crawl: { xRuntime } },
     );
     if (crawled || failed) {
       // The backlog is the number worth watching: crawled/failed only say the
@@ -577,6 +584,42 @@ try {
   console.error('migration failed:', err);
   process.exit(1);
 }
+
+/**
+ * The X collection runtime, built once and shared by every crawl in this process.
+ *
+ * Built after the migration, because `hydrate()` reads `x_provider_state` and
+ * `x_sessions` — the tables that migration creates — to restore cooldowns
+ * across a redeploy. Without that a service that redeploys ten times in a day
+ * forgets ten outages and re-walks into each of them.
+ *
+ * `null` when X is switched off, and that is a first-class state rather than a
+ * failure: `crawlFeed` sees no runtime and reschedules its X sources without
+ * touching their health, so existing feeds keep serving what they hold and
+ * nothing is retired while the integration is off (§42's kill switch).
+ *
+ * Logged either way. "The X sources stopped updating" is the kind of thing that
+ * goes unnoticed for a week, and a boot line saying `x=false` is what turns
+ * that into a five-second answer — the same reason the push half of the alerts
+ * stack prints `push=true` here.
+ */
+const xRuntime = xEnabled(env)
+  ? await createXRuntime({
+      env,
+      providerStore: social.providerStore(db),
+      sessionStore: social.sessionStore(db),
+      // Straight onto the same live log the crawl writes to, so a failover or a
+      // session cooldown appears on /crawlstats beside the crawl it affected
+      // rather than in a stream nobody has open (§35).
+      onEvent: publishLog ? (event, fields) => recorder.record(toEntry(event, fields)) : null,
+    })
+  : null;
+
+log('x-runtime', {
+  enabled: Boolean(xRuntime),
+  providers: xRuntime ? xRuntime.registry.candidates().map((p) => p.name) : [],
+  sessions: xRuntime ? xRuntime.sessions.size : 0,
+});
 
 /**
  * Key the items stored before the grouping column existed.

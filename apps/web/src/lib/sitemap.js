@@ -38,6 +38,16 @@ export const STATIC_PAGES = [
   { path: '/reels', changefreq: 'daily', priority: '0.7' },
   { path: '/topics', changefreq: 'daily', priority: '0.8' },
   { path: '/authors', changefreq: 'daily', priority: '0.8' },
+  // The two platform namespaces, alongside the categories for the same reason:
+  // they are entry points into the directory that are about something.
+  //
+  // Only the index of each. The individual sources are already in the blog
+  // chunks under their `/{slug}` URL, and listing them a second time under
+  // `/r/…` and `/x/…` is exactly the duplicate a sitemap should not volunteer —
+  // the canonical tag on each page is what tells a crawler which of the two
+  // addresses to keep, and it does not need the sitemap's help to do it.
+  { path: '/r', changefreq: 'daily', priority: '0.8' },
+  { path: '/x', changefreq: 'daily', priority: '0.8' },
   { path: '/search', changefreq: 'daily', priority: '0.8' },
   { path: '/submit', changefreq: 'weekly', priority: '0.7' },
   { path: '/signup', changefreq: 'monthly', priority: '0.6' },
