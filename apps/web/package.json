@@ -10,19 +10,20 @@
     "start": "node .next/standalone/apps/web/server.js"
   },
   "dependencies": {
+    "@profullstack/player": "^0.2.0",
     "@profullstack/rssamplifier": "workspace:*",
+    "@rssamplifier/auth": "workspace:*",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/feed": "workspace:*",
     "@rssamplifier/ingest": "workspace:*",
-    "@rssamplifier/search": "workspace:*",
-    "next": "^16.2.4",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "@swc/helpers": "^0.5.23",
-    "@rssamplifier/auth": "workspace:*",
     "@rssamplifier/mail": "workspace:*",
     "@rssamplifier/notify": "workspace:*",
+    "@rssamplifier/search": "workspace:*",
     "@rssamplifier/translate": "workspace:*",
-    "@simplewebauthn/browser": "^13.0.0"
+    "@simplewebauthn/browser": "^13.0.0",
+    "@swc/helpers": "^0.5.23",
+    "next": "^16.2.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   }
 }
