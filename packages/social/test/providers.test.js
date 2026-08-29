@@ -445,3 +445,74 @@ test('a source whose ref we cannot read fails loudly rather than crawling nothin
   assert.equal(result.ok, false);
   assert.equal(result.error, 'invalid-x-ref');
 });
+
+/* --------------------------------------------- what a failure may cost a source */
+
+/*
+ * `markCrawlFailure` retires a feed at ten consecutive failures and an X source
+ * polls on a five-minute floor, so ten strikes is fifty minutes. That arithmetic
+ * is why exactly one of the four errors may reach it.
+ */
+
+/** @param {Error} error */
+async function failWith(error) {
+  const registry = new XRegistry({
+    env: { X_PRIMARY_PROVIDER: 'rsshub', X_FALLBACK_PROVIDERS: '' },
+    providers: { rsshub: fake('rsshub', [error]) },
+  });
+
+  return fetchXSource(
+    { social_ref: 'x:user:openai', feed_url: 'https://x.com/OpenAI', item_count: 5 },
+    { runtime: { registry, sessions: null, onEvent: () => {} } },
+  );
+}
+
+test('only a missing account counts against the source', async () => {
+  const gone = await failWith(new XNoSuchSource('no such account'));
+  assert.equal(gone.ok, false);
+  assert.equal(gone.throttled, undefined, 'a deleted account is a fact about the account');
+});
+
+test('a provider outage reschedules rather than blaming the account', async () => {
+  const down = await failWith(new XUnavailable('rsshub: upstream-502'));
+  assert.equal(down.ok, false);
+  assert.equal(down.throttled, true);
+  assert.ok(down.retryAfter > 0);
+});
+
+test('a dead session reschedules — it is our credential, not their account', async () => {
+  const dead = await failWith(new XAuthFailed('auth-failed-401'));
+  assert.equal(dead.throttled, true);
+});
+
+test('X switched on before a provider exists must not retire the directory', async () => {
+  // The ordinary order of operations: the flag is how you find out whether the
+  // provider is reachable. With no provider configured the registry refuses
+  // outright, and that refusal must never look like a broken account.
+  const registry = new XRegistry({
+    env: { X_PRIMARY_PROVIDER: 'rsshub', X_FALLBACK_PROVIDERS: '' },
+    providers: {
+      rsshub: { ...fake('rsshub', [[]]), configured: () => false },
+    },
+  });
+
+  const result = await fetchXSource(
+    { social_ref: 'x:user:openai', feed_url: 'https://x.com/OpenAI', item_count: 5 },
+    { runtime: { registry, sessions: null, onEvent: () => {} } },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.throttled, true, 'no provider configured is a deployment state, not a dead account');
+  // An hour, not ten minutes: nothing changes until somebody deploys something.
+  assert.equal(result.retryAfter, 3600);
+});
+
+test('a rate limit still carries the interval the server named', async () => {
+  const limited = await failWith(new XRateLimited('429', { retryAfter: 90 }));
+  assert.equal(limited.throttled, true);
+  assert.equal(limited.retryAfter, 90);
+
+  // And falls back to something sane when it named none.
+  const bare = await failWith(new XRateLimited('429'));
+  assert.ok(bare.retryAfter > 0);
+});
