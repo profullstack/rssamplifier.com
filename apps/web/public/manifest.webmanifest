@@ -6,6 +6,9 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
+  "launch_handler": {
+    "client_mode": ["navigate-existing", "auto"]
+  },
   "background_color": "#fbfaf8",
   "theme_color": "#b4552d",
   "categories": ["news", "productivity", "utilities"],
