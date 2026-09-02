@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 
 import { SIGNED_IN_HINT_COOKIE, hintToRestore } from './lib/session-hint.js';
 import { attempt, callerIdentity, LIMITS } from './lib/crawlThrottle.js';
+import { countRequest } from './lib/trafficCounter.js';
 
 /**
  * The one thing that runs in front of every request.
  *
- * Two jobs, and they want different surfaces, which is the only reason this
+ * Three jobs, and they want different surfaces, which is the only reason this
  * file is more than it was:
  *
  *   1. Shape crawl traffic. Reasoning in lib/crawlThrottle.js. This wants to
@@ -15,6 +16,10 @@ import { attempt, callerIdentity, LIMITS } from './lib/crawlThrottle.js';
  *   2. Put the signed-in hint back. Reasoning in lib/session-hint.js. This only
  *      makes sense on a request that renders a masthead, which is a much
  *      narrower set.
+ *   3. Count what asked for what. Reasoning in lib/traffic.js. Same surface as
+ *      the throttle, for the same reason — and it runs *before* the throttle
+ *      decides, so a refused request is still counted. A limit that hides the
+ *      traffic it is turning away cannot be tuned against anything.
  *
  * Next parses one `config.matcher` per file at build time, so the matcher is
  * sized for the wider job and the narrower one is gated in code by
@@ -24,6 +29,9 @@ import { attempt, callerIdentity, LIMITS } from './lib/crawlThrottle.js';
  * @param {import('next/server').NextRequest} request
  */
 export function proxy(request) {
+  // First, and never allowed to fail: see `countRequest`.
+  countRequest(request);
+
   /*
    * A signed-in reader is a person, and people are never metered.
    *
