@@ -12,27 +12,6 @@ import { classifyAgent, classifyPath, record, startFlushing } from './traffic.js
  * is the only place the three meet.
  */
 
-/**
- * Which allowance a request arrived under.
- *
- * Cookie presence only, exactly as `proxy` decides it, and for the same reason:
- * validating the session would mean a database lookup in front of every request
- * in the directory, which is precisely the cost all of this exists to measure
- * rather than add to. A forged cookie miscounts one row in a rollup, and there
- * is no version of that worth a query.
- *
- * `key` is not detectable here — an API key is read inside `apiguard`, after the
- * proxy has already run — so a keyed API call currently counts as `anon`. That
- * is honest rather than convenient: it means the `anon` bucket is an upper
- * bound, and the first thing the tiering work should do is close the gap.
- *
- * @param {import('next/server').NextRequest} request
- * @returns {string}
- */
-function tierOf(request) {
-  return request.cookies?.get('rsa_session')?.value ? 'session' : 'anon';
-}
-
 let started = false;
 
 /**
@@ -44,10 +23,16 @@ let started = false;
  * of every response on the site, and a throw here is an outage caused by
  * bookkeeping, which is the least defensible kind there is.
  *
+ * The tier is passed in rather than worked out here, because the proxy has
+ * already decided it and deciding it twice is how the counters and the limiter
+ * come to disagree about what happened. The rollup now records what the caller
+ * was actually metered as, sponsor keys included.
+ *
  * @param {import('next/server').NextRequest} request
+ * @param {string} [tier] the allowance the proxy placed this caller in
  * @returns {void}
  */
-export function countRequest(request) {
+export function countRequest(request, tier = 'anon') {
   try {
     if (!started) {
       started = true;
@@ -61,7 +46,7 @@ export function countRequest(request) {
       hour: new Date().toISOString().slice(0, 13),
       agent: classifyAgent(request.headers.get('user-agent')),
       bucket: classifyPath(request.nextUrl?.pathname ?? new URL(request.url).pathname),
-      tier: tierOf(request),
+      tier,
     });
   } catch {
     // Counted nothing. The response is unaffected, which is the point.
