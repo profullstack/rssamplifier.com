@@ -130,7 +130,21 @@ const BOT_TOKENS = [
   'screaming frog',
 ];
 
-/** @type {Map<string, { count: number, windowStart: number, strikes: number, lockedUntil: number, lastAt: number }>} */
+/** The budget window the tiers are expressed in. See `tiers.js`. */
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * The default allowance: the per-minute burst this file has always applied, and
+ * no hourly budget at all.
+ *
+ * Unlimited by default so that adding the hourly dimension changed nothing on
+ * its own — a caller that does not pass a tier is metered exactly as it was
+ * before tiering existed. The proxy passes a real tier; everything else keeps
+ * the old behaviour.
+ */
+const DEFAULT_ALLOWANCE = { burst: FREE_PER_WINDOW, hourly: Infinity };
+
+/** @type {Map<string, { count: number, windowStart: number, hourCount: number, hourStart: number, strikes: number, lockedUntil: number, lastAt: number }>} */
 const seen = new Map();
 
 /**
@@ -194,20 +208,42 @@ export function callerIdentity(req) {
  * polling every second would reach the ceiling in seconds while one that
  * retried twice would be treated identically.
  *
+ * An exhausted *hourly budget* is handled differently from an exhausted burst:
+ * it earns no strike and no escalating lock, and the caller is told exactly how
+ * long until its budget rolls over. The distinction is deliberate. A burst is
+ * evidence of a caller behaving badly right now, and the doubling penalty is
+ * there to make a runaway loop expensive. Spending an hourly allowance is not
+ * misbehaviour at all — it is a paying-tier question, and answering it with an
+ * escalating punishment would mean a crawler that stays politely at its limit
+ * gets treated like one hammering the door.
+ *
  * @param {string} identity
  * @param {number} [now] injectable clock, for tests
+ * @param {{ burst: number, hourly: number }} [allowance] the caller's tier
  * @returns {{ ok: boolean, retryAfter: number, strikes: number, lockedUntil: number, remaining: number }}
  */
-export function attempt(identity, now = Date.now()) {
+export function attempt(identity, now = Date.now(), allowance = DEFAULT_ALLOWANCE) {
   if (seen.size >= MAX_TRACKED) sweep(now);
+
+  const burst = allowance?.burst ?? FREE_PER_WINDOW;
+  const hourly = allowance?.hourly ?? Infinity;
 
   const entry = seen.get(identity) ?? {
     count: 0,
     windowStart: now,
+    hourCount: 0,
+    hourStart: now,
     strikes: 0,
     lockedUntil: 0,
     lastAt: now,
   };
+
+  // An entry created before this field existed, or by a caller on the old
+  // two-argument path. Treat it as starting its hour now.
+  if (entry.hourStart === undefined) {
+    entry.hourStart = now;
+    entry.hourCount = 0;
+  }
 
   if (entry.lockedUntil > now) {
     entry.lastAt = now;
@@ -230,10 +266,31 @@ export function attempt(identity, now = Date.now()) {
     entry.count = 0;
   }
 
+  // The same, an hour at a time. A rolling window per caller rather than a
+  // wall-clock hour, so a budget cannot be spent twice by straddling :59.
+  if (now - entry.hourStart >= HOUR_MS) {
+    entry.hourStart = now;
+    entry.hourCount = 0;
+  }
+
   entry.count += 1;
+  entry.hourCount += 1;
   entry.lastAt = now;
 
-  if (entry.count > FREE_PER_WINDOW) {
+  // Budget before burst: a caller that has spent its hour should be told that,
+  // not handed an escalating lock that says it is being punished for speed.
+  if (entry.hourCount > hourly) {
+    seen.set(identity, entry);
+    return {
+      ok: false,
+      retryAfter: Math.max(Math.ceil((entry.hourStart + HOUR_MS - now) / 1000), 1),
+      strikes: entry.strikes,
+      lockedUntil: 0,
+      remaining: 0,
+    };
+  }
+
+  if (entry.count > burst) {
     entry.strikes += 1;
     // Shift rather than Math.pow so a long-lived offender cannot overflow into
     // Infinity before the ceiling applies.
@@ -255,7 +312,9 @@ export function attempt(identity, now = Date.now()) {
     retryAfter: 0,
     strikes: entry.strikes,
     lockedUntil: 0,
-    remaining: FREE_PER_WINDOW - entry.count,
+    // Whichever allowance is closer to running out, since that is the one the
+    // caller will actually meet.
+    remaining: Math.min(burst - entry.count, hourly - entry.hourCount),
   };
 }
 
@@ -268,6 +327,7 @@ export function reset() {
 export const LIMITS = {
   FREE_PER_WINDOW,
   WINDOW_MS,
+  HOUR_MS,
   BASE_LOCK_MS,
   MAX_LOCK_MS,
   DECAY_MS,

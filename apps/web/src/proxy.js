@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 
 import { SIGNED_IN_HINT_COOKIE, hintToRestore } from './lib/session-hint.js';
-import { attempt, callerIdentity, LIMITS } from './lib/crawlThrottle.js';
+import { attempt, callerIdentity } from './lib/crawlThrottle.js';
 import { countRequest } from './lib/trafficCounter.js';
+import { tierFor } from './lib/tiers.js';
 
 /**
  * The one thing that runs in front of every request.
@@ -29,24 +30,27 @@ import { countRequest } from './lib/trafficCounter.js';
  * @param {import('next/server').NextRequest} request
  */
 export function proxy(request) {
-  // First, and never allowed to fail: see `countRequest`.
-  countRequest(request);
-
   /*
-   * A signed-in reader is a person, and people are never metered.
+   * Which allowance this caller gets: free, signed-in, or sponsor. Reasoning
+   * for all three, and for why the decision is made without a database, is in
+   * lib/tiers.js.
    *
-   * Cookie presence only — no lookup, no database, no validation. A forged
-   * cookie buys nothing but an unmetered request, which is what every signed
-   * out reader already gets below the allowance anyway; checking it properly
-   * would mean a session query in front of every page in the directory, which
-   * is exactly the cost the throttle exists to contain.
+   * Note what changed here: a signed-in reader used to skip metering entirely.
+   * That was defensible while a session was the only thing above anonymous, and
+   * it stops being defensible the moment signing in is a *tier* — an unmetered
+   * rung means the ladder tops out at "make an account", which is free and
+   * unlimited, and nothing above it can be worth paying for. Signed in is now
+   * a large budget rather than no budget.
    */
-  const signedIn = Boolean(request.cookies.get('rsa_session')?.value);
+  const tier = tierFor(request);
 
-  if (!signedIn) {
-    const verdict = attempt(callerIdentity(request));
-    if (!verdict.ok) return tooMany(verdict);
-  }
+  // Never allowed to fail: see `countRequest`. Runs before the verdict so a
+  // refused request is still counted, and carries the tier so the rollup can
+  // say which allowance the traffic arrived under.
+  countRequest(request, tier.name);
+
+  const verdict = attempt(callerIdentity(request), Date.now(), tier);
+  if (!verdict.ok) return tooMany(verdict, tier);
 
   const response = NextResponse.next();
 
@@ -59,16 +63,35 @@ export function proxy(request) {
 }
 
 /**
+ * The refusal.
+ *
+ * Says which rung the caller is on and what the next one costs, because a 429
+ * that only says "slow down" leaves a caller with nothing to do but retry —
+ * and the whole point of a ladder is that there is somewhere to go. The upgrade
+ * path is spelled out rather than linked alone: an agent reading this is
+ * exactly the reader who can act on it without a human.
+ *
  * @param {{ retryAfter: number }} verdict
+ * @param {{ name: string, burst: number, hourly: number }} tier
  * @returns {NextResponse}
  */
-function tooMany(verdict) {
+function tooMany(verdict, tier) {
+  const nextRung =
+    tier.name === 'anon'
+      ? 'Sign in for ten times this allowance — free, magic link, no card: https://rssamplifier.com/login'
+      : tier.name === 'session'
+        ? 'Create an API key at https://rssamplifier.com/account and send it as a bearer token; a sponsored key raises the ceiling further.'
+        : 'This is the sponsor ceiling. If you need more than this, ask and we will raise it.';
+
   return NextResponse.json(
     {
       error: 'rate limit exceeded',
       // Said plainly, because the alternative is that they guess and retry. The
       // directory is still open to them; this is a speed limit, not a door.
       hint: 'You are welcome here, just slower. Cheaper entry points: https://rssamplifier.com/llms.txt, /api/feeds, /opml, /mcp',
+      tier: tier.name,
+      hourlyLimit: Number.isFinite(tier.hourly) ? tier.hourly : null,
+      upgrade: nextRung,
       retryAfter: verdict.retryAfter,
     },
     {
@@ -77,7 +100,9 @@ function tooMany(verdict) {
         'retry-after': String(verdict.retryAfter),
         'cache-control': 'no-store',
         'access-control-allow-origin': '*',
-        'x-ratelimit-limit': String(LIMITS.FREE_PER_WINDOW),
+        'x-ratelimit-tier': tier.name,
+        'x-ratelimit-limit': String(tier.burst),
+        'x-ratelimit-limit-hour': Number.isFinite(tier.hourly) ? String(tier.hourly) : 'unlimited',
         'x-ratelimit-remaining': '0',
       },
     },
