@@ -1,8 +1,9 @@
-import { redirect } from 'next/navigation';
 import { queue } from '@rssamplifier/db';
 
+import QueueIntro from './QueueIntro.jsx';
+
 import { db } from '../../lib/db.js';
-import { currentUser } from '../../lib/auth.js';
+import { currentUser, hasSessionCookie } from '../../lib/auth.js';
 import { LANE_LABEL, trackFor } from '../../lib/queue.js';
 import { postThumb } from '../../lib/thumbs.js';
 import PlayButton from '../PlayButton.jsx';
@@ -13,12 +14,30 @@ import { FILTER_FROM } from '../../lib/listFilter.js';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata = {
-  title: 'Queue',
-  description: 'What you have lined up to read, listen to and watch.',
-  // One reader's running order. Nothing here belongs in an index.
-  robots: { index: false, follow: false },
-};
+/**
+ * Two pages live at this URL. Signed in it is one reader's running order and
+ * belongs in no index; signed out it explains what a queue here is, which is
+ * worth finding and is the only version a crawler can reach.
+ *
+ * @returns {Promise<import('next').Metadata>}
+ */
+export async function generateMetadata() {
+  // Presence, not identity: see hasSessionCookie. Resolving the session here
+  // would double the lookup on every render of this page.
+  if (await hasSessionCookie()) {
+    return {
+      title: 'Queue',
+      description: 'What you have lined up to read, listen to and watch.',
+      robots: { index: false, follow: false },
+    };
+  }
+
+  return {
+    title: 'Queue',
+    description:
+      'Put anything in the directory aside for later, in three running orders: read, listen and watch. The listen lane doubles as the player\u2019s playlist.',
+  };
+}
 
 /** What each lane is for, said once at the top of it. */
 const LANE_BLURB = {
@@ -46,7 +65,20 @@ export default async function QueuePage({ searchParams }) {
   const { lane: asked, done: showDone } = await searchParams;
 
   const user = await currentUser();
-  if (!user) redirect('/login?next=%2Fqueue');
+
+  // Signed out, show what the feature is rather than a sign-in form for
+  // something they have never seen. Reasoning in QueueIntro.
+  if (!user) {
+    return (
+      <QueueIntro
+        lanes={queue.LANES.map((key) => ({
+          key,
+          label: LANE_LABEL[key] ?? key,
+          blurb: LANE_BLURB[key] ?? '',
+        }))}
+      />
+    );
+  }
 
   const lane = queue.isLane(asked) ? asked : 'listen';
   const done = showDone === '1';

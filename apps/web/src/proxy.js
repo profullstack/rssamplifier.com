@@ -44,12 +44,20 @@ export function proxy(request) {
    */
   const tier = tierFor(request);
 
-  // Never allowed to fail: see `countRequest`. Runs before the verdict so a
-  // refused request is still counted, and carries the tier so the rollup can
-  // say which allowance the traffic arrived under.
-  countRequest(request, tier.name);
-
   const verdict = attempt(callerIdentity(request), Date.now(), tier);
+
+  /*
+   * Never allowed to fail: see `countRequest`.
+   *
+   * After the verdict rather than before it, which is a change worth naming.
+   * The counter used to run first so that a refused request was still counted;
+   * it now runs second and counts the *outcome*, which keeps that property and
+   * adds the one number the tiering could not otherwise see — how much we are
+   * turning away, and from whom. A limit quietly refusing real readers looks
+   * exactly like a limit that is working, right up until someone complains.
+   */
+  countRequest(request, tier.name, !verdict.ok);
+
   if (!verdict.ok) return tooMany(verdict, tier);
 
   const response = NextResponse.next();

@@ -25,7 +25,7 @@ import { nowIso } from './client.js';
  * bookkeeping" that should reach somebody trying to read a blog post.
  *
  * @param {Client} db
- * @param {Array<{ hour: string, agent: string, bucket: string, tier: string, hits: number }>} rows
+ * @param {Array<{ hour: string, agent: string, bucket: string, tier: string, hits: number, refused?: number }>} rows
  * @returns {Promise<number>} how many rows were folded in
  */
 export async function recordTraffic(db, rows) {
@@ -34,16 +34,18 @@ export async function recordTraffic(db, rows) {
 
   await db.batch(
     wanted.map((r) => ({
-      sql: `insert into traffic_hourly (hour, agent, bucket, tier, hits)
-            values (?, ?, ?, ?, ?)
+      sql: `insert into traffic_hourly (hour, agent, bucket, tier, hits, refused)
+            values (?, ?, ?, ?, ?, ?)
             on conflict (hour, agent, bucket, tier) do update set
-              hits = traffic_hourly.hits + excluded.hits`,
+              hits    = traffic_hourly.hits + excluded.hits,
+              refused = traffic_hourly.refused + excluded.refused`,
       args: [
         String(r.hour),
         String(r.agent),
         String(r.bucket),
         String(r.tier),
         Number(r.hits),
+        Number(r.refused ?? 0),
       ],
     })),
     'write'
@@ -78,17 +80,17 @@ export async function trafficSummary(db, hours = 24) {
 
   const [agents, buckets, tiers, byHour, reader] = await Promise.all([
     db.execute({
-      sql: `select agent, sum(hits) as hits from traffic_hourly
+      sql: `select agent, sum(hits) as hits, sum(refused) as refused from traffic_hourly
             where hour >= ? group by agent order by hits desc`,
       args: [since],
     }),
     db.execute({
-      sql: `select bucket, sum(hits) as hits from traffic_hourly
+      sql: `select bucket, sum(hits) as hits, sum(refused) as refused from traffic_hourly
             where hour >= ? group by bucket order by hits desc`,
       args: [since],
     }),
     db.execute({
-      sql: `select tier, sum(hits) as hits from traffic_hourly
+      sql: `select tier, sum(hits) as hits, sum(refused) as refused from traffic_hourly
             where hour >= ? group by tier order by hits desc`,
       args: [since],
     }),
@@ -111,19 +113,25 @@ export async function trafficSummary(db, hours = 24) {
   const byAgent = agents.rows.map((r) => ({
     agent: String(r.agent),
     hits: Number(r.hits ?? 0),
+    refused: Number(r.refused ?? 0),
   }));
 
   return {
     since,
     total: byAgent.reduce((sum, r) => sum + r.hits, 0),
+    // The headline number for tuning a limit: how much of what we were asked
+    // for, we said no to.
+    refused: byAgent.reduce((sum, r) => sum + r.refused, 0),
     byAgent,
     byBucket: buckets.rows.map((r) => ({
       bucket: String(r.bucket),
       hits: Number(r.hits ?? 0),
+      refused: Number(r.refused ?? 0),
     })),
     byTier: tiers.rows.map((r) => ({
       tier: String(r.tier),
       hits: Number(r.hits ?? 0),
+      refused: Number(r.refused ?? 0),
     })),
     byHour: byHour.rows.map((r) => ({
       hour: String(r.hour),

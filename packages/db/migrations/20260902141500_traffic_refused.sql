@@ -1,0 +1,14 @@
+-- How many of those requests we actually turned away.
+--
+-- The rollup counted every request and recorded nothing about what happened to
+-- it, which left the one question the tiering most needs answered unanswerable:
+-- is 600 an hour too tight, too loose, or biting the wrong callers? Without
+-- this, a limit that is quietly refusing real readers looks exactly like a
+-- limit that is working.
+--
+-- A counter column beside `hits` rather than a fifth key column. Refused is a
+-- property of a request, not a kind of request: making it a dimension would
+-- double the row count to say something a second integer says in place, and
+-- every existing query would have to remember to sum across it or silently
+-- report half the traffic.
+alter table traffic_hourly add column refused integer not null default 0;

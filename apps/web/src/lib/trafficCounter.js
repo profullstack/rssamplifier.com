@@ -30,9 +30,10 @@ let started = false;
  *
  * @param {import('next/server').NextRequest} request
  * @param {string} [tier] the allowance the proxy placed this caller in
+ * @param {boolean} [refused] whether the limiter turned this request away
  * @returns {void}
  */
-export function countRequest(request, tier = 'anon') {
+export function countRequest(request, tier = 'anon', refused = false) {
   try {
     if (!started) {
       started = true;
@@ -47,6 +48,7 @@ export function countRequest(request, tier = 'anon') {
       agent: classifyAgent(request.headers.get('user-agent')),
       bucket: classifyPath(request.nextUrl?.pathname ?? new URL(request.url).pathname),
       tier,
+      refused,
     });
   } catch {
     // Counted nothing. The response is unaffected, which is the point.

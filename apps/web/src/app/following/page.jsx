@@ -1,12 +1,13 @@
-import { redirect } from 'next/navigation';
 import { accounts } from '@rssamplifier/db';
 
+import FollowingIntro from './FollowingIntro.jsx';
+import { directoryIndex } from '../../lib/directory.js';
 import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 import ListFilter from '../ListFilter.jsx';
 import { FILTER_FROM } from '../../lib/listFilter.js';
 import { db, siteUrl } from '../../lib/db.js';
-import { currentUser } from '../../lib/auth.js';
+import { currentUser, hasSessionCookie } from '../../lib/auth.js';
 import { postThumb } from '../../lib/thumbs.js';
 import {
   RIVER_LIMIT,
@@ -19,13 +20,43 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-export const metadata = {
-  title: 'Following',
-  description: 'Everything you follow, newest first.',
-  // One reader's river, assembled from their own follows. Nothing here belongs
-  // in an index, and the personal feed URL below least of all.
-  robots: { index: false, follow: false },
-};
+/**
+ * How many real directory rows the signed-out page offers to follow.
+ *
+ * Enough to look like a directory rather than a teaser, few enough that the
+ * page is still about the idea. The rows come from the same cached index the
+ * home page uses, so showing them costs nothing extra.
+ */
+const INTRO_ROWS = 8;
+
+/**
+ * Two pages live at this URL, and they want opposite things from a crawler.
+ *
+ * Signed in it is one reader's river, assembled from their own follows: nothing
+ * there belongs in an index, and the personal feed URL least of all. Signed out
+ * it is a description of what following *is* — which is a page worth finding,
+ * and the only version a crawler can ever reach, since a crawler has no
+ * session.
+ *
+ * @returns {Promise<import('next').Metadata>}
+ */
+export async function generateMetadata() {
+  // Presence, not identity: see hasSessionCookie. Resolving the session here
+  // would double the lookup on every render of this page.
+  if (await hasSessionCookie()) {
+    return {
+      title: 'Following',
+      description: 'Everything you follow, newest first.',
+      robots: { index: false, follow: false },
+    };
+  }
+
+  return {
+    title: 'Following',
+    description:
+      'Follow blogs, topics and people from the directory; everything they publish arrives in one river, with its own private RSS address.',
+  };
+}
 
 /**
  * The river: everything this account follows, in one list.
@@ -41,7 +72,13 @@ export const metadata = {
 export default async function FollowingPage({ searchParams }) {
   const params = await searchParams;
   const user = await currentUser();
-  if (!user) redirect('/login?next=%2Ffollowing');
+
+  // Signed out, show what the feature is rather than a sign-in form for
+  // something they have never seen. Reasoning in FollowingIntro.
+  if (!user) {
+    const { rows, total } = await directoryIndex();
+    return <FollowingIntro rows={rows.slice(0, INTRO_ROWS)} total={total} />;
+  }
 
   const client = db();
   const userId = String(user.id);
