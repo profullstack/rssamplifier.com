@@ -168,7 +168,7 @@ export function classifyPath(pathname) {
  * Multiple instances each keep their own buffer and the upsert accumulates, so
  * this stays correct if the service ever scales past one container.
  *
- * @type {Map<string, number>}
+ * @type {Map<string, { hits: number, refused: number }>}
  */
 const buffer = new Map();
 
@@ -198,12 +198,16 @@ let flushing = false;
  * @param {{ hour: string, agent: string, bucket: string }} hit
  * @returns {void}
  */
-export function record({ hour, agent, bucket, tier }) {
+export function record({ hour, agent, bucket, tier, refused = false }) {
   const key = [hour, agent, bucket, tier].join(SEP);
   const existing = buffer.get(key);
 
   if (existing === undefined && buffer.size >= MAX_KEYS) return;
-  buffer.set(key, (existing ?? 0) + 1);
+
+  const entry = existing ?? { hits: 0, refused: 0 };
+  entry.hits += 1;
+  if (refused) entry.refused += 1;
+  buffer.set(key, entry);
 }
 
 /**
@@ -216,9 +220,9 @@ export function record({ hour, agent, bucket, tier }) {
  */
 export function drain() {
   const rows = [];
-  for (const [key, hits] of buffer) {
+  for (const [key, counts] of buffer) {
     const [hour, agent, bucket, tier] = key.split(SEP);
-    rows.push({ hour, agent, bucket, tier, hits });
+    rows.push({ hour, agent, bucket, tier, hits: counts.hits, refused: counts.refused });
   }
   buffer.clear();
   return rows;

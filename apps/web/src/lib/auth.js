@@ -33,6 +33,27 @@ export async function currentUser() {
 }
 
 /**
+ * Is there a session cookie at all, without resolving it?
+ *
+ * For the one question that does not need to know *who* is reading: whether a
+ * page should tell a crawler to index it. `currentUser()` is not memoised — it
+ * resolves the session against the database on every call — so a
+ * `generateMetadata` that used it would quietly double the session lookups on
+ * every render of that page, to answer a question that only ever needed "is
+ * anybody signed in".
+ *
+ * Presence only, exactly as the proxy decides a tier. A forged cookie makes
+ * that reader's own copy of the page non-indexable and nothing else, which is
+ * not worth a query to prevent.
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function hasSessionCookie() {
+  const store = await cookies();
+  return Boolean(store.get(SESSION_COOKIE)?.value);
+}
+
+/**
  * Put the session cookie on the response, and a hint beside it.
  *
  * The session cookie is httpOnly, which is what keeps it out of reach of a

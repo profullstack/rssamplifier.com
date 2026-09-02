@@ -139,8 +139,50 @@ test('every part of the key survives the round trip', () => {
   record({ hour: '2026-09-02T10', agent: 'seo-scraper', bucket: 'reader', tier: 'key' });
 
   assert.deepEqual(drain(), [
-    { hour: '2026-09-02T10', agent: 'seo-scraper', bucket: 'reader', tier: 'key', hits: 1 },
+    {
+      hour: '2026-09-02T10',
+      agent: 'seo-scraper',
+      bucket: 'reader',
+      tier: 'key',
+      hits: 1,
+      refused: 0,
+    },
   ]);
+});
+
+test('a refused request is still counted as a request', () => {
+  // The property that must not regress. If refusals stopped being counted, a
+  // limit turning away half the traffic would read as the traffic having gone
+  // away -- which is the same shape as success and the opposite of it.
+  reset();
+  record({ hour: '2026-09-02T10', agent: 'seo-scraper', bucket: 'page', tier: 'anon', refused: true });
+
+  const [row] = drain();
+  assert.equal(row.hits, 1, 'it counts toward what was asked for');
+  assert.equal(row.refused, 1, 'and is marked as turned away');
+});
+
+test('hits and refusals accumulate independently', () => {
+  reset();
+  const key = { hour: '2026-09-02T10', agent: 'ai-openai', bucket: 'api', tier: 'anon' };
+  record({ ...key });
+  record({ ...key, refused: true });
+  record({ ...key, refused: true });
+
+  const [row] = drain();
+  assert.equal(row.hits, 3);
+  assert.equal(row.refused, 2, 'two of the three were turned away');
+});
+
+test('a refused and an allowed request share one row', () => {
+  // Refused is a property of a request, not a kind of request. Making it part
+  // of the key would double the rows and make every existing query silently
+  // report half the traffic.
+  reset();
+  record({ hour: '2026-09-02T10', agent: 'browser', bucket: 'page', tier: 'anon' });
+  record({ hour: '2026-09-02T10', agent: 'browser', bucket: 'page', tier: 'anon', refused: true });
+
+  assert.equal(drain().length, 1);
 });
 
 test('draining empties the buffer so nothing is counted twice', () => {
