@@ -20,3 +20,4 @@ export * as authors from './src/authors.js';
 export * as alerts from './src/alerts.js';
 export * as social from './src/social.js';
 export * as dataset from './src/dataset.js';
+export * as traffic from './src/traffic.js';
