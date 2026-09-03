@@ -22,9 +22,18 @@ ENV NODE_ENV=production
 COPY --from=build /repo ./
 WORKDIR /repo/apps/web
 
-# No -p flag and no PORT default: the platform injects PORT and `next start`
-# reads it. Passing -p would override that and leave the router talking to a
-# port nothing is listening on.
+# No -p flag and no PORT default: the platform injects PORT and the server
+# reads it. A hardcoded port here would leave the router talking to a port
+# nothing is listening on.
 EXPOSE 3000
 ENV HOSTNAME=0.0.0.0
-CMD ["node_modules/.bin/next", "start"]
+
+# V8 caps the heap at ~4 GB by default regardless of what the container has.
+# The web service gets 24 GB on Railway; letting the heap use half of it turns
+# a surge that would have been fatal into one that is merely slow. This is a
+# ceiling, not a reservation — it costs nothing until it is needed.
+ENV NODE_OPTIONS=--max-old-space-size=12288
+
+# server.mjs is `next start` plus a ceiling on concurrent requests. Reasoning,
+# and the outage behind it, in src/lib/loadShed.js.
+CMD ["node", "server.mjs"]

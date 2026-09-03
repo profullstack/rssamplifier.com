@@ -410,8 +410,17 @@ Talks to the public HTTP API, so it needs no credentials. Point it elsewhere wit
 - **The Docker image does not use Next's `output: standalone`.** Its tracing walks real filesystem
   paths and misses next's own `@swc/helpers` under pnpm's symlinked store, producing a bundle that
   builds and then dies on boot. The image carries real `node_modules` instead.
-- **Nothing pins the web port.** Railway injects `PORT`; passing `-p` to `next start` would override
-  it and leave the edge proxy talking to a closed port.
+- **Nothing pins the web port.** Railway injects `PORT` and `apps/web/server.mjs` reads it; a
+  hardcoded port would leave the edge proxy talking to a closed port.
+- **The web process refuses work above 128 requests in flight** (`WEB_MAX_INFLIGHT`), with a 503
+  and a `Retry-After`, before Next looks at the request. On 2026-09-03 a fleet of ~5,000 rotating
+  addresses presenting browser user-agents pushed the site to ~68 requests a second; nothing leaked,
+  but six hundred requests in progress at once filled a 4 GB heap every seven minutes until Railway
+  stopped restarting the container. A limit keyed on who is asking cannot see a caller that never
+  repeats; this one is keyed on what the process is already doing. Reasoning in
+  `apps/web/src/lib/loadShed.js`. Build assets are exempt, so an admitted page still renders.
+- **Railway restarts the services unconditionally** (`railway.json`, `restartPolicyType: ALWAYS`).
+  The default gives up after ten crashes, which is how a crash loop became a two-hour outage.
 - **Alerts never replay a backlog.** An account that has just switched alerts on has no watermark,
   and the sender answers that by starting the clock at the present rather than by mailing somebody
   two years of a topic they discovered this afternoon.
