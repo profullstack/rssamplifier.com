@@ -16,10 +16,23 @@ export const dynamic = 'force-dynamic';
  * looks complete — it is sorted by title, so the truncation reads as a
  * directory that simply ends midway through the alphabet.
  *
- * The response is streamed from a paged cursor rather than assembled first.
- * Nothing larger than one page is ever resident, the reader starts receiving
- * outlines immediately instead of after the last row is read, and the cost of
- * the endpoint stops scaling with the size of the directory.
+ * The response is streamed from a paged cursor rather than assembled first,
+ * and — this is the part that was wrong until 2026-09-03 — it is pulled, not
+ * pushed. The previous version enqueued every outline from inside `start()`,
+ * as fast as the database could page them, and a ReadableStream's `enqueue`
+ * never blocks: whatever the client had not yet read sat in the stream's
+ * internal queue. The whole 70 MB document was resident per request, held
+ * for the sixty-odd seconds the cursor took, and held just the same for a
+ * client that had already hung up, because nothing told the loop to stop. A
+ * handful of overlapping exports was a gigabyte.
+ *
+ * Under `pull()` the runtime asks for the next chunk only when the consumer
+ * has taken the last one, so the queue holds one chunk, the cursor advances at
+ * the client's pace, and `cancel()` — which fires when the client goes away —
+ * closes the cursor. Nothing larger than one page is resident, the reader
+ * starts receiving outlines immediately, and the cost of the endpoint stops
+ * scaling with the size of the directory, which is what the old comment
+ * claimed and the old code did not deliver.
  *
  * `?limit=` caps the export for callers that want a sample instead, and
  * `?kind=blog` / `?kind=podcast` exports one category — which is the form a
@@ -52,39 +65,7 @@ export async function GET(request) {
       ? `rssamplifier-${kind}s.opml`
       : 'rssamplifier.opml';
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      controller.enqueue(encoder.encode(opmlHead(title)));
-
-      try {
-        let written = 0;
-        for await (const row of q.eachFeedForExport(client, 2000, { kind, topic })) {
-          if (limit !== null && written >= limit) break;
-
-          controller.enqueue(
-            encoder.encode(
-              `${opmlOutline({
-                title: String(row.title ?? ''),
-                feed_url: String(row.feed_url ?? ''),
-                site_url: row.site_url ? String(row.site_url) : null,
-              })}\n`,
-            ),
-          );
-          written += 1;
-        }
-      } catch (err) {
-        // The head is already on the wire, so the response cannot become an
-        // error status. Close out a well-formed document instead of tearing the
-        // connection down mid-element and handing readers a parse error — a
-        // short list beats an unparseable one.
-        console.error('opml export failed partway', err);
-      }
-
-      controller.enqueue(encoder.encode(opmlFoot()));
-      controller.close();
-    },
-  });
+  const stream = opmlStream(q.eachFeedForExport(client, 2000, { kind, topic }), { title, limit });
 
   return new Response(stream, {
     headers: {
@@ -92,6 +73,97 @@ export async function GET(request) {
       'content-disposition': `inline; filename="${filename}"`,
       'access-control-allow-origin': '*',
       'cache-control': 'public, max-age=600',
+    },
+  });
+}
+
+/**
+ * How many outlines go into one chunk.
+ *
+ * One row per pull would work and would cost a promise per outline over a
+ * third of a million outlines; a few hundred at a time keeps the chunk at
+ * tens of kilobytes, which is a sensible unit to hand a socket, while keeping
+ * what is resident to a few hundred rows plus the cursor's current page.
+ */
+const OUTLINES_PER_CHUNK = 500;
+
+/**
+ * The OPML document as a stream that advances at the reader's pace.
+ *
+ * Exported for the test, which drives it with a consumer that stops reading
+ * and a cursor that counts how far it was asked to go — the property that
+ * matters is not what comes out, which is the same document as before, but
+ * that nothing comes out of the cursor until somebody is ready for it.
+ *
+ * @param {AsyncIterator<{ title?: unknown, feed_url?: unknown, site_url?: unknown }>} rows
+ * @param {{ title: string, limit: number|null }} options
+ * @returns {ReadableStream<Uint8Array>}
+ */
+export function opmlStream(rows, { title, limit }) {
+  const encoder = new TextEncoder();
+  let opened = false;
+  let closed = false;
+  let written = 0;
+
+  /** @param {ReadableStreamDefaultController<Uint8Array>} controller */
+  const finish = (controller) => {
+    if (closed) return;
+    closed = true;
+    controller.enqueue(encoder.encode(opmlFoot()));
+    controller.close();
+  };
+
+  return new ReadableStream({
+    async pull(controller) {
+      if (!opened) {
+        opened = true;
+        controller.enqueue(encoder.encode(opmlHead(title)));
+        return;
+      }
+      if (closed) return;
+
+      let chunk = '';
+      let count = 0;
+      let exhausted = false;
+      try {
+        while (count < OUTLINES_PER_CHUNK) {
+          if (limit !== null && written >= limit) {
+            exhausted = true;
+            break;
+          }
+
+          const { value: row, done } = await rows.next();
+          if (done) {
+            exhausted = true;
+            break;
+          }
+
+          chunk += `${opmlOutline({
+            title: String(row.title ?? ''),
+            feed_url: String(row.feed_url ?? ''),
+            site_url: row.site_url ? String(row.site_url) : null,
+          })}\n`;
+          written += 1;
+          count += 1;
+        }
+      } catch (err) {
+        // The head is already on the wire, so the response cannot become an
+        // error status. Close out a well-formed document instead of tearing the
+        // connection down mid-element and handing readers a parse error — a
+        // short list beats an unparseable one.
+        console.error('opml export failed partway', err);
+        exhausted = true;
+      }
+
+      if (chunk) controller.enqueue(encoder.encode(chunk));
+      if (exhausted) finish(controller);
+    },
+
+    // The client went away. Close the cursor so the database is not asked for
+    // the rest of a directory nobody is reading.
+    async cancel() {
+      closed = true;
+      await rows.return?.();
     },
   });
 }
