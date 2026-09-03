@@ -798,6 +798,11 @@ function explain(reason) {
   }
   if (reason === 'timeout') return 'This site took too long to answer.';
   if (reason.startsWith('http-')) return 'This page did not load.';
+  // Said as the passing thing it is. Every other reason here is a fact about
+  // the page that will read the same tomorrow, and the default wording borrows
+  // that permanence — which for a reader who need only wait a moment is the
+  // one wrong thing to tell them. See lib/pageGate.js.
+  if (reason === 'busy') return 'The reader is busy right now; this one is worth trying again.';
   return 'This page cannot be shown here.';
 }
 
