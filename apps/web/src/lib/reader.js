@@ -2,6 +2,7 @@ import { extracts } from '@rssamplifier/db';
 import { probePage, readableArticle } from '@rssamplifier/feed';
 
 import { db, siteUrl } from './db.js';
+import { withPageSlot } from './pageGate.js';
 
 /**
  * What the reader can show for a post: the frame, or the article itself.
@@ -53,6 +54,33 @@ export async function readerView(post) {
     };
   }
 
+  // Everything past the cache is a network fetch and a DOM parse — the one
+  // thing this app does that has to be bounded by *count* rather than by size,
+  // and the thing that took the site down for eight hours on 2026-09-02.
+  // Reasoning in lib/pageGate.js.
+  return withPageSlot(
+    () => fetchAndExtract(client, { itemId, url }),
+    // Deliberately not written to the extract cache: a busy refusal is a fact
+    // about this moment, not about the post. See pageGate.js.
+    () => ({ frameable: false, reason: 'busy', article: null }),
+  );
+}
+
+/**
+ * Fetch the page and read it, having decided that is worth doing.
+ *
+ * Split out of `readerView` so the gate has a unit to wrap. The body is
+ * unchanged and every early return keeps the meaning it had.
+ *
+ * @param {import('@libsql/client').Client} client
+ * @param {{ itemId: string, url: string }} post
+ * @returns {Promise<{
+ *   frameable: boolean,
+ *   reason: string,
+ *   article: { html: string, byline: string|null, siteName: string|null, length: number }|null,
+ * }>}
+ */
+async function fetchAndExtract(client, { itemId, url }) {
   const probe = await probePage(url, { origin: siteUrl() });
 
   // A stream is not a page, whatever its headers say it will allow.

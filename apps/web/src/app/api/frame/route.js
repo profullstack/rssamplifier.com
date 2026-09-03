@@ -1,4 +1,5 @@
 import { normalizeUrl, probePage, readableArticle, reframePage } from '@rssamplifier/feed';
+import { withPageSlot } from '../../../lib/pageGate.js';
 
 import { siteUrl } from '../../../lib/db.js';
 
@@ -56,6 +57,28 @@ export async function GET(req) {
   const self = `${site}/api/frame?u=${encodeURIComponent(asked)}`;
   const through = (url) => `${site}/api/frame?u=${encodeURIComponent(url)}`;
 
+  // The same bound the reader is under, and this route needs it more: it runs
+  // the identical fetch-and-parse with no extract cache in front of it, so
+  // every call reaches an origin. Reasoning in lib/pageGate.js.
+  return withPageSlot(
+    () => openPage({ target, site, self, through }),
+    () =>
+      card({
+        url: target,
+        message: 'The reader is busy right now. Try this again in a moment.',
+      }),
+  );
+}
+
+/**
+ * Open one page, having been given room to.
+ *
+ * Split out of `GET` so the gate has a unit to wrap; the body is unchanged.
+ *
+ * @param {{ target: string, site: string, self: string, through: (url: string) => string }} ctx
+ * @returns {Promise<Response>}
+ */
+async function openPage({ target, site, self, through }) {
   const probe = await probePage(target, { origin: site, wantHtml: 'always' });
   const landed = probe.url ?? target;
 
