@@ -177,6 +177,18 @@ test('tools/list answers both eras with the same tools', async () => {
   assert.equal(fromModern.body.result.tools.length, TOOLS.length);
 });
 
+test('every list says it is complete, so a modern client accepts it', async () => {
+  // The current revision requires resultType on a list result. Claude Code
+  // rejected the tools and resources lists without it ("missing required
+  // resultType") and showed the server as connected with no tools.
+  for (const method of ['tools/list', 'resources/list', 'resources/templates/list', 'prompts/list']) {
+    const { message, ctx } = modern(method);
+    const { status, body } = await handle(message, ctx);
+    assert.equal(status, 200, method);
+    assert.equal(body.result.resultType, 'complete', method);
+  }
+});
+
 test('calling a tool that does not exist is a tool error, not a transport error', async () => {
   // The distinction matters: a JSON-RPC error is something the client handles
   // and the model never sees, so a model that guessed a tool name would never

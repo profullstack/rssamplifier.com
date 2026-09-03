@@ -201,17 +201,20 @@ async function dispatch(method, params, ctx, modern) {
     case 'ping':
       return {};
 
+    // Every list is answered whole. The current revision requires a list
+    // result to say so — a client that speaks it rejects an answer without
+    // `resultType`, and the field is harmless to a legacy client.
     case 'tools/list':
-      return { tools: TOOLS.map(describe) };
+      return { resultType: 'complete', tools: TOOLS.map(describe) };
 
     case 'tools/call':
       return callTool(params, ctx);
 
     case 'resources/list':
-      return { resources: resources() };
+      return { resultType: 'complete', resources: resources() };
 
     case 'resources/templates/list':
-      return { resourceTemplates: [] };
+      return { resultType: 'complete', resourceTemplates: [] };
 
     case 'resources/read':
       return readResource(params);
@@ -220,7 +223,7 @@ async function dispatch(method, params, ctx, modern) {
     // several clients call it unconditionally on connect, and an empty list is
     // a truer answer than "no such method".
     case 'prompts/list':
-      return { prompts: [] };
+      return { resultType: 'complete', prompts: [] };
 
     default:
       return UNKNOWN_METHOD;
