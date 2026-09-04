@@ -231,3 +231,30 @@ test('pruneCrawlHours drops what the charts cannot show', async () => {
     'recent buckets survive',
   );
 });
+
+test('lastSuccessAt is the same clock the snapshot reads, on its own', async () => {
+  // The seek /crawlstats refreshes on every request while the rest of the
+  // snapshot is served from a two-hour cache. It has to agree with the
+  // snapshot when both are read at once, or the badge and the counts beside it
+  // would be describing two different crawlers.
+  const stats = await q.crawlStats(db);
+  assert.equal(await q.lastSuccessAt(db), stats.lastSuccessAt);
+
+  // And it has to move: the whole point is that the cached snapshot cannot.
+  const later = ago(30_000);
+  await db.execute({
+    sql: `update feeds set last_success_at = ? where slug = 'healthy'`,
+    args: [later],
+  });
+  assert.equal(await q.lastSuccessAt(db), later, 'reports the newest success');
+
+  // A success on a feed that is not active is not the crawler being alive in
+  // the sense the badge means -- same predicate as the snapshot, so a feed
+  // marked error after a recent success does not move the clock.
+  const recent = ago(1_000);
+  await db.execute({
+    sql: `update feeds set last_success_at = ?, status = 'error' where slug = 'healthy'`,
+    args: [recent],
+  });
+  assert.notEqual(await q.lastSuccessAt(db), recent, 'an errored feed does not move the clock');
+});

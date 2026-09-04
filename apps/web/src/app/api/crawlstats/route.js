@@ -26,8 +26,8 @@ export const dynamic = 'force-dynamic';
  * Every read here is cached, and the distinction that keeps that honest is
  * between a fact and a derivation. A count is a fact and may be ten seconds
  * old; `idleMinutes` is `now - lastSuccessAt`, so caching it would freeze the
- * one number a monitor alerts on. `liveStats` caches the timestamp and redoes
- * the subtraction — see lib/crawlstats.js.
+ * one number a monitor alerts on. `liveStats` caches the counts and re-reads
+ * the timestamp on every request — see `withLiveness` in lib/crawlstats.js.
  *
  * Before this, the endpoint answered in 118 seconds: `categoryStats` no longer
  * completes inside the client's 30s deadline, and since a cache that only
@@ -63,9 +63,9 @@ export async function GET() {
     // that: the backlog it reports is hundreds of thousands of feeds draining
     // at a few hundred an hour, so a sixty-second-old answer is the same answer.
     //
-    // The liveness numbers stay uncached, which is the distinction that matters
-    // -- `crawlStats` and `logActivity` below are still read fresh, so this
-    // endpoint can still never claim a dead crawler is alive.
+    // The liveness clock stays uncached, which is the distinction that matters
+    // -- `liveStats` re-reads it on every request and `logActivity` below is
+    // read fresh, so this endpoint can still never claim a dead crawler is alive.
     jobBacklogs(),
     panel(q.logActivity(client, 1), {}),
     // See the page: this only tells a sender with nobody to serve from one that

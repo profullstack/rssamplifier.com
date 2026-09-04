@@ -1846,6 +1846,34 @@ export async function crawlStats(db) {
 }
 
 /**
+ * When the crawler last read anything successfully -- the liveness clock alone.
+ *
+ * The same seek `crawlStats` makes for its `lastSuccessAt`, split out so a
+ * reader can refresh the clock without paying for the counts around it. One
+ * covering-index seek to the end of `feeds_status_success_idx` (0028): 80ms
+ * measured against production, against ~5s for the whole snapshot.
+ *
+ * It exists because the snapshot is cached for up to two hours and the clock
+ * must not be. On 2026-09-04 /crawlstats read "Stalled -- nothing has been
+ * read successfully in 31 minutes" while the poller was landing 776 successful
+ * reads a quarter-hour: the timestamp was the one the poller had primed at
+ * 09:02, and `idleMinutes` was honestly counting up from it. A cached
+ * timestamp cannot make a dead crawler look alive, which is what the caching
+ * was checked against -- but it makes a live one look dead from fifteen
+ * minutes after every warm, which is the failure nobody checked for.
+ *
+ * @param {Client} db
+ * @returns {Promise<string|null>} ISO timestamp, or null if nothing has ever succeeded
+ */
+export async function lastSuccessAt(db) {
+  const r = await db.execute(
+    `select max(last_success_at) as at from feeds where status = 'active'`,
+  );
+  const at = r.rows[0]?.at;
+  return at ? String(at) : null;
+}
+
+/**
  * Add one poller tick's work to the hour it happened in.
  *
  * Called once per tick rather than once per feed: a tick is already a batch,
