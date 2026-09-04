@@ -180,6 +180,15 @@ const PRIMED_TTL_MS = 90 * 60 * 1000;
  */
 const PANEL_TIMEOUT_MS = 5 * 1000;
 
+/**
+ * How long `liveStats` waits for the liveness clock to be re-read.
+ *
+ * One covering-index seek, 80ms measured healthy and ~1s under write load, so
+ * five seconds only ever fires on a database that cannot answer at all -- at
+ * which point the cached timestamp stands and the page still renders.
+ */
+const LIVENESS_TIMEOUT_MS = PANEL_TIMEOUT_MS;
+
 /** How much history the charts draw. */
 export const HISTORY_HOURS = 24;
 export const GROWTH_DAYS = 30;
@@ -307,10 +316,10 @@ export async function categoryStats() {
  * ten-second TTL against a read that now takes 57–77 s means every reader
  * restarts it the instant the last one finishes. See `PRIMED_TTL_MS`.
  *
- * What that costs in freshness is counts, not the alarm — `idleMinutes` is
- * re-derived from the cached `lastSuccessAt` on every request, so a stalled
- * crawler cannot read as healthy however old this entry is, and `generatedAt` is
- * printed beside the numbers so the page says how old they are.
+ * What that costs in freshness is counts, not the alarm — the liveness clock
+ * is re-read on every request (see `withLiveness`), so a stalled crawler cannot
+ * read as healthy however old this entry is, and `generatedAt` is printed
+ * beside the numbers so the page says how old they are.
  */
 const STATS_TTL_MS = PRIMED_TTL_MS;
 
@@ -324,12 +333,16 @@ const STATS_TTL_MS = PRIMED_TTL_MS;
  * the moment the query runs, so caching the object *freezes it*. A crawler that
  * died would go on reporting the same cheerful number until the entry expired.
  *
- * So the fact is cached and the derivation is redone here. `lastSuccessAt` is a
- * timestamp — it does not go stale, it just gets further away — and recomputing
- * the gap against the current clock gives a number that keeps climbing while
- * the crawler is down, which is exactly the alarm that must not be cacheable.
- * `generatedAt` is left as the moment the read actually happened, so the page
- * can be honest about how old the counts beside it are.
+ * So the counts are cached and the clock is not. The first version of this
+ * cached `lastSuccessAt` too and only redid the subtraction, on the reasoning
+ * that a timestamp "does not go stale, it just gets further away". That is
+ * true, and it is the bug: a *healthy* crawler's last success also gets
+ * further away from the cached one, so from fifteen minutes after every hourly
+ * warm the page read "Stalled" over a poller landing 3,600 reads an hour
+ * (2026-09-04). The subtraction was only ever checked in one direction. The
+ * timestamp is now re-read on every request — one index seek, bounded — and
+ * `generatedAt` is left as the moment the counts were read, so the page can be
+ * honest about how old those are.
  *
  * The read itself measured 4,975ms against production, which is why it is worth
  * doing at all.
@@ -387,13 +400,44 @@ export async function liveStats() {
   // on"; this one is "can it be read at all before the reader gives up". The
   // read measured 4,975 ms healthy, so 45 s still succeeds on a merely slow
   // database and only gives up on a wedged one.
-  if (!stats) return await withDeadline(() => q.crawlStats(db()), 45_000);
+  if (!stats) return withLiveness(await withDeadline(() => q.crawlStats(db()), 45_000), null);
 
-  const lastSuccessAt = stats.lastSuccessAt ? String(stats.lastSuccessAt) : null;
+  // The counts may be up to two hours old. The clock may not be: one index
+  // seek, bounded so it can never pin the page, and when it does not answer
+  // the cached timestamp stands -- wrong only in the safe direction.
+  const fresh = await panel(q.lastSuccessAt(db()), null, LIVENESS_TIMEOUT_MS);
+  return withLiveness(stats, fresh);
+}
+
+/**
+ * Put a just-read liveness clock onto a (possibly cached) snapshot.
+ *
+ * The later of the two timestamps wins. A success cannot un-happen, so a fresh
+ * read that is *older* than the cached one is not news, it is a read that
+ * landed on a replica or a probe that failed and fell back to null -- and in
+ * neither case may the clock run backwards and un-alarm a page that was right.
+ * `idleMinutes` is then the gap from that clock to now, which is the number the
+ * health badge and any monitor of /api/crawlstats alert on.
+ *
+ * Pure, so the rule can be tested without a database behind it.
+ *
+ * @template {{ lastSuccessAt?: string|null }} T
+ * @param {T} stats
+ * @param {string|null|undefined} freshAt the clock as read just now, or null if the read failed
+ * @param {number} [now]
+ * @returns {T & { lastSuccessAt: string|null, idleMinutes: number|null }}
+ */
+export function withLiveness(stats, freshAt, now = Date.now()) {
+  const cachedAt = stats.lastSuccessAt ? String(stats.lastSuccessAt) : null;
+  const candidate = freshAt ? String(freshAt) : null;
+  const lastSuccessAt =
+    cachedAt && candidate ? (candidate > cachedAt ? candidate : cachedAt) : (candidate ?? cachedAt);
+
   return {
     ...stats,
+    lastSuccessAt,
     idleMinutes: lastSuccessAt
-      ? Math.max(0, Math.round((Date.now() - Date.parse(lastSuccessAt)) / 60_000))
+      ? Math.max(0, Math.round((now - Date.parse(lastSuccessAt)) / 60_000))
       : null,
   };
 }
