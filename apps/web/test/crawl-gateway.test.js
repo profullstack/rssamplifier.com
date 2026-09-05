@@ -13,6 +13,11 @@ import { fileURLToPath } from 'node:url';
  * one thing about a crawler and the 402 saying another — which is exactly what
  * happens when the lists are typed twice.
  *
+ * Then the two callers that never name themselves — the OVH fleet in a
+ * browser's clothes, and the residential-proxy rotation — and the callers who
+ * have already said who they are and must never be caught in the net cast for
+ * those two: readers with a session, programs with a key, search engines.
+ *
  * Both are loaded with the payment variables unset, which is also how the
  * service runs until Railway has them: the gate still answers 402, with an
  * empty offer, and the test does not depend on a CoinPay key.
@@ -32,7 +37,22 @@ const UAS = {
   searchbot: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; OAI-SearchBot/1.0; +https://openai.com/searchbot',
   googlebot: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
   chrome: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  // The three strings the residential-proxy rotation cycled on 2026-09-05.
+  rotation: [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+  ],
+  // Googlebot's evergreen string claims Chrome — its rendering engine — and
+  // sends none of a browser's fetch-metadata headers.
+  googlebotEvergreen:
+    'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Googlebot/2.1; +http://www.google.com/bot.html) Chrome/145.0.0.0 Safari/537.36',
+  bingbot: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm) Chrome/116.0.1938.76 Safari/537.36',
+  appleExtended: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15 (Applebot-Extended/0.1; +https://support.apple.com/en-us/119829)',
 };
+
+/** What a real Chromium cannot help sending. */
+const BROWSER = { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document', 'sec-fetch-site': 'none' };
 
 const request = (path, ua, headers = {}) =>
   new Request(`https://rssamplifier.com${path}`, { headers: { 'user-agent': ua, ...headers } });
@@ -128,10 +148,14 @@ test('a training crawler asking for a page is answered 402 with the offer', asyn
 });
 
 test('a person, a search engine and a retrieval crawler pass untouched', async () => {
-  for (const ua of [UAS.chrome, UAS.googlebot, UAS.searchbot]) {
+  // A person's browser sends the fetch-metadata headers; the crawlers name
+  // themselves. Neither is what any check here is for.
+  for (const ua of [UAS.googlebot, UAS.searchbot]) {
     assert.equal(await gate(request('/feeds/anything', ua)), undefined, ua);
     assert.equal(await gate(request('/', ua)), undefined, ua);
   }
+  assert.equal(await gate(request('/feeds/anything', UAS.chrome, BROWSER)), undefined);
+  assert.equal(await gate(request('/', UAS.chrome, BROWSER)), undefined);
 });
 
 test('the entry points are open to a training crawler, being the point', async () => {
@@ -147,6 +171,99 @@ test('the sales page answers everyone, whatever they wear', async () => {
   assert.equal(page?.status, 402);
   assert.match(page.headers.get('content-type'), /text\/html/);
   assert.equal(gateway.enabled, false, 'no key, no payout address: payments are off in this process');
+});
+
+test('the OVH fleet is refused by address, whatever it wears', async () => {
+  // vps-*.vps.ovh.net, measured 2026-08-28, spoofing Chrome/148. Not 402:
+  // there is nothing on sale to a hosting range that will not say who it is.
+  //
+  // The address is the LAST hop of x-forwarded-for — the one our own edge
+  // appended — or x-real-ip. The first entry is whatever the client put
+  // there, which is why it is not read.
+  for (const ip of ['51.38.12.7', '54.38.200.1', '141.94.94.32', '145.239.0.9', '149.202.77.77', '151.80.1.1', '57.129.3.3', '213.32.90.90']) {
+    const answer = await gate(request('/topics/rust', UAS.chrome, { ...BROWSER, 'x-forwarded-for': `10.0.0.1, ${ip}` }));
+    assert.equal(answer?.status, 403, `${ip} is refused`);
+    assert.match(answer.headers.get('content-type'), /text\/plain/);
+    assert.equal(answer.headers.get('cache-control'), 'no-store');
+  }
+  assert.equal((await gate(request('/topics/rust', UAS.chrome, { ...BROWSER, 'x-forwarded-for': '54.38.1.2' })))?.status, 403, 'a single hop is the last hop');
+  assert.equal((await gate(request('/topics/rust', UAS.chrome, { ...BROWSER, 'x-real-ip': '54.38.1.2' })))?.status, 403, 'the nginx spelling');
+
+  // A client cannot put itself on the list by seeding the header, and cannot
+  // take itself off it either: only the hop the edge added counts.
+  assert.equal(await gate(request('/topics/rust', UAS.chrome, { ...BROWSER, 'x-forwarded-for': '54.38.1.2, 203.0.113.9' })), undefined, 'a seeded first entry is ignored');
+  assert.equal((await gate(request('/topics/rust', UAS.chrome, { ...BROWSER, 'x-forwarded-for': '203.0.113.9, 54.38.1.2' })))?.status, 403);
+
+  // The refusal is by range, so its neighbours outside the range are not it.
+  assert.equal(await gate(request('/topics/rust', UAS.chrome, { ...BROWSER, 'x-forwarded-for': '51.39.0.1' })), undefined);
+  // And a real reader's address is untouched, even on the list's home path.
+  assert.equal(await gate(request('/', UAS.chrome, { ...BROWSER, 'x-forwarded-for': '203.0.113.9' })), undefined);
+});
+
+test('a Chrome string that cannot answer like Chrome is charged', async () => {
+  // The rotation of 2026-09-05: three Chrome strings, five hundred addresses,
+  // /topics/* at up to 250 requests a second. Every one of them missed the
+  // header a browser cannot omit.
+  for (const ua of UAS.rotation) {
+    const answer = await gate(request('/topics/x', ua, { 'x-forwarded-for': '203.0.113.9' }));
+    assert.equal(answer?.status, 402, ua);
+    const offer = await answer.json();
+    assert.equal(offer.pass.buy, 'https://rssamplifier.com/crawl');
+  }
+  // Same string, on the API and author pages it walked.
+  assert.equal((await gate(request('/api/topics/x', UAS.rotation[0])))?.status, 402);
+  assert.equal((await gate(request('/authors/somebody', UAS.rotation[2])))?.status, 402);
+});
+
+test('the same string with the header a browser sends passes', async () => {
+  for (const ua of UAS.rotation) {
+    assert.equal(await gate(request('/topics/x', ua, { 'sec-fetch-mode': 'navigate' })), undefined, ua);
+  }
+  // A fetch() from a page and a <script> load say so too, and are people.
+  assert.equal(await gate(request('/api/topics/x', UAS.chrome, { 'sec-fetch-mode': 'cors' })), undefined);
+  assert.equal(await gate(request('/topics/x', UAS.chrome, { 'sec-fetch-mode': 'no-cors' })), undefined);
+});
+
+test('a signed-in reader is never charged, headers or not', async () => {
+  // The hint the masthead reads, and the session it describes; a request
+  // carrying either has already said who it is.
+  assert.equal(await gate(request('/topics/x', UAS.chrome, { cookie: 'signed_in=1' })), undefined);
+  assert.equal(await gate(request('/topics/x', UAS.rotation[0], { cookie: 'theme=dark; signed_in=1' })), undefined);
+  assert.equal(await gate(request('/topics/x', UAS.rotation[1], { cookie: 'rsa_session=a-token' })), undefined);
+  // An emptied session is not a session, and a look-alike name is not the cookie.
+  assert.equal((await gate(request('/topics/x', UAS.rotation[1], { cookie: 'rsa_session=' })))?.status, 402);
+  assert.equal((await gate(request('/topics/x', UAS.rotation[1], { cookie: 'not_signed_in_at_all=1' })))?.status, 402);
+});
+
+test('a caller with an API key is placed by the tiers, not by the gate', async () => {
+  const key = 'rsa_0123abcd_' + 'x'.repeat(32);
+  assert.equal(await gate(request('/api/topics/x', UAS.chrome, { authorization: `Bearer ${key}` })), undefined);
+  assert.equal(await gate(request('/api/topics/x', UAS.chrome, { 'x-api-key': key })), undefined);
+  // The shape is checked and nothing else: a bearer token that is not one of
+  // our keys is not an identity, so it is judged like everyone else.
+  assert.equal((await gate(request('/api/topics/x', UAS.rotation[0], { authorization: 'Bearer nope' })))?.status, 402);
+});
+
+test('a crawler that names itself is not judged as a browser', async () => {
+  // Googlebot and Bingbot both say Chrome and neither sends Sec-Fetch-Mode;
+  // charging them would cut off the readers they send.
+  assert.equal(await gate(request('/topics/x', UAS.googlebotEvergreen)), undefined);
+  assert.equal(await gate(request('/topics/x', UAS.bingbot)), undefined);
+  assert.equal(await gate(request('/topics/x', UAS.googlebot)), undefined);
+  assert.equal(await gate(request('/topics/x', UAS.searchbot)), undefined);
+  // But the exemption cannot be borrowed by the training half of a pair:
+  // Applebot-Extended contains "Applebot" and is charged all the same.
+  assert.equal((await gate(request('/topics/x', UAS.appleExtended)))?.status, 402);
+  assert.equal((await gate(request('/topics/x', UAS.claudebot)))?.status, 402);
+});
+
+test('the sales page still answers, and the deny list still comes first there', async () => {
+  const page = await gate(request('/crawl', UAS.rotation[0], { accept: 'text/html' }));
+  assert.equal(page?.status, 402);
+  assert.match(page.headers.get('content-type'), /text\/html/);
+
+  const refused = await gate(request('/crawl', UAS.chrome, { ...BROWSER, 'x-forwarded-for': '203.0.113.9, 51.38.1.1' }));
+  assert.equal(refused?.status, 403, 'nothing is on sale to the fleet');
 });
 
 /**
