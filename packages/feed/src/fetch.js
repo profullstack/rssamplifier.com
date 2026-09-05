@@ -2,6 +2,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 
 import { looksLikeFeed, normalizeUrl, findFeedLinks, guessFeedUrls } from './discover.js';
+import { paidFetch } from './paid.js';
 import { parseFeed } from './parse.js';
 import { findPlaylistLinks } from './playlist.js';
 
@@ -145,7 +146,7 @@ export async function safeFetch(url, conditional = {}) {
       headers[name] = String(value);
     }
 
-    const res = await fetch(normalized, {
+    const res = await paidFetch(normalized, {
       headers,
       redirect: 'follow',
       signal: controller.signal,
@@ -254,7 +255,7 @@ export async function safeFetchBytes(url, maxBytes = 64 * 1024) {
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const res = await fetch(normalized, {
+    const res = await paidFetch(normalized, {
       headers: {
         'user-agent': USER_AGENT,
         accept: 'image/*,*/*',

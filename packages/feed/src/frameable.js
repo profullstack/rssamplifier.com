@@ -1,5 +1,6 @@
 import { normalizeUrl } from './discover.js';
 import { isPublicHost } from './fetch.js';
+import { paidFetch } from './paid.js';
 
 /**
  * Whether a page will load inside our reader's iframe.
@@ -271,7 +272,7 @@ async function attempt(normalized, { origin, wantHtml, timeout }) {
   let timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const res = await fetch(normalized, {
+    const res = await paidFetch(normalized, {
       method: 'GET',
       headers: { 'user-agent': USER_AGENT, accept: 'text/html,*/*' },
       redirect: 'follow',
