@@ -23,6 +23,11 @@ import { nowIso } from './client.js';
  *   reason: string|null,
  *   fetchedAt: string,
  * }} Extract
+ *
+ * `reason` explains a failure, with one exception: an `ok` row whose text is
+ * the free preview of a paywalled post carries `paywall-preview`, so the
+ * reader can label it without fetching the page again. Set by the web app's
+ * lib/reader.js, which owns the string.
  */
 
 /**

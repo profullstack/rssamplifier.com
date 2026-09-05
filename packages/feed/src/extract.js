@@ -41,6 +41,28 @@ import { sanitizeHtml, textLength } from './sanitize.js';
 const MIN_LENGTH = 600;
 
 /**
+ * The floor for a page that has told us it is paywalled.
+ *
+ * Measured against prod on 2026-09-05: of thirty reader pages stored as
+ * `empty`, fourteen were paid Substack posts. Every one of them had sent the
+ * free preview — three or four paragraphs, 350 to 560 characters of it — and
+ * every one was thrown away here for being under the prose floor, so the
+ * reader showed "this site does not allow itself to be embedded" over a post
+ * whose opening we were holding. A headless browser does not change that
+ * number: the rest of the text is never sent to anyone who has not paid, so
+ * the preview is the whole of what can be shown, and the right thing to do
+ * with it is show it and say so.
+ *
+ * Only on a page that declares the paywall. The floor exists because a short
+ * extraction is usually navigation or a caption, and lowering it for every
+ * page would show that junk as an article. A declared paywall changes the
+ * odds: short prose on a page that says "the rest is for subscribers" is the
+ * preview, not the chrome. Still not zero, because "Subscribe to continue"
+ * on its own is not a preview either.
+ */
+const PREVIEW_MIN = 150;
+
+/**
  * Below this in either declared dimension, an image is furniture.
  *
  * Only load-bearing when a page says how big its images are, which most do not
@@ -123,8 +145,9 @@ export const MAX_HTML_BYTES = 2 * 1024 * 1024;
  * @param {string} html the page source
  * @param {string} url the URL it was fetched from, after redirects
  * @returns {{ title: string|null, byline: string|null, excerpt: string|null,
- *   siteName: string|null, html: string, length: number }|null} null when
- *   there is no article here worth showing
+ *   siteName: string|null, html: string, length: number, preview: boolean }|null}
+ *   null when there is no article here worth showing; `preview` when the page
+ *   declares a paywall, so what came back is the part the publisher gives away
  */
 export function readableArticle(html, url) {
   const source = String(html ?? '');
@@ -134,8 +157,12 @@ export function readableArticle(html, url) {
   const based = withBase(capped, url);
 
   let article;
+  let locked = false;
   try {
     const { document } = parseHTML(based);
+    // Asked before Readability runs: it prunes the document it is given, and
+    // the paywall box is exactly the kind of thing it prunes.
+    locked = paywalled(document);
     article = new Readability(document).parse();
   } catch {
     // Readability walks a DOM it did not build and throws on shapes linkedom
@@ -153,6 +180,11 @@ export function readableArticle(html, url) {
   // prose of a page that is a picture is what turned every webcomic in the
   // directory into "this site does not allow itself to be embedded".
   if (length < MIN_LENGTH && figures(clean, url).length === 0) {
+    // A paywalled page's preview is short by design. See `PREVIEW_MIN`.
+    if (locked && length >= PREVIEW_MIN) {
+      return result(article, clean, length, true);
+    }
+
     // The words without the picture, which is its own kind of failure. See
     // `orphan`.
     const missing = orphan(based, url);
@@ -160,14 +192,70 @@ export function readableArticle(html, url) {
     clean = `${missing}${clean}`;
   }
 
+  return result(article, clean, length, locked);
+}
+
+/**
+ * The shape `readableArticle` hands back, from a parse that has passed.
+ *
+ * `preview` is carried even when the text cleared the prose floor: a paid
+ * post whose author put the cut three thousand characters in is still cut,
+ * and the reader should say so rather than end mid-sentence as if that were
+ * where the piece ends.
+ *
+ * @param {{ title?: string|null, byline?: string|null, excerpt?: string|null, siteName?: string|null }} article
+ * @param {string} html
+ * @param {number} length
+ * @param {boolean} preview
+ */
+function result(article, html, length, preview) {
   return {
     title: text(article.title),
     byline: text(article.byline),
     excerpt: text(article.excerpt),
     siteName: text(article.siteName),
-    html: clean,
+    html,
     length,
+    preview,
   };
+}
+
+/**
+ * Whether the page says its full text is behind a paywall.
+ *
+ * Three ways a publisher says it, from the most trustworthy down:
+ *
+ *   - schema.org's `isAccessibleForFree: false` in JSON-LD. Google requires
+ *     it for paywalled content to be indexed at all, so the big publishers and
+ *     every Substack ship it. Checked on both a paid Substack post and one with
+ *     a long free preview: both carry it, which is how it should be — both are
+ *     cut, only at different depths.
+ *   - `article:content_tier` of `locked`, the Open Graph spelling of the same
+ *     thing, which Facebook asked for and some news sites still emit.
+ *   - An element whose class calls itself a paywall. The weakest, since a
+ *     class name is a convention and not a claim, and Substack in particular
+ *     only renders the box into the static HTML sometimes. Kept because a site
+ *     that ships neither of the structured signals and does ship a
+ *     `.paywall` is still telling us something.
+ *
+ * Not text matching on "subscribe": every blog with a newsletter box says
+ * that, and calling them all previews would label whole articles as cut.
+ *
+ * @param {import('linkedom').HTMLDocument|Document} document
+ * @returns {boolean}
+ */
+function paywalled(document) {
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    // A regex rather than JSON.parse: publishers nest the flag at any depth,
+    // wrap the graph in arrays or `@graph`, and ship JSON that does not parse
+    // more often than you would think. The flag itself is unambiguous.
+    if (/"isAccessibleForFree"\s*:\s*(?:false|"false")/i.test(script.textContent ?? '')) return true;
+  }
+
+  const tier = document.querySelector('meta[property="article:content_tier"]');
+  if (tier && String(tier.getAttribute('content') ?? '').trim().toLowerCase() === 'locked') return true;
+
+  return Boolean(document.querySelector('.paywall, [class~="paywall-title"], [class~="paywall-cta"]'));
 }
 
 /**

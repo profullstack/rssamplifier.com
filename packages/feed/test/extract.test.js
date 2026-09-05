@@ -298,3 +298,71 @@ test('an article that stands on its own gains no picture it did not have', () =>
   assert.ok(found);
   assert.ok(!found.html.includes('seasonal-banner'), found.html);
 });
+
+/** A paid post's free preview: a few paragraphs, well under the prose floor. */
+const PREVIEW = `<p>Chapter Twenty Two. "What now?" I asked. It was more of a rhetorical question, since none of us had a plan and the tide was coming in.</p>
+  <p>Marcus looked at the water and then at the keys in his hand, and for a long moment said nothing at all.</p>`;
+
+/** What Substack and the big publishers put in the head of a paywalled page. */
+const LOCKED = `<script type="application/ld+json">{"@context":"https://schema.org","@type":"NewsArticle","isAccessibleForFree":false,"hasPart":{"@type":"WebPageElement","isAccessibleForFree":false,"cssSelector":".paywall"}}</script>`;
+
+/**
+ * @param {string} head
+ * @param {string} body
+ * @returns {string}
+ */
+function pageWithHead(head, body) {
+  return `<!doctype html><html><head><title>A Post</title>${head}</head><body>
+    <nav><a href="/">Home</a></nav>
+    <article><h1>A Post</h1>${body}</article>
+  </body></html>`;
+}
+
+test('a paywalled page keeps its free preview and says so', () => {
+  const found = readableArticle(pageWithHead(LOCKED, PREVIEW), URL);
+
+  assert.ok(found, 'expected the preview to survive the prose floor');
+  assert.equal(found.preview, true);
+  assert.ok(found.html.includes('Chapter Twenty Two'), found.html);
+  assert.ok(found.length < 600, `preview should be short, got ${found.length}`);
+});
+
+test('the same short text on a page that declares no paywall is still nothing', () => {
+  // The floor is there to keep a caption or a menu from being served as an
+  // article; a declared paywall is the only thing that lowers it.
+  assert.equal(readableArticle(pageWithHead('', PREVIEW), URL), null);
+});
+
+test('a paywalled page that is only a subscribe button is not a preview', () => {
+  const found = readableArticle(
+    pageWithHead(LOCKED, '<p>This post is for paid subscribers. Subscribe to continue.</p>'),
+    URL,
+  );
+  assert.equal(found, null);
+});
+
+test('a long free preview on a paywalled page is still marked as one', () => {
+  const found = readableArticle(pageWithHead(LOCKED, `<p>${PROSE}</p>`), URL);
+
+  assert.ok(found);
+  assert.ok(found.length > 600);
+  assert.equal(found.preview, true);
+});
+
+test('an ordinary article is not a preview', () => {
+  const found = readableArticle(page(`<p>${PROSE}</p>`), URL);
+
+  assert.ok(found);
+  assert.equal(found.preview, false);
+});
+
+test('the open graph and class-name spellings of a paywall count too', () => {
+  const og = '<meta property="article:content_tier" content="locked">';
+  assert.equal(readableArticle(pageWithHead(og, PREVIEW), URL)?.preview, true);
+
+  const boxed = readableArticle(
+    pageWithHead('', `${PREVIEW}<div class="paywall"><h2 class="paywall-title">This post is for paid subscribers</h2></div>`),
+    URL,
+  );
+  assert.equal(boxed?.preview, true);
+});
