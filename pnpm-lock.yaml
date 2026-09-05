@@ -50,8 +50,8 @@ importers:
         specifier: workspace:*
         version: link:../cli
       '@profullstack/x402-gateway':
-        specifier: 0.2.1
-        version: 0.2.1
+        specifier: 0.3.0
+        version: 0.3.0
       '@rssamplifier/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -592,8 +592,8 @@ packages:
       react:
         optional: true
 
-  '@profullstack/x402-gateway@0.2.1':
-    resolution: {integrity: sha512-GNTQUepJjo8NlPAm5bsHvKf0/VlccRkxcMm0DTB7DQJbu7PuhOupcucwLuTEOEHI+1SAJbuNxu+2PgANmsBGww==}
+  '@profullstack/x402-gateway@0.3.0':
+    resolution: {integrity: sha512-aaSMdtVInaAD6te/RnNnnqZW2+oo/dUsOTFTJCl0hOn58s85Yw3vZGk3KCtZmjrwV2O2rdTjKlZjbKp3CGgntw==}
     engines: {node: '>=20.11'}
 
   '@simplewebauthn/browser@13.3.0':
@@ -1331,7 +1331,7 @@ snapshots:
     optionalDependencies:
       react: 19.2.8
 
-  '@profullstack/x402-gateway@0.2.1': {}
+  '@profullstack/x402-gateway@0.3.0': {}
 
   '@simplewebauthn/browser@13.3.0': {}
 
