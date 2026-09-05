@@ -1,6 +1,7 @@
 import { clusterKey, dedupeItems, topicSlug } from '@rssamplifier/feed';
 
 import { newId, nowIso } from './client.js';
+import { FeedRemovedError, dropRemoved, isRemovedUrl, removalHost } from './removals.js';
 import { topicLabelSql } from './topicLabel.js';
 
 /**
@@ -309,6 +310,13 @@ export async function takenSlugs(db, base) {
  * @returns {Promise<{ id: string, slug: string }>}
  */
 export async function insertFeed(db, feed) {
+  // A publisher who asked to be taken down stays down, whichever path finds
+  // them again. Checked here rather than in each caller so no new caller can
+  // forget it.
+  if (await isRemovedUrl(db, feed.feed_url)) {
+    throw new FeedRemovedError(String(feed.feed_url), removalHost(feed.feed_url) ?? '');
+  }
+
   const id = newId();
   const now = nowIso();
 
@@ -2626,6 +2634,9 @@ export async function markCrawlSuccess(db, id, feed, itemCount, intervalMinutes 
  * @returns {Promise<number>} rows actually inserted
  */
 export async function insertFeedsBulk(db, feeds) {
+  // Removed publishers are dropped silently: a bulk import or a discovery run
+  // has nobody to tell, and "rows actually inserted" already says how many.
+  feeds = await dropRemoved(db, feeds);
   if (feeds.length === 0) return 0;
 
   const now = nowIso();

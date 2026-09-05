@@ -151,14 +151,17 @@ export async function checkCandidate(db, candidate, opts = {}) {
   } catch (err) {
     // Another run inserting the same feed between the lookup and the insert is
     // a duplicate, not a failure.
-    const raced = await q.feedByUrl(db, feedUrl);
+    // A publisher who asked to be removed is a rejection with a reason, not a
+    // fault in the run: the candidate was fine, the answer is still no.
+    const removed = err?.name === 'FeedRemovedError';
+    const raced = removed ? null : await q.feedByUrl(db, feedUrl);
     await discovery.markCandidate(db, String(candidate.id), {
-      status: raced ? 'rejected' : 'error',
+      status: raced || removed ? 'rejected' : 'error',
       feedUrl,
       slug: raced ? String(raced.slug) : null,
-      reason: raced ? 'already-indexed' : String(err?.message ?? err),
+      reason: raced ? 'already-indexed' : removed ? 'removed-by-owner' : String(err?.message ?? err),
     });
-    return { status: raced ? 'rejected' : 'error' };
+    return { status: raced || removed ? 'rejected' : 'error' };
   }
 
   await q.upsertItems(db, inserted.id, feed.items);
