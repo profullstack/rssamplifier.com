@@ -139,6 +139,9 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
+      '@profullstack/x402-client':
+        specifier: 0.2.0
+        version: 0.2.0
       fast-xml-parser:
         specifier: ^5.2.5
         version: 5.10.1
@@ -540,6 +543,14 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
+
   '@nodable/entities@3.0.0':
     resolution: {integrity: sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw==}
 
@@ -591,6 +602,11 @@ packages:
     peerDependenciesMeta:
       react:
         optional: true
+
+  '@profullstack/x402-client@0.2.0':
+    resolution: {integrity: sha512-kJGAomE9Tf/ruhsCStaKVXpjklCbOh2UFcMGTIfTqcWaSsW2NFWQRaTxJBLvc6r7Iy2+fpAWzfJnerolI6IrRQ==}
+    engines: {node: '>=20.19'}
+    hasBin: true
 
   '@profullstack/x402-gateway@0.3.0':
     resolution: {integrity: sha512-aaSMdtVInaAD6te/RnNnnqZW2+oo/dUsOTFTJCl0hOn58s85Yw3vZGk3KCtZmjrwV2O2rdTjKlZjbKp3CGgntw==}
@@ -1222,6 +1238,12 @@ snapshots:
   '@next/swc-win32-x64-msvc@16.3.1':
     optional: true
 
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+
+  '@noble/hashes@2.4.0': {}
+
   '@nodable/entities@3.0.0': {}
 
   '@peculiar/asn1-android@2.8.0':
@@ -1330,6 +1352,11 @@ snapshots:
       mpegts.js: 1.8.2
     optionalDependencies:
       react: 19.2.8
+
+  '@profullstack/x402-client@0.2.0':
+    dependencies:
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.4.0
 
   '@profullstack/x402-gateway@0.3.0': {}
 

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
+    "@profullstack/x402-client": "0.2.0",
     "fast-xml-parser": "^5.2.5",
     "linkedom": "^0.18.13"
   }
