@@ -13,4 +13,4 @@ allowBuilds:
   msgpackr-extract: false
 minimumReleaseAgeExclude:
   - '@profullstack/player@0.2.0 || 0.3.1'
-  - '@profullstack/x402-gateway@0.1.0 || 0.2.1'
+  - '@profullstack/x402-gateway@0.1.0 || 0.2.1 || 0.3.0'
