@@ -49,6 +49,9 @@ importers:
       '@profullstack/rssamplifier':
         specifier: workspace:*
         version: link:../cli
+      '@profullstack/x402-gateway':
+        specifier: 0.1.0
+        version: 0.1.0
       '@rssamplifier/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -588,6 +591,10 @@ packages:
     peerDependenciesMeta:
       react:
         optional: true
+
+  '@profullstack/x402-gateway@0.1.0':
+    resolution: {integrity: sha512-B7tWvWk/bIEoqyec6UoyRF1pO7X/+b+wFRv2ZFIClqskmEpyxoA559ZgdTvnxqAIvuDeE9v56nVpYRQ+lmOZQQ==}
+    engines: {node: '>=20.11'}
 
   '@simplewebauthn/browser@13.3.0':
     resolution: {integrity: sha512-BE/UWv6FOToAdVk0EokzkqQQDOWtNydYlY6+OrmiZ5SCNmb41VehttboTetUM3T/fr6EAFYVXjz4My2wg230rQ==}
@@ -1323,6 +1330,8 @@ snapshots:
       mpegts.js: 1.8.2
     optionalDependencies:
       react: 19.2.8
+
+  '@profullstack/x402-gateway@0.1.0': {}
 
   '@simplewebauthn/browser@13.3.0': {}
 

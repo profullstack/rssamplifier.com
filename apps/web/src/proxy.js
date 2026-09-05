@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { SIGNED_IN_HINT_COOKIE, hintToRestore } from './lib/session-hint.js';
+import { gate } from './lib/crawl-gateway.js';
 import { attempt, callerIdentity } from './lib/crawlThrottle.js';
 import { countRequest } from './lib/trafficCounter.js';
 import { tierFor } from './lib/tiers.js';
@@ -8,9 +9,15 @@ import { tierFor } from './lib/tiers.js';
 /**
  * The one thing that runs in front of every request.
  *
- * Three jobs, and they want different surfaces, which is the only reason this
+ * Four jobs, and they want different surfaces, which is the only reason this
  * file is more than it was:
  *
+ *   0. Charge training crawlers. Reasoning in lib/crawl-gateway.js. First,
+ *      before anything is metered, because a crawler that is answered 402 has
+ *      been given nothing and should not be spending its free allowance on it —
+ *      and because the sales page at /crawl is answered here for everyone,
+ *      whatever they wear. Same surface as the throttle: the pages and feeds
+ *      are what a corpus crawl is after.
  *   1. Shape crawl traffic. Reasoning in lib/crawlThrottle.js. This wants to
  *      see *everything* an expensive caller can ask for — the API, the feed
  *      files, the framing proxy — because those are where the load actually is.
@@ -29,7 +36,21 @@ import { tierFor } from './lib/tiers.js';
  *
  * @param {import('next/server').NextRequest} request
  */
-export function proxy(request) {
+export async function proxy(request) {
+  /*
+   * The gate answers with a 402, the sales page or a freshly minted pass, or
+   * with nothing at all — which is every person, every search crawler, every
+   * training crawler on an open path or carrying a pass. Only an answer stops
+   * here. It is still counted, as a refusal, for the same reason a 429 is: the
+   * ledger has to show what was turned away or the price cannot be judged
+   * against anything.
+   */
+  const answer = await gate(request);
+  if (answer) {
+    countRequest(request, tierFor(request).name, true);
+    return answer;
+  }
+
   /*
    * Which allowance this caller gets: free, signed-in, or sponsor. Reasoning
    * for all three, and for why the decision is made without a database, is in
