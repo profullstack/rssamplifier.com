@@ -12,7 +12,7 @@
   "dependencies": {
     "@profullstack/player": "^0.3.1",
     "@profullstack/rssamplifier": "workspace:*",
-    "@profullstack/x402-gateway": "0.1.0",
+    "@profullstack/x402-gateway": "0.2.1",
     "@rssamplifier/auth": "workspace:*",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/feed": "workspace:*",
