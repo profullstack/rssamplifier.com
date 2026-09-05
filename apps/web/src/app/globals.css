@@ -1633,6 +1633,20 @@ body:has(.reader) {
   padding: 1rem 0.5rem;
 }
 
+/* The note over a paywalled post's free preview. Sits in the article's own
+   column and reads as a notice rather than as the first paragraph, which is
+   the whole point of it: the text below stops where the publisher cut it. */
+.reader-preview {
+  max-width: var(--measure);
+  margin: 0 auto 1rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted, inherit);
+  font-size: 0.92rem;
+}
+
 /* A post whose picture is the post — a photoblog entry, a comic, an image
    board's item — at the size it was published.
 

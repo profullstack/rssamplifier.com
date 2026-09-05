@@ -33,7 +33,7 @@ import { withPageSlot } from './pageGate.js';
  * @returns {Promise<{
  *   frameable: boolean,
  *   reason: string,
- *   article: { html: string, byline: string|null, siteName: string|null, length: number }|null,
+ *   article: { html: string, byline: string|null, siteName: string|null, length: number, preview: boolean }|null,
  * }>}
  */
 export async function readerView(post) {
@@ -77,7 +77,7 @@ export async function readerView(post) {
  * @returns {Promise<{
  *   frameable: boolean,
  *   reason: string,
- *   article: { html: string, byline: string|null, siteName: string|null, length: number }|null,
+ *   article: { html: string, byline: string|null, siteName: string|null, length: number, preview: boolean }|null,
  * }>}
  */
 async function fetchAndExtract(client, { itemId, url }) {
@@ -119,7 +119,10 @@ async function fetchAndExtract(client, { itemId, url }) {
     itemId,
     url: probe.url ?? url,
     status: found ? 'ok' : 'empty',
-    reason: found ? null : probe.reason,
+    // A preview is a success with a footnote, and the footnote is kept in
+    // `reason` so the next reader gets the same honest label without a
+    // refetch. `PREVIEW` is the one value `reason` carries on an `ok` row.
+    reason: found ? (found.preview ? PREVIEW : null) : probe.reason,
     article: found,
   });
 
@@ -130,14 +133,30 @@ async function fetchAndExtract(client, { itemId, url }) {
     // refusal stopped mattering the moment we read the page ourselves.
     reason: found ? 'extracted' : probe.reason,
     article: found
-      ? { html: found.html, byline: found.byline, siteName: found.siteName, length: found.length }
+      ? {
+          html: found.html,
+          byline: found.byline,
+          siteName: found.siteName,
+          length: found.length,
+          preview: found.preview,
+        }
       : null,
   };
 }
 
 /**
+ * The `reason` stored against an `ok` extract whose text is a paywall's free
+ * preview rather than the whole piece.
+ *
+ * Fourteen of thirty `empty` rows sampled from prod on 2026-09-05 were paid
+ * Substack posts whose preview we had fetched, parsed and discarded. Those
+ * rows expire after a day and self-heal through this path — do not backfill.
+ */
+const PREVIEW = 'paywall-preview';
+
+/**
  * @param {Extract|null} stored
- * @returns {{ html: string, byline: string|null, siteName: string|null, length: number }|null}
+ * @returns {{ html: string, byline: string|null, siteName: string|null, length: number, preview: boolean }|null}
  */
 function article(stored) {
   if (!stored || stored.status !== 'ok' || !stored.contentHtml) return null;
@@ -146,6 +165,7 @@ function article(stored) {
     byline: stored.byline,
     siteName: stored.siteName,
     length: stored.length,
+    preview: stored.reason === PREVIEW,
   };
 }
 

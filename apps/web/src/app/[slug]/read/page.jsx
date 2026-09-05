@@ -537,6 +537,23 @@ export default async function ReaderPage({ params, searchParams }) {
                 {extracted.siteName ?? hostOf(postUrl ?? '')}
               </p>
 
+              {/*
+               * A paid post's free preview, and said to be one. The
+               * alternative was worse both ways: before this the preview was
+               * thrown away for being short and the reader got "this site
+               * does not allow itself to be embedded" over a post we had the
+               * opening of; showing it without the label would have the
+               * piece end mid-thought as if that were the author's doing.
+               * The cut is the publisher's, and the link below is where
+               * the rest is.
+               */}
+              {extracted.preview && (
+                <p className="reader-preview">
+                  This is the free preview. The rest is for subscribers on{' '}
+                  {extracted.siteName ?? hostOf(postUrl ?? '')}.
+                </p>
+              )}
+
               <article
                 className={`reader-article${pictures ? ' pictures' : ''}`}
                 dangerouslySetInnerHTML={{ __html: extracted.html }}
@@ -545,7 +562,7 @@ export default async function ReaderPage({ params, searchParams }) {
               {postUrl && (
                 <p className="hint">
                   <a href={postUrl} target="_blank" rel="noopener">
-                    Read the original on {hostOf(postUrl)} ↗
+                    {extracted.preview ? 'Continue reading' : 'Read the original'} on {hostOf(postUrl)} ↗
                   </a>
                 </p>
               )}

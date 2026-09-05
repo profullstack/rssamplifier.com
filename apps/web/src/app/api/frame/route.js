@@ -143,11 +143,19 @@ function read(article, url) {
   const source = article.siteName ?? hostOf(url);
   const credit = article.byline ? `${escapeText(article.byline)} · ` : '';
 
+  // The same label the reader page puts over a paid post's free preview, so a
+  // cut piece reads as cut one link deeper too rather than as an ending.
+  const preview = article.preview
+    ? `<p class="meta">This is the free preview. The rest is for subscribers on ${escapeText(source)}.</p>`
+    : '';
+  const action = article.preview ? 'Continue reading' : 'Read the original';
+
   return shell(`
     <p class="meta">${credit}${escapeText(source)}</p>
+    ${preview}
     <article>${article.html}</article>
     <p class="meta">
-      <a href="${escapeAttr(url)}" target="_blank" rel="noopener">Read the original on ${escapeText(hostOf(url))} ↗</a>
+      <a href="${escapeAttr(url)}" target="_blank" rel="noopener">${action} on ${escapeText(hostOf(url))} ↗</a>
     </p>
   `);
 }
