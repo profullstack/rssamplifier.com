@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 
 import { SIGNED_IN_HINT_COOKIE, hintToRestore } from './lib/session-hint.js';
-import { gate } from './lib/crawl-gateway.js';
+import { gate, hasValidPass } from './lib/crawl-gateway.js';
 import { attempt, callerIdentity } from './lib/crawlThrottle.js';
 import { countRequest } from './lib/trafficCounter.js';
-import { tierFor } from './lib/tiers.js';
+import { TIERS, tierFor } from './lib/tiers.js';
 
 /**
  * The one thing that runs in front of every request.
@@ -63,7 +63,19 @@ export async function proxy(request) {
    * unlimited, and nothing above it can be worth paying for. Signed in is now
    * a large budget rather than no budget.
    */
-  const tier = tierFor(request);
+  /*
+   * A bought pass is the top rung, and it is checked before the rest of the
+   * ladder because it is the only one someone paid for. Without this the pass
+   * we sell at /crawl bought a crawler past the 402 and then met the same
+   * 600-an-hour throttle as an anonymous curl, which is to say it bought
+   * nothing anyone could feel.
+   *
+   * The gate above has already read the same token and said nothing about it,
+   * because "should this be charged" and "what allowance is this" are different
+   * questions. Reading it again is one HMAC, and only for a request that
+   * actually presents a token.
+   */
+  const tier = (await hasValidPass(request)) ? TIERS.pass : tierFor(request);
 
   const verdict = attempt(callerIdentity(request), Date.now(), tier);
 
@@ -112,6 +124,29 @@ function tooMany(verdict, tier) {
         ? 'Create an API key at https://rssamplifier.com/account and send it as a bearer token; a sponsored key raises the ceiling further.'
         : 'This is the sponsor ceiling. If you need more than this, ask and we will raise it.';
 
+  /*
+   * The rung a program can climb on its own.
+   *
+   * Every branch above ends at something only a person can do: read an email,
+   * fill in a form, ask us. An agent that hits this wall at three in the
+   * morning has nowhere to go, and the honest options left to it are to slow
+   * down or to spread itself over a proxy pool. So the pass is named here, with
+   * its price, as the one upgrade that needs no human on either side.
+   *
+   * Said to the paid tier too, where it reads as "you already have this",
+   * because a caller at the sponsor ceiling asking what is above it should be
+   * told there is nothing rather than sold something twice.
+   */
+  const buyable =
+    tier.name === 'pass' || tier.name === 'sponsor'
+      ? undefined
+      : {
+          url: 'https://rssamplifier.com/crawl',
+          price: '1.00 USD per day, USDC, settled by CoinPay',
+          buys: '120,000 requests an hour and 2,000 a minute, for the whole day',
+          how: 'Fetch https://rssamplifier.com/crawl with Accept: application/json for an x402 offer, pay it, then send the pass in the x-crawl-pass header. No account and no human needed.',
+        };
+
   return NextResponse.json(
     {
       error: 'rate limit exceeded',
@@ -121,6 +156,7 @@ function tooMany(verdict, tier) {
       tier: tier.name,
       hourlyLimit: Number.isFinite(tier.hourly) ? tier.hourly : null,
       upgrade: nextRung,
+      ...(buyable ? { buy: buyable } : {}),
       retryAfter: verdict.retryAfter,
     },
     {

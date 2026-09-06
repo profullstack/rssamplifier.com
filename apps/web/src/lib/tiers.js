@@ -101,6 +101,22 @@ export const TIERS = {
     hourly: FREE_HOURLY * AUTH_MULTIPLIER,
   },
   sponsor: { name: 'sponsor', burst: envInt('TIER_SPONSOR_BURST', 2_000), hourly: SPONSOR_HOURLY },
+  /**
+   * A bought crawl pass, at the sponsor's ceiling.
+   *
+   * The rung the ladder was missing. Until now the top of it was "ask us and we
+   * will sponsor you", which is not something a program can do at three in the
+   * morning, and the pass that /crawl already sold bought a training crawler
+   * past a 402 and then met the same 600-an-hour throttle as everyone else. So
+   * the thing we sell bought nothing a heavy caller could feel.
+   *
+   * Deliberately the same numbers as `sponsor` rather than higher: a sponsored
+   * key is a relationship and a pass is a dollar, and there is no honest reason
+   * the dollar should out-rank the relationship. The reasoning for that ceiling
+   * being bounded rather than infinite is in SPONSOR_HOURLY above and applies
+   * unchanged here.
+   */
+  pass: { name: 'pass', burst: envInt('TIER_SPONSOR_BURST', 2_000), hourly: SPONSOR_HOURLY },
 };
 
 /**

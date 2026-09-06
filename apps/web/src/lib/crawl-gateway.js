@@ -1,4 +1,4 @@
-import { createGateway, isTrainingAgent, RETRIEVAL_AGENTS } from '@profullstack/x402-gateway';
+import { createGateway, isTrainingAgent, readPass, RETRIEVAL_AGENTS } from '@profullstack/x402-gateway';
 import { crawlSales } from '@rssamplifier/db';
 
 import { db } from './db.js';
@@ -187,6 +187,26 @@ export const gateway = createGateway({
   chargeSpoofedBrowsers: true,
   exempt,
   /*
+   * What a pass actually buys, printed on the sales page and in every 402.
+   *
+   * Every line is rate, and that is not a hedge — it is the directory's whole
+   * position, argued in lib/tiers.js: the data stays open to everyone, no key,
+   * no account, no field withheld, and money buys speed. A benefits list that
+   * promised fields or endpoints the free tier cannot have would be selling the
+   * opposite of what this site is for, and would cost us the search and AI
+   * answer traffic that is the only way a person finds us.
+   *
+   * Written as the numbers rather than as adjectives, because the reader is
+   * deciding between paying, waiting, and rotating addresses, and only the
+   * numbers settle that.
+   */
+  benefits: [
+    '120,000 requests an hour, up from 600 anonymous or 6,000 signed in',
+    '2,000 requests a minute of burst, up from 120',
+    'No throttle on any page, feed, or API route, for the whole day',
+    'Every field and every entry point stays open to everyone, paid or not: a pass buys rate, never access',
+  ],
+  /*
    * Book the sale.
    *
    * traffic_hourly has counted who asks and who is refused since 2026-09-02,
@@ -228,3 +248,44 @@ export const gateway = createGateway({
  * @type {(request: Request) => Promise<Response | undefined>}
  */
 export const gate = x402Proxy(gateway);
+
+/** Where a pass is presented: the named header, or a bearer token. */
+const PASS_HEADER = 'x-crawl-pass';
+const BEARER_PASS = /^Bearer\s+(cp_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i;
+
+/**
+ * Whether this request carries a crawl pass that is genuinely ours and still
+ * live.
+ *
+ * The gate already reads the pass, and answers `undefined` for a holder exactly
+ * as it does for a person — which is correct for deciding whether to charge,
+ * and loses the one fact the throttle needs: that this caller has paid. Rather
+ * than have the gate report it, which would grow a contract five other sites
+ * depend on, the pass is read again here. It is an HMAC over a short string
+ * with no database behind it, so reading it twice costs a hash.
+ *
+ * The secret is the CoinPay key, which is what `createGateway` defaults to when
+ * no explicit `secret` is passed, so this verifies exactly the tokens the
+ * gateway mints and nothing else. With no key configured there are no valid
+ * passes to find, and every caller falls through to the free ladder.
+ *
+ * @param {Request} request
+ * @returns {Promise<boolean>}
+ */
+export async function hasValidPass(request) {
+  const secret = env['COINPAY_X402_KEY'];
+  if (!secret) return false;
+
+  const direct = request.headers.get(PASS_HEADER);
+  const bearer = BEARER_PASS.exec(request.headers.get('authorization') ?? '');
+  const token = direct ? direct.trim() : bearer ? bearer[1] : null;
+  if (!token) return false;
+
+  try {
+    return Boolean(await readPass(token, { secret }));
+  } catch {
+    // A malformed token is not an error worth failing a request over; it is
+    // simply not a pass, and the caller lands on the free ladder.
+    return false;
+  }
+}
