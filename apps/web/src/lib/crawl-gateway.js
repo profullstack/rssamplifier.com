@@ -2,6 +2,7 @@ import { createGateway, isTrainingAgent, RETRIEVAL_AGENTS } from '@profullstack/
 import { crawlSales } from '@rssamplifier/db';
 
 import { db } from './db.js';
+import { splitSale } from './partners.js';
 import { classifyAgent } from './traffic.js';
 import { x402Proxy } from '@profullstack/x402-gateway/next';
 
@@ -75,6 +76,11 @@ export const OPEN_PATHS = [
   // buying a pass.
   '/leaderboard',
   '/leaderboard/',
+  // The pitch is how a publisher finds out they can be paid for what a crawler
+  // is already taking. Charging the crawler to read our own recruiting page
+  // would be an odd way to run a marketplace.
+  '/sell',
+  '/sell/',
 ];
 
 /**
@@ -206,6 +212,12 @@ export const gateway = createGateway({
         agent: classifyAgent(sale.userAgent),
         expiresAt: sale.expiresAt,
       })
+      .then(() =>
+        // Pay the publishers whose blogs were in the crawl. After the sale is
+        // booked, and never able to fail it: the money has already moved, and
+        // a split we can retry beats a 500 to a paying customer.
+        splitSale(sale).catch((err) => console.error('[partners] could not split the sale', err)),
+      )
       .catch((err) => console.error('[x402] could not record the sale', err)),
 });
 

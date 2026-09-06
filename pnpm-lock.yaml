@@ -46,6 +46,9 @@ importers:
       '@profullstack/leaderboard':
         specifier: ^0.3.0
         version: 0.3.0
+      '@profullstack/partners':
+        specifier: ^0.2.0
+        version: 0.2.0
       '@profullstack/player':
         specifier: ^0.3.1
         version: 0.3.1(react@19.2.8)
@@ -599,6 +602,14 @@ packages:
 
   '@profullstack/leaderboard@0.3.0':
     resolution: {integrity: sha512-SKPmIqhmrAhFQqHl9wJHV1NzJHUCNBsqWc1F6M5AeFfphXWGfKSmgeCC3QN37JH/cQ1NxS8kYC/DqbjQqNBoaQ==}
+    engines: {node: '>=20.11'}
+
+  '@profullstack/leaderboard@0.3.1':
+    resolution: {integrity: sha512-LbxLwy+RvT/Qez0mfWCk4o9hvcq0kzwBZ0vF+CYp+oGvyqJWUaSTLhCHWGtKKAI3c0ZUXj6ll0iuRjbuZUE2Sg==}
+    engines: {node: '>=20.11'}
+
+  '@profullstack/partners@0.2.0':
+    resolution: {integrity: sha512-h8Fal+ZMqpR2xixo8OC/Xb/OXfLXmt2BdBIgohC3tK6U3AkAsDrkUyrlf+DEF8Ut8mptDEjCWDz5EV/dIXBRHw==}
     engines: {node: '>=20.11'}
 
   '@profullstack/player@0.3.1':
@@ -1354,6 +1365,12 @@ snapshots:
       tsyringe: 4.10.0
 
   '@profullstack/leaderboard@0.3.0': {}
+
+  '@profullstack/leaderboard@0.3.1': {}
+
+  '@profullstack/partners@0.2.0':
+    dependencies:
+      '@profullstack/leaderboard': 0.3.1
 
   '@profullstack/player@0.3.1(react@19.2.8)':
     dependencies:
