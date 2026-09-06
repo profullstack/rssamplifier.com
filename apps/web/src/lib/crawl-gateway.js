@@ -1,4 +1,8 @@
 import { createGateway, isTrainingAgent, RETRIEVAL_AGENTS } from '@profullstack/x402-gateway';
+import { crawlSales } from '@rssamplifier/db';
+
+import { db } from './db.js';
+import { classifyAgent } from './traffic.js';
 import { x402Proxy } from '@profullstack/x402-gateway/next';
 
 import { SIGNED_IN_HINT_COOKIE } from './session-hint.js';
@@ -57,7 +61,21 @@ function siteUrl() {
  * before the rewrite to /api/mcp) and at its long one, so a client that read
  * the API docs is not charged for calling the same thing by its other name.
  */
-export const OPEN_PATHS = ['/llms.txt', '/skill.md', '/opml', '/mcp', '/api/mcp', '/api/feeds'];
+export const OPEN_PATHS = [
+  '/llms.txt',
+  '/skill.md',
+  '/opml',
+  '/mcp',
+  '/api/mcp',
+  '/api/feeds',
+  // The board is open on purpose, and both spellings are needed: the gateway
+  // prefix-matches only entries ending in a slash, so '/leaderboard' alone
+  // would open the index and still charge for every board on it. An agent that
+  // hits a 402 on the page ranking its own spend cannot read the case for
+  // buying a pass.
+  '/leaderboard',
+  '/leaderboard/',
+];
 
 /**
  * Addresses that serve no readers: the OVH VPS fleet.
@@ -162,6 +180,33 @@ export const gateway = createGateway({
    */
   chargeSpoofedBrowsers: true,
   exempt,
+  /*
+   * Book the sale.
+   *
+   * traffic_hourly has counted who asks and who is refused since 2026-09-02,
+   * and said nothing about who paid: a pass existed only for as long as the
+   * response took to send. The promise is returned rather than dropped
+   * because the gateway awaits this hook before the receipt goes out, which
+   * is what makes the row land before the buyer is told it worked. A
+   * rejection is swallowed there, so a database failure still sells the pass
+   * it was paid for.
+   */
+  onSale: (sale) =>
+    crawlSales
+      .recordCrawlSale(db(), {
+        payer: sale.payer,
+        ref: sale.ref,
+        days: sale.days,
+        priceCents: sale.priceCents,
+        totalCents: sale.totalCents,
+        currency: sale.currency,
+        userAgent: sale.userAgent,
+        // The same vocabulary traffic_hourly keys on, so a family reads the
+        // same on both sides of the board.
+        agent: classifyAgent(sale.userAgent),
+        expiresAt: sale.expiresAt,
+      })
+      .catch((err) => console.error('[x402] could not record the sale', err)),
 });
 
 /**
