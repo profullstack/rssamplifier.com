@@ -43,17 +43,42 @@ async function currentUser(request) {
 }
 
 /**
- * The niches a partner may claim: the directory's own topics, busiest first.
- * Resolved per request, so a topic that appeared this week is claimable this
- * week. Capped, because the full list is thousands long and a checkbox for
- * each is not a form anybody fills in.
+ * ISO 639-1 codes, which are not subjects.
+ *
+ * Topics come from publishers' own <category> tags, and a great many feeds tag
+ * themselves with their language. Ordered by feed count those float straight to
+ * the top, so the first thing a publisher saw on the sign-up form was a row of
+ * checkboxes reading "de", "en", "la". Two-letter subjects that are real, "ai"
+ * most of all, have to survive, so this excludes the language codes by name
+ * rather than excluding short slugs by length.
+ */
+const LANGUAGE_CODES = new Set([
+  'aa','ab','ae','af','ak','am','an','ar','as','av','ay','az','ba','be','bg','bh','bi','bm','bn','bo','br','bs',
+  'ca','ce','ch','co','cr','cs','cu','cv','cy','da','de','dv','dz','ee','el','en','eo','es','et','eu','fa','ff',
+  'fi','fj','fo','fr','fy','ga','gd','gl','gn','gu','gv','ha','he','hi','ho','hr','ht','hu','hy','hz','ia','id',
+  'ie','ig','ii','ik','io','is','it','iu','ja','jv','ka','kg','ki','kj','kk','kl','km','kn','ko','kr','ks','ku',
+  'kv','kw','ky','lb','lg','li','ln','lo','lt','lu','lv','mg','mh','mi','mk','ml','mn','mr','ms','mt','my','na',
+  'nb','nd','ne','ng','nl','nn','no','nr','nv','ny','oc','oj','om','or','os','pa','pi','pl','ps','pt','qu','rm',
+  'rn','ro','ru','rw','sa','sc','sd','se','sg','si','sk','sl','sm','sn','so','sq','sr','ss','st','su','sv','sw',
+  'ta','te','tg','th','ti','tk','tl','tn','to','tr','ts','tt','tw','ty','ug','uk','ur','uz','ve','vi','vo','wa',
+  'wo','xh','yi','yo','za','zh','zu',
+]);
+
+/**
+ * The niches a partner may claim: the directory's own topics, busiest first,
+ * minus the language tags. Resolved per request, so a topic that appeared this
+ * week is claimable this week. Capped, because the full list is thousands long
+ * and a checkbox for each is not a form anybody fills in.
  */
 async function niches() {
   const { rows } = await db().execute({
-    sql: 'select slug from topics order by feed_count desc, slug limit 40',
+    sql: 'select slug from topics where feed_count >= 2 order by feed_count desc, slug limit 80',
     args: [],
   });
-  return rows.map((r) => String(r.slug));
+  return rows
+    .map((r) => String(r.slug))
+    .filter((slug) => !LANGUAGE_CODES.has(slug))
+    .slice(0, 40);
 }
 
 /** @type {ReturnType<typeof createPartners> | null} */
