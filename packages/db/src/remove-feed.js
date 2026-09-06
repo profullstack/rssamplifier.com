@@ -64,7 +64,11 @@ async function main() {
   console.log(`${result.host} is now refused by every insert path`);
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+// connect() may open a Redis-backed write queue that holds the event loop, so
+// the script says when it is done rather than waiting for something to close.
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
