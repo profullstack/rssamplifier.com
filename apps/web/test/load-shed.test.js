@@ -12,9 +12,33 @@ import { admit, inflight, limit, reset } from '../src/lib/loadShed.js';
  * everything with nothing in flight.
  */
 
+// The ceiling is a container-wide number divided between the workers, so a
+// test that asserts on the number a process actually enforces has to say how
+// many workers there are. One, here: these tests are about the accounting, and
+// the division has its own tests in workers.test.js.
 test.beforeEach(() => {
   delete process.env.WEB_MAX_INFLIGHT;
+  process.env.WEB_WORKERS = '1';
   reset();
+});
+
+test.after(() => {
+  delete process.env.WEB_WORKERS;
+});
+
+test('the configured ceiling is divided between the workers', () => {
+  process.env.WEB_MAX_INFLIGHT = '128';
+  process.env.WEB_WORKERS = '16';
+  assert.equal(limit(), 8, 'each of sixteen workers gets an eighth of a container-wide 128');
+
+  process.env.WEB_WORKERS = '1';
+  assert.equal(limit(), 128, 'one worker gets all of it');
+});
+
+test('a share never rounds down to nothing', () => {
+  process.env.WEB_MAX_INFLIGHT = '4';
+  process.env.WEB_WORKERS = '16';
+  assert.equal(limit(), 1, 'a worker that may admit nothing would refuse every request');
 });
 
 test('admits up to the limit and refuses the next', () => {

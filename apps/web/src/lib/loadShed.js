@@ -49,8 +49,10 @@
  * standing Next up.
  */
 
+import { share } from './workers.js';
+
 /**
- * How many requests may be in flight.
+ * How many requests may be in flight, across the whole container.
  *
  * Sized from the incident: the process survived an hour at roughly 20 a
  * second with sub-second responses, which is fewer than twenty in flight, and
@@ -60,6 +62,12 @@
  * process's footprint is bounded at the cap times one request's worth of
  * work — tens of megabytes at the top end — rather than at whatever the
  * arrival rate happens to be.
+ *
+ * Since 2026-09-07 the container runs one server per CPU rather than one in
+ * total (`workers.js`), and this number is divided between them. It stayed as
+ * a container-wide figure on purpose: it was sized against a container's heap,
+ * and giving each of sixteen workers the whole of it would raise the real
+ * ceiling to 2,048 and hand back the outage it was written to prevent.
  */
 const DEFAULT_LIMIT = 128;
 
@@ -75,7 +83,12 @@ const DEFAULT_LIMIT = 128;
 const ALWAYS = /^\/(?:_next\/static\/|icons\/|favicon\.ico$|manifest\.webmanifest$|sw\.js$|robots\.txt$)/;
 
 /**
- * The limit, from the environment when it is set to something sensible.
+ * This process's limit, from the environment when it is set to something
+ * sensible.
+ *
+ * `WEB_MAX_INFLIGHT` is read as a container-wide number, like the default it
+ * replaces, and divided the same way — so the dial keeps meaning what it meant
+ * before there were workers, and raising it does not have to be done per CPU.
  *
  * Read through a non-literal property access for the reason `lib/db.js` gives,
  * and junk falls back to the default rather than to unlimited, for the reason
@@ -86,7 +99,8 @@ const ALWAYS = /^\/(?:_next\/static\/|icons\/|favicon\.ico$|manifest\.webmanifes
 export function limit() {
   const env = process.env;
   const raw = Number(env['WEB_MAX_INFLIGHT']);
-  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_LIMIT;
+  const total = Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_LIMIT;
+  return share(total);
 }
 
 /** Requests currently being worked on. */
