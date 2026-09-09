@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { SIGNED_IN_HINT_COOKIE, hintToRestore } from './lib/session-hint.js';
 import { challenge } from './lib/challenge.js';
-import { gate, hasValidPass } from './lib/crawl-gateway.js';
+import { gate, gateway, hasValidPass } from './lib/crawl-gateway.js';
 import { attempt, callerIdentity } from './lib/crawlThrottle.js';
 import { countRequest } from './lib/trafficCounter.js';
 import { TIERS, tierFor } from './lib/tiers.js';
@@ -126,11 +126,26 @@ export async function proxy(request) {
 /**
  * The refusal.
  *
- * Says which rung the caller is on and what the next one costs, because a 429
- * that only says "slow down" leaves a caller with nothing to do but retry —
- * and the whole point of a ladder is that there is somewhere to go. The upgrade
- * path is spelled out rather than linked alone: an agent reading this is
- * exactly the reader who can act on it without a human.
+ * Says which rung the caller is on and what the next one costs, because a
+ * refusal that only says "slow down" leaves a caller with nothing to do but
+ * retry — and the whole point of a ladder is that there is somewhere to go. The
+ * upgrade path is spelled out rather than linked alone: an agent reading this
+ * is exactly the reader who can act on it without a human.
+ *
+ * ## Why this is a 402 and not a 429
+ *
+ * It said the price in prose and then made the reader go and fetch /crawl to
+ * find out what to sign. An x402 client cannot act on prose. Carrying the
+ * offer here — the same one /crawl serves, read straight off the gateway so
+ * the two can never quote different numbers — means a program that hits the
+ * wall can pay and carry on inside the same exchange, which is the difference
+ * between a price and a sign about a price. Tripping the anonymous rung takes
+ * 120 requests in a minute against a steady reader's thirty, so the caller
+ * being answered here is a machine.
+ *
+ * The paid rungs still get 429. A caller at the sponsor ceiling has already
+ * bought everything there is, and answering it 402 would be asking it to pay
+ * twice for nothing.
  *
  * @param {{ retryAfter: number }} verdict
  * @param {{ name: string, burst: number, hourly: number }} tier
@@ -167,8 +182,17 @@ function tooMany(verdict, tier) {
           how: 'Fetch https://rssamplifier.com/crawl with Accept: application/json for an x402 offer, pay it, then send the pass in the x-crawl-pass header. No account and no human needed.',
         };
 
+  /*
+   * The offer itself, for the rungs that can still buy one. Read off the
+   * gateway rather than rebuilt here: payTo, the price, the currency and the
+   * network live in one place, and a second copy is how a site ends up quoting
+   * a number its own /crawl disagrees with.
+   */
+  const offer = buyable ? gateway.offer() : null;
+
   return NextResponse.json(
     {
+      ...(offer ?? {}),
       error: 'rate limit exceeded',
       // Said plainly, because the alternative is that they guess and retry. The
       // directory is still open to them; this is a speed limit, not a door.
@@ -180,7 +204,7 @@ function tooMany(verdict, tier) {
       retryAfter: verdict.retryAfter,
     },
     {
-      status: 429,
+      status: offer ? 402 : 429,
       headers: {
         'retry-after': String(verdict.retryAfter),
         'cache-control': 'no-store',

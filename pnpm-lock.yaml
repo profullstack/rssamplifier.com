@@ -56,8 +56,8 @@ importers:
         specifier: workspace:*
         version: link:../cli
       '@profullstack/x402-gateway':
-        specifier: 0.4.0
-        version: 0.4.0
+        specifier: ^0.6.0
+        version: 0.6.0
       '@rssamplifier/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -626,8 +626,8 @@ packages:
     engines: {node: '>=20.19'}
     hasBin: true
 
-  '@profullstack/x402-gateway@0.4.0':
-    resolution: {integrity: sha512-Rk3dtpwgi5rOIcHvsRqv7XvbT8rEHyhN/d3zdtsPe8zQfhhYWEjuFuvd/2bIWoWZ6fILQRQOCbejOe2VCRlsNg==}
+  '@profullstack/x402-gateway@0.6.0':
+    resolution: {integrity: sha512-n9/7NixIM9wVOMGWDc+3RtFsGABG+HAYfkZ11JxoEIlF/FDRGEXbvHFlNL/M97RNy01964FhAbQp34OMJoxqZg==}
     engines: {node: '>=20.11'}
 
   '@simplewebauthn/browser@13.3.0':
@@ -1384,7 +1384,7 @@ snapshots:
       '@noble/curves': 2.4.0
       '@noble/hashes': 2.4.0
 
-  '@profullstack/x402-gateway@0.4.0': {}
+  '@profullstack/x402-gateway@0.6.0': {}
 
   '@simplewebauthn/browser@13.3.0': {}
 
