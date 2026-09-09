@@ -117,14 +117,33 @@ test('importOpml reads xmlUrl and htmlUrl out of a subscription list', async () 
 });
 
 test('nextIntervalMinutes backs off quiet feeds and rushes active ones', () => {
-  // A feed that published goes straight back to the floor.
-  assert.equal(nextIntervalMinutes(3, 1440), 60);
+  // A feed that published goes straight back to the floor, however far out it
+  // had drifted. The floor is fifteen minutes: a feed that published on its last
+  // crawl is the one case where we know the publisher is active right now, and
+  // an hour of latency there is most of the value of indexing it at all.
+  assert.equal(nextIntervalMinutes(3, 1440), 15);
+  assert.equal(nextIntervalMinutes(1, 15), 15);
   // A quiet one doubles…
+  assert.equal(nextIntervalMinutes(0, 15), 30);
   assert.equal(nextIntervalMinutes(0, 60), 120);
   assert.equal(nextIntervalMinutes(0, 120), 240);
   // …up to a day, and no further.
   assert.equal(nextIntervalMinutes(0, 1440), 1440);
-  assert.equal(nextIntervalMinutes(0, undefined), 120);
+  assert.equal(nextIntervalMinutes(0, undefined), 30);
+});
+
+test('a feed that publishes once and stops walks back to a day', () => {
+  // The ramp is two doublings longer than it was at a 60-minute floor. That is
+  // the price of the floor, and it is paid per burst rather than per feed per
+  // day, so it is worth knowing exactly how long it is.
+  const ladder = [];
+  let m = nextIntervalMinutes(2, 1440); // published, so back to the floor
+  ladder.push(m);
+  for (let i = 0; i < 8; i += 1) {
+    m = nextIntervalMinutes(0, m);
+    ladder.push(m);
+  }
+  assert.deepEqual(ladder, [15, 30, 60, 120, 240, 480, 960, 1440, 1440]);
 });
 
 test('submitCatalogue queues everything past the inline limit', async () => {

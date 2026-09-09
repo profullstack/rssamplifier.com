@@ -86,27 +86,27 @@ test('a re-crawl that stores nothing reports nothing', async () => {
   assert.equal(res.newItems, 0, 'items offered is not items stored');
 });
 
-test('a quiet feed backs off instead of being re-read hourly for ever', async () => {
+test('a quiet feed backs off instead of being re-read for ever', async () => {
   const feed = await seed();
   await crawlFeed(db, feed, { resolve });
 
   const first = await q.feedBySlug(db, 'quiet');
-  assert.equal(Number(first.fetch_interval_minutes), 60, 'a feed that just published stays hourly');
+  assert.equal(Number(first.fetch_interval_minutes), 15, 'a feed that just published sits at the floor');
 
   await crawlFeed(db, first, { resolve });
   const second = await q.feedBySlug(db, 'quiet');
-  assert.equal(Number(second.fetch_interval_minutes), 120, 'and one that did not, doubles');
+  assert.equal(Number(second.fetch_interval_minutes), 30, 'and one that did not, doubles');
 
   await crawlFeed(db, second, { resolve });
   const third = await q.feedBySlug(db, 'quiet');
-  assert.equal(Number(third.fetch_interval_minutes), 240);
+  assert.equal(Number(third.fetch_interval_minutes), 60);
 });
 
-test('a feed that publishes again drops straight back to hourly', async () => {
+test('a feed that publishes again drops straight back to the floor', async () => {
   const feed = await seed();
   await crawlFeed(db, feed, { resolve });
   await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve });
-  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 120);
+  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 30);
 
   const withNews = {
     ok: true,
@@ -118,7 +118,7 @@ test('a feed that publishes again drops straight back to hourly', async () => {
 
   const res = await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve: async () => withNews });
   assert.equal(res.newItems, 1);
-  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 60);
+  assert.equal(Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes), 15);
 });
 
 test('the stored item count tracks what is really there', async () => {
