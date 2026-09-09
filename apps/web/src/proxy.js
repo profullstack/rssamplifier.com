@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { SIGNED_IN_HINT_COOKIE, hintToRestore } from './lib/session-hint.js';
+import { challenge } from './lib/challenge.js';
 import { gate, gateway, hasValidPass } from './lib/crawl-gateway.js';
 import { attempt, callerIdentity } from './lib/crawlThrottle.js';
 import { countRequest } from './lib/trafficCounter.js';
@@ -9,7 +10,7 @@ import { TIERS, tierFor } from './lib/tiers.js';
 /**
  * The one thing that runs in front of every request.
  *
- * Four jobs, and they want different surfaces, which is the only reason this
+ * Five jobs, and they want different surfaces, which is the only reason this
  * file is more than it was:
  *
  *   0. Charge training crawlers. Reasoning in lib/crawl-gateway.js. First,
@@ -18,6 +19,12 @@ import { TIERS, tierFor } from './lib/tiers.js';
  *      and because the sales page at /crawl is answered here for everyone,
  *      whatever they wear. Same surface as the throttle: the pages and feeds
  *      are what a corpus crawl is after.
+ *   0.5. Ask a caller with no name to do some arithmetic. Reasoning in
+ *      lib/challenge.js, and it is off unless CHALLENGE_ENABLED and
+ *      CHALLENGE_SECRET are both set. After the gate, because a training
+ *      crawler is owed a 402 and an offer rather than a puzzle, and before the
+ *      throttle, because the whole point is that the throttle cannot see this
+ *      traffic: it arrives one request per address.
  *   1. Shape crawl traffic. Reasoning in lib/crawlThrottle.js. This wants to
  *      see *everything* an expensive caller can ask for — the API, the feed
  *      files, the framing proxy — because those are where the load actually is.
@@ -75,6 +82,19 @@ export async function proxy(request) {
    * questions. Reading it again is one HMAC, and only for a request that
    * actually presents a token.
    */
+  /*
+   * The arithmetic. Answers only a caller that is anonymous, asking for one of
+   * the three expensive page routes, and has not already solved one this hour;
+   * everyone else falls straight through, and with the feature off this is a
+   * single string comparison. Counted as a refusal for the same reason the gate
+   * and the 429 are: a limit that hides what it turned away cannot be tuned.
+   */
+  const dare = await challenge(request);
+  if (dare) {
+    countRequest(request, tierFor(request).name, true);
+    return dare;
+  }
+
   const tier = (await hasValidPass(request)) ? TIERS.pass : tierFor(request);
 
   const verdict = attempt(callerIdentity(request), Date.now(), tier);
