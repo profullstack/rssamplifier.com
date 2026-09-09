@@ -145,3 +145,59 @@ test('the masthead repair still skips what has no masthead to fix', () => {
   assert.ok(!wants.test('/robots.txt'));
   assert.ok(!wants.test('/topics/physics.rss'), 'a feed is subscribed to, not read in a browser');
 });
+
+/**
+ * The refusal is a 402 carrying the offer, not a 429 describing one.
+ *
+ * It used to say the price in prose and send the reader off to /crawl to find
+ * out what to sign. An x402 client cannot act on prose, so a program that hit
+ * the wall had the same two options it started with: slow down, or spread
+ * itself over a proxy pool. Carrying the offer means it can pay and carry on
+ * inside the same exchange.
+ *
+ * Read off the source for the same reason the matcher is: importing proxy.js
+ * under node:test fails on a bare `next/server` specifier, which is why none
+ * of the tests above drive the proxy either.
+ */
+test('the refusal carries an offer a program can pay', () => {
+  const source = proxySource();
+
+  assert.match(
+    source,
+    /const offer = buyable \? gateway\.offer\(\) : null;/,
+    'the offer is read off the gateway, so /crawl and this can never quote different numbers',
+  );
+  assert.match(
+    source,
+    /status: offer \? 402 : 429/,
+    'a rung that can still buy something is answered 402; one that cannot stays 429',
+  );
+  assert.ok(
+    source.includes('...(offer ?? {}),'),
+    'and the accepts array is spread into the body',
+  );
+  assert.ok(
+    !/\bstatus: 429\b/.test(source),
+    'no refusal is left answering a flat 429 with a price only a person can read',
+  );
+});
+
+test('the offer the refusal carries is payable', async () => {
+  // The half that cannot be read off the source: that gateway.offer() is a
+  // real x402 offer rather than an empty accepts list. Without a CoinPay key
+  // and a payTo it is empty by design, and the refusal falls back to 429.
+  const { gateway } = await import('../src/lib/crawl-gateway.js');
+  const offer = gateway.offer();
+
+  assert.equal(offer.x402Version, 2, 'an x402 v2 offer');
+  assert.ok(Array.isArray(offer.accepts), 'with an accepts array');
+
+  if (gateway.enabled) {
+    assert.ok(offer.accepts.length > 0, 'naming at least one network to pay on');
+    for (const entry of offer.accepts) {
+      assert.equal(entry.scheme, 'exact');
+      assert.ok(entry.payTo, 'and where the money goes');
+      assert.ok(BigInt(entry.amount) > 0n, 'and how much');
+    }
+  }
+});
