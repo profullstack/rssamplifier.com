@@ -1,0 +1,29 @@
+{
+  "openaccess": "0.1",
+  "name": "RSS Amplifier",
+  "url": "https://rssamplifier.com",
+  "operator": "https://logicsrc.com/.well-known/openprofile.md",
+  "redirect_uris": [
+    "https://rssamplifier.com/api/v1/openaccess/callback"
+  ],
+  "jwks": {
+    "keys": [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": "-9Ogw6f1hY3J",
+        "x": "aJKg8Jo8F7K8FxI3sKvxtYLUeOD9Y9dP4eUcPQZ7qLA",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    ]
+  },
+  "scopes": {},
+  "honours": [
+    "profullstack.com/all-access"
+  ],
+  "webhooks": "https://rssamplifier.com/api/v1/openaccess/events",
+  "hubs": [
+    "https://openaccess.logicsrc.com"
+  ]
+}
