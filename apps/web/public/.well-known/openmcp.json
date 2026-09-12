@@ -1,0 +1,34 @@
+{
+  "openmcp": "0.1",
+  "mcp": "https://rssamplifier.com/api/mcp",
+  "name": "RSS Amplifier",
+  "description": "An open directory of independent blogs, podcasts and feeds: search, topics, read a post.",
+  "url": "https://rssamplifier.com",
+  "auth": {
+    "kind": "none"
+  },
+  "tags": [
+    "rss",
+    "blogs",
+    "podcasts",
+    "directory"
+  ],
+  "operator": "https://logicsrc.com/.well-known/openprofile.md",
+  "tools": [
+    "search",
+    "list_feeds",
+    "get_feed",
+    "list_topics",
+    "get_topic",
+    "topic_posts",
+    "read_post",
+    "random_feed",
+    "list_authors",
+    "get_author",
+    "directory_stats",
+    "submit_feed"
+  ],
+  "catalogs": [
+    "https://openmcp.logicsrc.com"
+  ]
+}
