@@ -229,3 +229,36 @@ test('a ring goes when its topic does not, and a member goes with its feed', asy
   const { rows } = await db.execute({ sql: "select count(*) as n from ring_members where ring_slug = 'chemistry'", args: [] });
   assert.equal(Number(rows[0].n), 0);
 });
+
+test('ring topics come from what publishers file under, never the commonest word, and a stale ring goes', async () => {
+  // "one" is the commonest phrase in every feed's prose (source content); "de"
+  // is a two-letter tag. Neither is a subject.
+  for (const who of ['carol', 'alice', 'bob', 'other']) {
+    await db.execute({
+      sql: 'insert or ignore into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?)',
+      args: [feeds[who].id, 'one', 'one', 1, 900, 'content'],
+    });
+    await db.execute({
+      sql: 'insert or ignore into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?)',
+      args: [feeds[who].id, 'de', 'de', 1, 50, 'category'],
+    });
+  }
+  await q.refreshTopics(db, 1);
+
+  const top = await webrings.topRingTopics(db, { count: 5, minFeeds: 1 });
+  assert.deepEqual(
+    top.map((t) => t.slug),
+    ['physics', 'chemistry'],
+    'physics has three linkable feeds filed under it, chemistry one; one is prose, de is too short',
+  );
+  assert.equal(top[0].feed_count, await webrings.topicRingSize(db, 'physics'), 'counted on the feeds a ring can use, not the rollup');
+
+  // A ring made under the old ranking, with nobody active in it, is dropped
+  // when its topic no longer qualifies; a qualifying ring stays.
+  await webrings.seedTopicRing(db, 'one');
+  assert.ok(await webrings.ringBySlug(db, 'one'));
+  const gone = await webrings.dropStaleTopicRings(db, ['physics', 'chemistry'], { keepActive: 1 });
+  assert.deepEqual(gone, ['one']);
+  assert.equal(await webrings.ringBySlug(db, 'one'), null);
+  assert.ok(await webrings.ringBySlug(db, 'physics'), 'the qualifying ring is untouched');
+});
