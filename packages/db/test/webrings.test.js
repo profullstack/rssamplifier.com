@@ -22,7 +22,7 @@ const feeds = {};
 
 /**
  * @param {string} slug
- * @param {{ site?: string|null, status?: string, topics?: string[], created?: string }} [opts]
+ * @param {{ site?: string|null, status?: string, topics?: string[], created?: string, count?: number }} [opts]
  */
 async function feed(slug, opts = {}) {
   const row = await q.insertFeed(db, {
@@ -40,7 +40,7 @@ async function feed(slug, opts = {}) {
   for (const topic of opts.topics ?? ['physics']) {
     await db.execute({
       sql: 'insert into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?)',
-      args: [row.id, topic, topic === 'physics' ? 'Physics' : topic, 1, 3, 'category'],
+      args: [row.id, topic, topic === 'physics' ? 'Physics' : topic, 1, opts.count ?? 3, 'category'],
     });
   }
   feeds[slug] = row;
@@ -52,11 +52,12 @@ before(async () => {
   db = connect({ url: `file:${join(dir, 'test.db')}` });
   await migrate(db);
 
-  // Admission order is deliberately not alphabetical and not the order the
-  // topic strength would give, so the test can tell the three apart.
-  await feed('carol', { created: '2026-01-03T00:00:00.000Z' });
-  await feed('alice', { created: '2026-01-01T00:00:00.000Z' });
-  await feed('bob', { created: '2026-01-02T00:00:00.000Z' });
+  // Ring order is the topic's own strength, strongest first. Insertion order
+  // and the alphabet are both deliberately different from it, so the test
+  // can tell the three apart.
+  await feed('carol', { created: '2026-01-03T00:00:00.000Z', count: 3 });
+  await feed('alice', { created: '2026-01-01T00:00:00.000Z', count: 9 });
+  await feed('bob', { created: '2026-01-02T00:00:00.000Z', count: 6 });
   await feed('nosite', { created: '2026-01-01T12:00:00.000Z', site: null });
   await feed('dead', { created: '2026-01-01T13:00:00.000Z', status: 'dead' });
   await feed('other', { created: '2026-01-01T14:00:00.000Z', topics: ['chemistry'] });
@@ -67,7 +68,7 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test('a topic ring is seeded in admission order, from the feeds that can link', async () => {
+test('a topic ring is seeded strongest first, from the feeds that can link', async () => {
   const result = await webrings.seedTopicRing(db, 'physics');
   assert.deepEqual(result, { slug: 'physics', created: true, added: 3, total: 3 });
 
