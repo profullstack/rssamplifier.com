@@ -219,3 +219,25 @@ test('the tiers are separately metered, so one does not spend another', () => {
 function hashOf(token) {
   return hashToken(token);
 }
+
+test('a house crawler gets the house rung on the two profile routes and nowhere else', () => {
+  resetTierCache();
+  const ua = 'niche-db/0.1 (+https://nichedb.dev)';
+  const at = (path, agent = ua) =>
+    tierFor(new Request(`https://rssamplifier.com${path}`, { headers: agent ? { 'user-agent': agent } : {} })).name;
+  assert.equal(at('/api/openprofiles?limit=500'), 'house');
+  assert.equal(at('/authors/ada-lovelace/openprofile.md'), 'house');
+  // Same crawler, any other route: free, as before.
+  assert.equal(at('/authors/ada-lovelace'), 'anon');
+  assert.equal(at('/api/authors'), 'anon');
+  assert.equal(at('/topics'), 'anon');
+  // Same routes, any other caller: free, as before.
+  assert.equal(at('/api/openprofiles', 'curl/8.0'), 'anon');
+  assert.equal(at('/api/openprofiles', 'Mozilla/5.0 niche-db/0.1'), 'anon');
+  // A session or a key still places the caller by what it carries.
+  const r = new Request('https://rssamplifier.com/api/openprofiles', {
+    headers: { 'user-agent': ua, cookie: 'rsa_session=abc' },
+  });
+  assert.equal(tierFor(r).name, 'session');
+  assert.ok(TIERS.house.burst >= 600, 'the house rung is at least 600 a minute');
+});

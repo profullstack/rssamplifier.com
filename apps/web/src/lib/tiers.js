@@ -117,7 +117,44 @@ export const TIERS = {
    * unchanged here.
    */
   pass: { name: 'pass', burst: envInt('TIER_SPONSOR_BURST', 2_000), hourly: SPONSOR_HOURLY },
+  /**
+   * A house crawler on the profile routes.
+   *
+   * nichedb.dev pulls every author's OpenProfile.md into its people collection
+   * (nichedb.dev/c/profiles). It names itself in its user agent and wants two
+   * things only: the listing at /api/openprofiles and the files the listing
+   * names. Under the free rung (120 a minute, 600 an hour) a backfill of two
+   * hundred thousand authors takes days; at 600 a minute it takes hours. The
+   * rung exists for those two routes and no other, so a stranger wearing the
+   * string gains a signed-in reader's pace on the two cheapest routes on the
+   * site and nothing anywhere else.
+   */
+  house: { name: 'house', burst: envInt('TIER_HOUSE_BURST', 600), hourly: envInt('TIER_HOUSE_HOURLY', 36_000) },
 };
+
+/** User agent prefixes of the house crawlers, as they identify themselves. */
+export const HOUSE_CRAWLERS = ['niche-db/'];
+
+/** The routes the house rung applies to, and nothing else. */
+const HOUSE_ROUTES = [/^\/api\/openprofiles$/, /^\/authors\/[^/]+\/openprofile\.md$/];
+
+/**
+ * Whether this request is a house crawler asking for a profile route.
+ *
+ * @param {Request} request
+ * @returns {boolean}
+ */
+export function isHouseCrawl(request) {
+  const ua = (request.headers.get('user-agent') ?? '').trim();
+  if (!HOUSE_CRAWLERS.some((prefix) => ua.startsWith(prefix))) return false;
+  let pathname;
+  try {
+    pathname = /** @type {any} */ (request).nextUrl?.pathname ?? new URL(request.url).pathname;
+  } catch {
+    return false;
+  }
+  return HOUSE_ROUTES.some((re) => re.test(pathname));
+}
 
 /**
  * Validated sponsor keys, by hash, with the time they were checked.
@@ -203,6 +240,11 @@ export function tierFor(request) {
   if (cookie) return TIERS.session;
 
   if (/(^|;\s*)rsa_session=[^;]/.test(request.headers.get('cookie') ?? '')) return TIERS.session;
+
+  // Below the cookie and the key on purpose: a house crawler carrying either
+  // is placed by what it carries, and the string only matters when it is all
+  // the request has to say for itself.
+  if (isHouseCrawl(request)) return TIERS.house;
 
   return TIERS.anon;
 }
