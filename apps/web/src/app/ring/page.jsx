@@ -1,6 +1,8 @@
 import { webrings } from '@rssamplifier/db';
+import { Plus, Tag } from 'lucide-react';
 
 import { db, siteUrl } from '../../lib/db.js';
+import { Button } from '@/components/ui/button';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,10 +33,24 @@ export default async function RingsPage() {
     <>
       <h1>Webrings</h1>
       <p className="lede">
-        One ring per subject the directory covers well. Each is an ordered, circular list of member
-        sites with three hops: next, previous and random. A member site owes the ring one plain link
-        and nothing else, and is free to say who makes it: humans, AI, or both.
+        Every topic in the directory is a ring, and anyone can make one of their own. A ring is an
+        ordered, circular list of member sites with three hops: next, previous and random. A member
+        site owes the ring one plain link and nothing else, and is free to say who makes it: humans,
+        AI, or both.
       </p>
+
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        <Button asChild size="sm">
+          <a href="/ring/new">
+            <Plus /> Make a ring
+          </a>
+        </Button>
+        <Button asChild variant="outline" size="sm">
+          <a href="/topics" title="Any topic page has a Webring button; the ring is at /ring/<topic>">
+            <Tag /> Every topic is a ring
+          </a>
+        </Button>
+      </div>
 
       {rings.length === 0 ? (
         <p className="empty">

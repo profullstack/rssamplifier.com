@@ -399,9 +399,11 @@ export async function seedTopRings(db, opts = {}) {
 
   // A topic ring made under an earlier ranking (the first seed took the
   // rollup's top of the table, which is stopwords) goes when its topic no
-  // longer qualifies and nobody has linked to it yet.
+  // longer qualifies and nobody has linked to it yet. One linking member is
+  // enough to stay: a ring that a site links to is a ring somebody uses,
+  // whether or not its topic is still in the top of the table.
   try {
-    const gone = await webrings.dropStaleTopicRings(db, candidates.map((t) => t.slug), { keepActive: minMembers });
+    const gone = await webrings.dropStaleTopicRings(db, candidates.map((t) => t.slug), { keepActive: 1 });
     tally.dropped = gone.length;
   } catch (err) {
     opts.onError?.('(drop stale)', err);

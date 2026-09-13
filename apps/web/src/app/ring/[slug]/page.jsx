@@ -9,15 +9,17 @@ import {
   Eye,
   Link2,
   Link2Off,
+  Pencil,
   Rss,
   Shuffle,
+  Tag,
   User,
   Users,
 } from 'lucide-react';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
-import { loadRing } from '../../../lib/rings.js';
+import { loadRing, ownsRing } from '../../../lib/rings.js';
 import { joinSnippet, madeByLabel, ringUrl } from '../../../lib/openwebring.js';
 import { feedImage } from '../../../lib/thumbs.js';
 import { decodeXml } from '../../../lib/opml-scan.js';
@@ -101,6 +103,7 @@ export default async function RingPage({ params, searchParams }) {
   const said = { human: 0, ai: 0, both: 0 };
   for (const m of members) if (m.made_by && m.made_by in said) said[m.made_by] += 1;
   const unstated = members.length - said.human - said.ai - said.both;
+  const owner = ownsRing(user, ring);
   const checked = typeof query.checked === 'string' ? query.checked : '';
   const outcome = typeof query.status === 'string' ? query.status : '';
 
@@ -145,11 +148,25 @@ export default async function RingPage({ params, searchParams }) {
             Next <ChevronRight />
           </a>
         </Button>
-        <Button asChild variant="secondary" size="sm" className="sm:ml-auto">
+        <Button asChild variant="secondary" size="sm">
           <a href={`${page}/opml`} title="Every member's feed, as an OPML subscription list">
             <Rss /> Subscribe to all
           </a>
         </Button>
+        {ring.topic_slug && (
+          <Button asChild variant="ghost" size="sm">
+            <a href={`/topics/${encodeURIComponent(ring.topic_slug)}`} title="The same feeds, as a topic page">
+              <Tag /> Topic page
+            </a>
+          </Button>
+        )}
+        {owner && (
+          <Button asChild variant="ghost" size="sm" className="sm:ml-auto">
+            <a href={`${path}/edit`}>
+              <Pencil /> Edit ring
+            </a>
+          </Button>
+        )}
       </div>
 
       <div className="mb-6 flex flex-wrap gap-1.5">
@@ -173,6 +190,11 @@ export default async function RingPage({ params, searchParams }) {
           </Badge>
         )}
         {unstated > 0 && <Badge variant="outline">{unstated} unstated</Badge>}
+        {ring.virtual && (
+          <Badge variant="secondary" title="This ring is the topic's feeds, recomputed on each crawl, until a member site links back">
+            live from the topic
+          </Badge>
+        )}
       </div>
 
       {checked && (

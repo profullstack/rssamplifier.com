@@ -40,7 +40,13 @@ export async function loadRing(slug) {
 
   const client = db();
   const ring = await webrings.ringBySlug(client, key);
-  const value = ring && ring.public ? { ring, members: await webrings.membersOf(client, key) } : null;
+  // No row is not no ring: every topic is a ring, computed from the topic's
+  // own feeds until a site links back and it earns a row.
+  const value = ring
+    ? ring.public
+      ? { ring, members: await webrings.membersOf(client, key) }
+      : null
+    : await webrings.topicRingPreview(client, key);
 
   if (loaded.size > 1000) loaded.clear();
   loaded.set(key, { at: Date.now(), value });
@@ -120,6 +126,13 @@ export async function checkMemberNow(ring, member) {
   if (!result) return null;
 
   const status = statusAfter(result, member.status);
+  if (ring.ring.virtual) {
+    // A computed topic ring becomes a row the moment a site links back. A
+    // check that found no link is answered and not remembered: there is no
+    // row to remember it against, and the site will ask again once it links.
+    if (status !== 'active') return { status, result };
+    await webrings.seedTopicRing(db(), ring.ring.slug);
+  }
   await webrings.recordCheck(db(), ring.ring.slug, member.feed_id, {
     status,
     madeBy: result.madeBy,
@@ -140,4 +153,15 @@ export async function profilesForFeed(feedId) {
   const client = db();
   const credited = await authors.authorsForFeed(client, feedId);
   return Promise.all(credited.map((person) => profiles.profileForAuthor(client, String(person.id))));
+}
+
+/**
+ * Whether this account made the ring, and so may edit it.
+ *
+ * @param {{ id: string|number }|null} user
+ * @param {{ owner_id?: string|null }} ring
+ * @returns {boolean}
+ */
+export function ownsRing(user, ring) {
+  return Boolean(user && ring.owner_id && String(ring.owner_id) === String(user.id));
 }

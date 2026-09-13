@@ -66,7 +66,7 @@ export const MEMBER_STATUS = ['active', 'inactive', 'pending'];
  */
 const RING_SELECT = `
   select r.slug, r.title, r.description, r.kind, r.topic_slug, r.accepts, r.public,
-         r.created_at, r.updated_at,
+         r.owner_id, r.created_at, r.updated_at,
          (select count(*) from ring_members m where m.ring_slug = r.slug) as member_count,
          (select count(*) from ring_members m where m.ring_slug = r.slug and m.status = 'active') as active_count,
          max(r.updated_at,
@@ -95,6 +95,7 @@ function shapeRing(row) {
     kind: /** @type {'topic'|'curated'} */ (String(row.kind)),
     topic_slug: row.topic_slug == null ? null : String(row.topic_slug),
     accepts,
+    owner_id: row.owner_id == null ? null : String(row.owner_id),
     public: Number(row.public ?? 1) === 1,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
@@ -581,4 +582,221 @@ export async function setMemberMadeBy(db, ringSlug, feedId, word) {
     args: [ringSlug, feedId],
   });
   return rows[0] ? shapeMember(rows[0]) : null;
+}
+
+/* ------------------------------------------------------------ every topic */
+
+/**
+ * A topic as a ring, computed rather than stored.
+ *
+ * Every topic is a ring: the same feeds the topic page lists, in the topic's
+ * own order, strongest first. Nothing is written. The ring becomes a row the
+ * moment a member site actually links back (see the check route), and until
+ * then it is re-derived on each load, which is the same freshness the topic
+ * page has. Null when the topic has no feed with a site to link from.
+ *
+ * The members carry the same shape as stored members, all `pending` and all
+ * unstated, and the ring says `virtual: true` so a writer knows there is no
+ * row under it yet.
+ *
+ * @param {Client} db
+ * @param {string} topicSlug
+ * @param {{ limit?: number }} [opts]
+ * @returns {Promise<{ ring: Ring & { virtual: true }, members: RingMember[] }|null>}
+ */
+export async function topicRingPreview(db, topicSlug, opts = {}) {
+  const limit = Math.max(1, Number(opts.limit ?? DEFAULT_RING_LIMIT) || DEFAULT_RING_LIMIT);
+  // The same driving index and join order as topicRingCandidates; see there
+  // for why the planner must not be left to choose.
+  const { rows } = await db.execute({
+    sql: `select f.id as feed_id, f.slug as member_slug, f.site_url, f.created_at as joined_at,
+                 f.title, f.feed_url, f.language, f.description, f.image_url, f.card_url,
+                 f.item_count, f.category
+            from feed_keywords k indexed by feed_keywords_slug_idx
+            cross join feeds f on f.id = k.feed_id
+           where k.slug = ?
+             and f.status = 'active'
+             and f.site_url is not null and f.site_url <> ''
+           order by k.count desc
+           limit ?`,
+    args: [topicSlug, limit],
+  });
+  if (rows.length === 0) return null;
+
+  const rolled = await db.execute({ sql: `select keyword from topics where slug = ?`, args: [topicSlug] });
+  const title = rolled.rows[0]?.keyword ? String(rolled.rows[0].keyword) : topicSlug;
+  const now = nowIso();
+  const members = rows.map((r, i) =>
+    shapeMember({
+      ...r,
+      ring_slug: topicSlug,
+      position: i + 1,
+      made_by: null,
+      made_by_source: null,
+      disclosure: null,
+      descriptor_url: null,
+      status: 'pending',
+      checked_at: null,
+    }),
+  );
+  return {
+    ring: {
+      slug: topicSlug,
+      title,
+      description: null,
+      kind: 'topic',
+      topic_slug: topicSlug,
+      accepts: null,
+      owner_id: null,
+      public: true,
+      created_at: now,
+      updated_at: now,
+      member_count: members.length,
+      active_count: 0,
+      updated: now,
+      virtual: /** @type {const} */ (true),
+    },
+    members,
+  };
+}
+
+/* --------------------------------------------------------- your own ring */
+
+/**
+ * A ring somebody makes on the site. Public from the moment it exists: it is
+ * on the host file, the ring index and the hops as soon as this returns.
+ *
+ * @param {Client} db
+ * @param {{ slug: string, title: string, description?: string|null, ownerId: string }} ring
+ * @returns {Promise<Ring|null>} null when the slug is taken
+ */
+export async function createRing(db, { slug, title, description = null, ownerId }) {
+  const now = nowIso();
+  const done = await db.execute({
+    sql: `insert into rings (slug, title, description, kind, topic_slug, accepts, public, owner_id, created_at, updated_at)
+          values (?, ?, ?, 'curated', null, null, 1, ?, ?, ?) on conflict (slug) do nothing`,
+    args: [slug, title, description || null, ownerId, now, now],
+  });
+  if (Number(done.rowsAffected ?? 0) === 0) return null;
+  return ringBySlug(db, slug);
+}
+
+/**
+ * @param {Client} db
+ * @param {string} slug
+ * @param {{ title?: string, description?: string|null }} patch
+ * @returns {Promise<void>}
+ */
+export async function updateRing(db, slug, patch) {
+  await db.execute({
+    sql: `update rings
+             set title = coalesce(?, title),
+                 description = case when ? then ? else description end,
+                 updated_at = ?
+           where slug = ?`,
+    args: [patch.title ?? null, 'description' in patch ? 1 : 0, patch.description ?? null, nowIso(), slug],
+  });
+}
+
+/**
+ * Append feeds to a ring, in the order given, after whoever is already there.
+ * A feed already in the ring keeps its place. Positions are never rewritten.
+ *
+ * @param {Client} db
+ * @param {string} ringSlug
+ * @param {Array<{ id: string, slug: string, site_url: string }>} feeds
+ * @returns {Promise<number>} how many were added
+ */
+export async function addRingMembers(db, ringSlug, feeds) {
+  const current = await db.execute({
+    sql: `select feed_id, position from ring_members where ring_slug = ?`,
+    args: [ringSlug],
+  });
+  const have = new Set(current.rows.map((r) => String(r.feed_id)));
+  let position = current.rows.reduce((max, r) => Math.max(max, Number(r.position)), 0);
+  const now = nowIso();
+  let added = 0;
+  for (const feed of feeds) {
+    if (!feed.site_url || have.has(String(feed.id))) continue;
+    position += 1;
+    await db.execute({
+      sql: `insert into ring_members (ring_slug, feed_id, member_slug, position, site_url, status, joined_at)
+            values (?, ?, ?, ?, ?, 'pending', ?) on conflict (ring_slug, feed_id) do nothing`,
+      args: [ringSlug, String(feed.id), String(feed.slug), position, String(feed.site_url), now],
+    });
+    have.add(String(feed.id));
+    added += 1;
+  }
+  if (added) await db.execute({ sql: `update rings set updated_at = ? where slug = ?`, args: [now, ringSlug] });
+  return added;
+}
+
+/**
+ * @param {Client} db
+ * @param {string} ringSlug
+ * @param {string} memberSlug
+ * @returns {Promise<boolean>}
+ */
+export async function removeRingMember(db, ringSlug, memberSlug) {
+  const done = await db.execute({
+    sql: `delete from ring_members where ring_slug = ? and member_slug = ?`,
+    args: [ringSlug, memberSlug],
+  });
+  const gone = Number(done.rowsAffected ?? 0) > 0;
+  if (gone) await db.execute({ sql: `update rings set updated_at = ? where slug = ?`, args: [nowIso(), ringSlug] });
+  return gone;
+}
+
+/**
+ * @param {Client} db
+ * @param {string} ownerId
+ * @returns {Promise<Ring[]>}
+ */
+export async function ringsOwnedBy(db, ownerId) {
+  const { rows } = await db.execute({
+    sql: `${RING_SELECT} where r.owner_id = ? order by r.updated_at desc`,
+    args: [ownerId],
+  });
+  return rows.map(shapeRing);
+}
+
+/**
+ * The feed somebody means when they type a site, a feed URL or a directory
+ * slug into a ring's member box. Null when it is not in the directory.
+ *
+ * @param {Client} db
+ * @param {string} input
+ * @returns {Promise<{ id: string, slug: string, site_url: string, title: string }|null>}
+ */
+export async function feedForRingInput(db, input) {
+  const raw = String(input ?? '').trim();
+  if (!raw) return null;
+  const cols = `id, slug, site_url, title`;
+  const shape = (/** @type {any} */ r) =>
+    r ? { id: String(r.id), slug: String(r.slug), site_url: String(r.site_url ?? ''), title: String(r.title ?? r.slug) } : null;
+
+  if (!/^https?:\/\//i.test(raw)) {
+    const bySlug = await db.execute({
+      sql: `select ${cols} from feeds where slug = ? and status <> 'dead' limit 1`,
+      args: [raw.toLowerCase().replace(/^\/+|\/+$/g, '')],
+    });
+    return shape(bySlug.rows[0]);
+  }
+
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  const bare = `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+  const variants = [raw, bare, `${bare}/`];
+  const found = await db.execute({
+    sql: `select ${cols} from feeds
+           where (feed_url in (?, ?, ?) or site_url in (?, ?, ?)) and status <> 'dead'
+           order by case when site_url in (?, ?, ?) then 0 else 1 end, item_count desc
+           limit 1`,
+    args: [...variants, ...variants, ...variants],
+  });
+  return shape(found.rows[0]);
 }
