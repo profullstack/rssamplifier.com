@@ -1,6 +1,7 @@
 import { q, newId, authors as people } from '@rssamplifier/db';
 import { topicSlug } from '@rssamplifier/feed';
 import { submitCatalogue, hashIp, EXPRESS_MAX } from '@rssamplifier/ingest';
+import { submitFeedTool } from '@profullstack/submit-feed/core';
 
 import { db, siteUrl } from '../db.js';
 import { readerView } from '../reader.js';
@@ -521,24 +522,13 @@ export const TOOLS = [
     },
   },
 
-  {
-    name: 'submit_feed',
-    title: 'Add a feed to the directory',
-    description:
-      'Submit one URL or a list of them. A site URL works as well as a feed URL — the feed is discovered from the page. Anyone may submit; there is no account and no review queue. Feeds resolve inline up to a handful and the rest are queued for the crawler, so the answer says which. Rate limited per caller.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        urls: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Feed or site URLs. One is fine.',
-          maxItems: 200,
-        },
-      },
-      required: ['urls'],
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  // The name, description, schema and annotations are the shared contract's,
+  // so an agent that learned submit_feed on p0dcasters.com finds the same tool
+  // here. Only `run` is this directory's: the ledger, the express lane and
+  // the status page are its own.
+  submitFeedTool({
+    directory: 'RSS Amplifier',
+    maxUrls: 200,
     async run(args, ctx) {
       const urls = (Array.isArray(args?.urls) ? args.urls : [args?.urls])
         .map((u) => String(u ?? '').trim())
@@ -602,7 +592,7 @@ export const TOOLS = [
         statusUrl: `${siteUrl()}/submissions/${submissionId}`,
       };
     },
-  },
+  }),
 ];
 
 /** @type {Map<string, Tool>} */

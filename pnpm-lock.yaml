@@ -55,6 +55,9 @@ importers:
       '@profullstack/rssamplifier':
         specifier: workspace:*
         version: link:../cli
+      '@profullstack/submit-feed':
+        specifier: ^0.1.1
+        version: 0.1.1
       '@profullstack/x402-gateway':
         specifier: ^0.6.0
         version: 0.6.0
@@ -145,6 +148,9 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
+      '@profullstack/submit-feed':
+        specifier: ^0.1.1
+        version: 0.1.1
       '@profullstack/x402-client':
         specifier: 0.2.0
         version: 0.2.0
@@ -620,6 +626,10 @@ packages:
     peerDependenciesMeta:
       react:
         optional: true
+
+  '@profullstack/submit-feed@0.1.1':
+    resolution: {integrity: sha512-lnBeS1dHEnQS+1pHslwMrc8uhY8yWm4A9x1dTagPAGLVh3vvUf1xO//3bV2c8r1XYYPUnIJdEWyIP7jptbwmPg==}
+    engines: {node: '>=20.11'}
 
   '@profullstack/x402-client@0.2.0':
     resolution: {integrity: sha512-kJGAomE9Tf/ruhsCStaKVXpjklCbOh2UFcMGTIfTqcWaSsW2NFWQRaTxJBLvc6r7Iy2+fpAWzfJnerolI6IrRQ==}
@@ -1378,6 +1388,10 @@ snapshots:
       mpegts.js: 1.8.2
     optionalDependencies:
       react: 19.2.8
+
+  '@profullstack/submit-feed@0.1.1':
+    dependencies:
+      fast-xml-parser: 5.10.1
 
   '@profullstack/x402-client@0.2.0':
     dependencies:
