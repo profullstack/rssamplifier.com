@@ -109,8 +109,8 @@ a {
   width: auto;
 }
 
-/* Mobile first, and on a phone that means closed: thirteen links in a row is
-   most of a small screen, so the nav starts folded behind the label and the
+/* Mobile first, and on a phone that means closed: the nav starts folded behind
+   the label and the
    wordmark gets the strip to itself. From 48rem up (below) it is a row again and
    the label disappears — the same markup, laid out for the space there is. */
 .masthead nav {
@@ -184,6 +184,80 @@ a {
    see the script at the top of the layout. */
 .signed-in .nav-signup {
   display: none;
+}
+
+.header-more {
+  position: relative;
+}
+
+.header-more > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: fit-content;
+  padding-bottom: 2px;
+  border-bottom: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.header-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.header-more > summary::after {
+  content: '';
+  width: 0.35rem;
+  height: 0.35rem;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.header-more[open] > summary::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.header-more > summary:hover,
+.header-more[open] > summary {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.header-more > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
+.header-more-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+
+.header-more-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.header-more-group > p {
+  margin: 0 0 0.45rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.masthead .header-more-panel a {
+  padding: 0.5rem 0;
 }
 
 /* ---------------------------------------------------------------- type */
@@ -1855,6 +1929,16 @@ select {
     font-size: 0.9rem;
     width: auto;
     padding-top: 0;
+  }
+
+  .header-more-panel {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 30;
+    width: 21rem;
+    max-width: calc(100vw - 2.5rem);
+    box-shadow: 0 12px 28px rgb(0 0 0 / 12%);
   }
 }
 
