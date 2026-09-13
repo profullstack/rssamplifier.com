@@ -82,7 +82,7 @@ function label(network) {
  *             site_url?: string|null, links?: Array<{ network: string, url: string, handle?: string|null }> },
  *   feeds: Array<{ id: string, slug: string, title: string, kind?: string|null, role?: string|null,
  *                  feed_url?: string|null, site_url?: string|null, language?: string|null }>,
- *   topicsByFeed?: Map<string, string[]>,
+ *   topicsByFeed?: Map<string, Array<{ keyword: string, source: string }>>,
  *   base: string,
  * }} input
  * @returns {import('@profullstack/openprofile').OpenProfileDoc}
@@ -112,12 +112,22 @@ export function generateAuthorProfile({ person, feeds, topicsByFeed, base }) {
   const seen = new Set();
   for (const f of feeds) {
     for (const t of topicsByFeed?.get(String(f.id)) ?? []) {
-      const key = t.toLowerCase();
+      const key = t.keyword.toLowerCase();
       if (seen.has(key) || topics.length >= MAX_TOPICS) continue;
       seen.add(key);
-      topics.push(t);
+      topics.push(t.keyword);
     }
   }
+
+  // A show's own Topics are the publisher's category tags and nothing else:
+  // a phrase the crawler counted out of the transcript ("episode", "listen")
+  // is the directory's reading, not what the host said the show is about.
+  const showTopics = (f) =>
+    (topicsByFeed?.get(String(f.id)) ?? [])
+      .filter((t) => t.source === 'category')
+      .slice(0, 8)
+      .map((t) => t.keyword)
+      .join(', ') || null;
 
   // Broadcast: one `### <show>` group per show they own. A feed they merely
   // write in is somebody else's show and is not theirs to describe.
@@ -131,7 +141,7 @@ export function generateAuthorProfile({ person, feeds, topicsByFeed, base }) {
       Language: f.language ?? null,
       Feed: f.feed_url ?? null,
       Listen: f.site_url ?? `${base}/${encodeURIComponent(String(f.slug))}`,
-      Topics: (topicsByFeed?.get(String(f.id)) ?? []).slice(0, 8).join(', ') || null,
+      Topics: showTopics(f),
     };
     const section = keyedSection('Broadcast', keys);
     return section ? `### ${f.title}\n\n${section.body}` : null;
@@ -144,7 +154,7 @@ export function generateAuthorProfile({ person, feeds, topicsByFeed, base }) {
           Language: shows[0].language ?? null,
           Feed: shows[0].feed_url ?? null,
           Listen: shows[0].site_url ?? `${base}/${encodeURIComponent(String(shows[0].slug))}`,
-          Topics: (topicsByFeed?.get(String(shows[0].id)) ?? []).slice(0, 8).join(', ') || null,
+          Topics: showTopics(shows[0]),
         })
       : groups.some(Boolean)
         ? { title: 'Broadcast', name: 'broadcast', body: groups.filter(Boolean).join('\n\n') }

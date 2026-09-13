@@ -53,8 +53,8 @@ const FEEDS = [
   },
 ];
 const TOPICS = new Map([
-  ['f1', ['history', 'mathematics']],
-  ['f2', ['mathematics', 'writing']],
+  ['f1', [{ keyword: 'history', source: 'category' }, { keyword: 'mathematics', source: 'content' }]],
+  ['f2', [{ keyword: 'mathematics', source: 'content' }, { keyword: 'writing', source: 'category' }]],
 ]);
 
 test('the generated file says what the author published, and nothing they did not', () => {
@@ -84,8 +84,9 @@ test('the generated file says what the author published, and nothing they did no
     Language: 'en',
     Feed: 'https://ada.example/podcast/feed.xml',
     Listen: 'https://ada.example/podcast',
-    Topics: 'history, mathematics',
+    Topics: 'history',
   });
+  assert.equal(shows[0].Topics, 'history', "a show's Topics are the publisher's own categories, not counted phrases");
   assert.equal('Seeking' in shows[0], false);
   assert.equal('Since' in shows[0], false, 'the feed window is not when the show started');
   assert.equal(doc.sections.some((s) => s.name === 'guest'), false, 'no Guest section unless the person wrote one');
