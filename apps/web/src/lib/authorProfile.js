@@ -25,10 +25,9 @@ export async function loadAuthorProfile(slug) {
 
   const feeds = person.feeds ?? [];
   const feedIds = feeds.map((f) => String(f.id));
-  const [profile, topicsByFeed, firstByFeed] = await Promise.all([
+  const [profile, topicsByFeed] = await Promise.all([
     profiles.profileForAuthor(client, String(person.id)),
     profiles.keywordsForFeeds(client, feedIds),
-    profiles.firstPublishedAt(client, feedIds),
   ]);
 
   const base = siteUrl();
@@ -36,7 +35,6 @@ export async function loadAuthorProfile(slug) {
     person,
     feeds,
     topicsByFeed,
-    firstByFeed,
     base,
     overrides: profile?.overrides ?? null,
   });
