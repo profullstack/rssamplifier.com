@@ -344,7 +344,7 @@ export async function verifyRingMembers(db, opts) {
  *
  * @param {import('@libsql/client').Client} db
  * @param {{ topics?: number, minMembers?: number, limit?: number, onError?: ((topic: string, err: unknown) => void)|null }} [opts]
- * @returns {Promise<{ rings: number, created: number, added: number, skipped: number, failed: number }>}
+ * @returns {Promise<{ rings: number, created: number, added: number, skipped: number, failed: number, dropped: number }>}
  */
 export async function seedTopRings(db, opts = {}) {
   const topics = Math.max(1, Number(opts.topics ?? 20) || 20);
@@ -355,7 +355,17 @@ export async function seedTopRings(db, opts = {}) {
   // on a topic, and a topic can be well covered by feeds that have no site
   // to link from or that the crawler has given up on.
   const candidates = await webrings.topRingTopics(db, { count: topics * 2, minFeeds: minMembers });
-  const tally = { rings: 0, created: 0, added: 0, skipped: 0, failed: 0 };
+  const tally = { rings: 0, created: 0, added: 0, skipped: 0, failed: 0, dropped: 0 };
+
+  // A topic ring made under an earlier ranking (the first seed took the
+  // rollup's top of the table, which is stopwords) goes when its topic no
+  // longer qualifies and nobody has linked to it yet.
+  try {
+    const gone = await webrings.dropStaleTopicRings(db, candidates.map((t) => t.slug), { keepActive: minMembers });
+    tally.dropped = gone.length;
+  } catch (err) {
+    opts.onError?.('(drop stale)', err);
+  }
 
   for (const topic of candidates) {
     if (tally.rings >= topics) break;

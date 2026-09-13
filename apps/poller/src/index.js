@@ -806,7 +806,7 @@ async function ringTick() {
       lastRingSeed = Date.now();
       // Logged only when something changed: once the rings exist, a line
       // every six hours saying "0 added" is not a log.
-      if (seeded.created || seeded.added || seeded.failed) log('rings-seeded', seeded);
+      if (seeded.created || seeded.added || seeded.failed || seeded.dropped) log('rings-seeded', seeded);
     }
 
     const result = await verifyRingMembers(db, {

@@ -322,28 +322,88 @@ export async function seedTopicRing(db, topicSlug, opts = {}) {
   return { slug: topicSlug, created: !existing, added: fresh.length, total: have.size + fresh.length };
 }
 
+/** A ring needs a subject; a slug this short is a stopword or a language code. */
+export const MIN_RING_TOPIC_LENGTH = 3;
+
 /**
- * The topics worth a ring: the most covered, by the rollup's own count.
+ * The topics worth a ring: the subjects publishers file themselves under.
+ *
+ * The rollup's own order is no use here. `topics` counts every phrase the
+ * crawler lifts out of prose, so its top of the table is "one", "de",
+ * "episode", "time": the most common words in a hundred thousand feeds, not
+ * their subjects. A ring named after one of those is a ring of everything.
+ * So the candidates are ranked by the feeds that carry the slug as their
+ * OWN category tag (feed_keywords.source = 'category'), which is what a
+ * publisher says the site is about, and only feeds a ring can use count: an
+ * active feed with a site to link from.
+ *
+ * Bounded the same way the seed is: the rollup (indexed by feed_count)
+ * names the pool, then each candidate costs one range scan of its own
+ * keyword rows, rather than one pass over every keyword row in the table.
  *
  * @param {Client} db
- * @param {{ count?: number, minFeeds?: number }} [opts]
+ * @param {{ count?: number, minFeeds?: number, pool?: number }} [opts]
  * @returns {Promise<Array<{ slug: string, keyword: string, feed_count: number }>>}
  */
 export async function topRingTopics(db, opts = {}) {
   const count = Math.max(1, Number(opts.count ?? 20) || 20);
   const minFeeds = Math.max(1, Number(opts.minFeeds ?? 5) || 5);
+  const pool = Math.max(count, Number(opts.pool ?? count * 15) || count * 15);
   const { rows } = await db.execute({
-    sql: `select slug, keyword, feed_count from topics
-           where feed_count >= ?
+    sql: `select slug, keyword from topics
+           where feed_count >= ? and length(slug) >= ?
            order by feed_count desc, slug asc
            limit ?`,
-    args: [minFeeds, count],
+    args: [minFeeds, MIN_RING_TOPIC_LENGTH, pool],
   });
-  return rows.map((r) => ({
-    slug: String(r.slug),
-    keyword: String(r.keyword),
-    feed_count: Number(r.feed_count ?? 0),
-  }));
+
+  const ranked = [];
+  for (const r of rows) {
+    const slug = String(r.slug);
+    const counted = await db.execute({
+      sql: `select count(distinct k.feed_id) as n
+              from feed_keywords k
+              join feeds f on f.id = k.feed_id
+             where k.slug = ? and k.source = 'category'
+               and f.status = 'active'
+               and f.site_url is not null and f.site_url <> ''`,
+      args: [slug],
+    });
+    const n = Number(counted.rows[0]?.n ?? 0);
+    if (n >= minFeeds) ranked.push({ slug, keyword: String(r.keyword), feed_count: n });
+  }
+  ranked.sort((a, b) => b.feed_count - a.feed_count || a.slug.localeCompare(b.slug));
+  return ranked.slice(0, count);
+}
+
+/**
+ * Remove topic rings whose topic no longer qualifies, when nobody would
+ * miss them: fewer than `keepActive` active members. A ring with members
+ * who put its links on their pages stays whatever the ranking says.
+ *
+ * @param {Client} db
+ * @param {string[]} keepSlugs the topics that qualify now
+ * @param {{ keepActive?: number }} [opts]
+ * @returns {Promise<string[]>} the slugs removed
+ */
+export async function dropStaleTopicRings(db, keepSlugs, opts = {}) {
+  const keepActive = Math.max(1, Number(opts.keepActive ?? 5) || 5);
+  const keep = new Set(keepSlugs.map(String));
+  const { rows } = await db.execute({
+    sql: `select r.slug,
+                 (select count(*) from ring_members m where m.ring_slug = r.slug and m.status = 'active') as active
+            from rings r
+           where r.kind = 'topic'`,
+  });
+  const gone = [];
+  for (const r of rows) {
+    const slug = String(r.slug);
+    if (keep.has(slug) || Number(r.active ?? 0) >= keepActive) continue;
+    await db.execute({ sql: `delete from ring_members where ring_slug = ?`, args: [slug] });
+    await db.execute({ sql: `delete from rings where slug = ?`, args: [slug] });
+    gone.push(slug);
+  }
+  return gone;
 }
 
 /**
