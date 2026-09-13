@@ -5,6 +5,7 @@ import { siteUrl } from '../lib/db.js';
 import { SIGNED_IN_HINT_COOKIE } from '../lib/session-hint.js';
 import DockPlayer from './DockPlayer.jsx';
 import ServiceWorker from './ServiceWorker.jsx';
+import HeaderMore from './HeaderMore.jsx';
 import Script from "next/script";
 import { jsonLdScript } from '../lib/jsonld.js';
 
@@ -227,23 +228,30 @@ export default function RootLayout({ children }) {
             </label>
 
             <nav aria-label="Primary">
-              {/* The categories lead the nav: browsing is what a visitor came
-                  for, and everything after Search is a thing you do once you
-                  already know the site.
-
-                  What is *not* here matters as much. OPML, llms.txt and About
-                  each live in the footer, because on a phone this strip was
-                  taller than the page it introduced, and a machine-readable
-                  export is not something a reader reaches for on the way in. */}
+              {/* The main destinations stay visible; the rest are one step
+                  away in More, on desktop and in the mobile navigation. */}
               <a href="/blogs">Blogs</a>
               <a href="/news">News</a>
               <a href="/podcasts">Podcasts</a>
-              <a href="/music">Music</a>
-              <a href="/videos">Videos</a>
-              <a href="/topics">Topics</a>
-              <a href="/submit">Submit</a>
-              <a href="/discover">Discover</a>
+              <a href="/ring">Ring</a>
               <a href="/search">Search</a>
+              <HeaderMore>
+                <div className="header-more-group">
+                  <p>Explore</p>
+                  <a href="/music">Music</a>
+                  <a href="/videos">Videos</a>
+                  <a href="/topics">Topics</a>
+                  <a href="/discover">Discover</a>
+                  <a href="/submit">Submit a feed</a>
+                </div>
+                <div className="header-more-group">
+                  <p>Your library</p>
+                  <a href="/following">Following</a>
+                  <a href="/favorites">Favorites</a>
+                  <a href="/queue">Queue</a>
+                  <a href="/account">Account</a>
+                </div>
+              </HeaderMore>
               {/* The one link that reflects whether anybody is signed in, and it
                   does so from CSS rather than from the server: reading the
                   session here would make every page in the directory dynamic.
@@ -262,10 +270,6 @@ export default function RootLayout({ children }) {
               <a className="nav-signup" href="/signup">
                 Sign up
               </a>
-              <a href="/following">Following</a>
-              <a href="/favorites">Favorites</a>
-              <a href="/queue">Queue</a>
-              <a href="/account">Account</a>
             </nav>
           </div>
         </header>
