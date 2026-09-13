@@ -250,6 +250,15 @@ export default async function TopicListing({ topic, counts, group = null, page =
           text={shareText({ title: heading, summary: lede, url: pageUrl })}
           textLabel="Copy topic"
         />
+
+        {/* The same feeds as a webring: hops, an OPML, and a viewer that frames
+            them one at a time. Both pages exist; this is the door between them. */}
+        <a className="button" href={`/ring/${encodeURIComponent(topic.slug)}`}>
+          Webring
+        </a>
+        <a className="button" href={`/view/${encodeURIComponent(topic.slug)}`}>
+          View webring
+        </a>
       </div>
 
       <Ad format={AD_TEXT} />
