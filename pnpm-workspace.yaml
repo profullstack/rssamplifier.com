@@ -17,3 +17,4 @@ minimumReleaseAgeExclude:
   - '@profullstack/x402-client@0.2.0'
   - '@profullstack/leaderboard@0.3.0 || 0.3.1'
   - '@profullstack/partners@0.2.0'
+  - '@profullstack/submit-feed@0.1.1'
