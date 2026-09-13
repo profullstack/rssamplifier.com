@@ -1,6 +1,7 @@
-import { authors } from '@rssamplifier/db';
+import { authors, q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { profileUrl } from '../../../lib/openprofile.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,8 +38,25 @@ export async function GET(req) {
   const minConfidence = clampFloat(url.searchParams.get('min'), 0.6);
   const network = (url.searchParams.get('network') ?? '').trim() || '';
   const query = (url.searchParams.get('q') ?? '').trim() || '';
+  const feedUrl = (url.searchParams.get('feed') ?? '').trim();
 
   const client = db();
+
+  // `?feed=<url>`: the people behind one feed, owner first. This is how another
+  // directory that holds a feed URL and nothing else (a podcast index, say)
+  // finds the person and their OpenProfile.md without knowing our slugs.
+  if (feedUrl) {
+    const feed = await q.feedByUrl(client, feedUrl);
+    if (!feed) return json({ feed: feedUrl, found: false, authors: [] }, 404);
+    const credited = await authors.authorsForFeed(client, String(feed.id));
+    return json({
+      feed: feedUrl,
+      found: true,
+      slug: String(feed.slug),
+      page: `${siteUrl()}/${encodeURIComponent(String(feed.slug))}`,
+      authors: credited.map((person) => ({ ...shape(person), role: String(person.role ?? 'author') })),
+    });
+  }
   const [rows, total, stats] = await Promise.all([
     authors.listAuthors(client, { limit, offset, minConfidence, network, query }),
     authors.countAuthors(client, { minConfidence }),
@@ -82,6 +100,9 @@ export function shape(person) {
     confidence: Number(person.confidence ?? 0),
     feedCount: person.feed_count == null ? undefined : Number(person.feed_count),
     page: `${siteUrl()}/authors/${encodeURIComponent(String(person.slug))}`,
+    // Their OpenProfile.md (logicsrc.com/openprofile): the same facts as a
+    // portable file, with the person's own corrections once they claim it.
+    openprofile: profileUrl(siteUrl(), String(person.slug)),
     links: (person.links ?? []).map((link) => ({
       network: link.network,
       url: link.url,

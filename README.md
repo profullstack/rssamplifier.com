@@ -238,6 +238,10 @@ All send `access-control-allow-origin: *` and need no key.
 | `/api/topics/{keyword}` | The feeds on a topic, its category breakdown, `?group=` to narrow |
 | `/topics/{keyword}/{group}.rss` | One category of a topic, as a feed — also `.atom`, `.json`, `.m3u`, `.pls` |
 | `/mcp` | MCP endpoint — and the documentation page, in a browser |
+| `/api/authors` | The people behind the feeds; `?feed={url}` finds the people behind one feed |
+| `/authors/{slug}/openprofile.md` | One person as an [OpenProfile.md](https://logicsrc.com/openprofile), Broadcast section per show they publish |
+| `/api/authors/{slug}/openprofile` | The same file, `?format=json` for the parsed shape; `PUT` it to correct it (owner only) |
+| `/api/authors/{slug}/claim` | `POST` to claim an author as yourself; verified by the address they published or by their site linking back |
 
 ```bash
 curl -X POST https://rssamplifier.com/api/submit \
@@ -248,6 +252,26 @@ curl -X POST https://rssamplifier.com/api/discover \
   -H 'content-type: application/json' \
   -d '{"keywords":["siberian huskies"]}'
 ```
+
+### Profiles: the person's own word over ours
+
+Every author page carries `<link rel="openprofile">` to `/authors/{slug}/openprofile.md`, the
+person as one portable file: identity block, Accounts (their `rel="me"` links), Topics (their feeds'
+subjects), and a Broadcast section ([OpenBroadcast](https://logicsrc.com/openbroadcast)) for every
+podcast or show they publish, with only the facts their own feed states. The file never fills in
+what the person did not say: no `Seeking`, `Pays`, `Charges`, no Guest section, and no email even
+when the API republishes one.
+
+The person it is about can claim it and correct it, and the correction is theirs wherever it is
+made. A claim is verified on the spot, no reviewer: the signed-in address is the one they published,
+or their site links back at the profile with `rel="openprofile"` or `rel="me"`. After that, edits
+come through the form at `/authors/{slug}/edit`, `PUT /api/authors/{slug}/openprofile` (the whole
+file as `text/markdown`, or a JSON patch of `headline`, `identity`, `sections`, `public`) with an
+API key from `/account` or an [OpenAccess](https://logicsrc.com/openaccess) grant for
+`openprofile:edit`, `rssamp profile edit {slug}` from the CLI, or `update_openprofile` over MCP.
+What they wrote wins per section; what they did not touch is still generated; a section written
+as `none` is dropped. The parser, renderer and overlay are
+[`@profullstack/openprofile`](https://www.npmjs.com/package/@profullstack/openprofile).
 
 ## Topics, and topics by category
 

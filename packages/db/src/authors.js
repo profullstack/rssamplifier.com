@@ -445,8 +445,13 @@ export async function authorBySlug(db, slug) {
     // `f.id` rides along so the caller can ask what these feeds published
     // without a second lookup -- see `postsByAuthor`, which is bounded by
     // exactly these ids rather than searching feed_items for an author.
-    sql: `select f.id, f.slug, f.title, f.site_url, f.image_url, f.kind, f.description,
-                 fa.role, f.item_count
+    // `category` is what a feed is (blog, podcast, music...), re-derived on
+    // every crawl; `kind` is the older column of the same name that nothing
+    // writes any more and that says 'blog' for every podcast. Callers read
+    // `kind`, so they get the live answer under the name they already use.
+    sql: `select f.id, f.slug, f.title, f.site_url, f.feed_url, f.image_url,
+                 coalesce(nullif(f.category, ''), f.kind) as kind, f.language,
+                 f.description, fa.role, f.item_count
             from feed_authors fa
             join feeds f on f.id = fa.feed_id
            where fa.author_id = ?

@@ -2,6 +2,7 @@ import { q, authors } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../lib/db.js';
 import { freshness } from '../../../../lib/freshness.js';
+import { profileUrl } from '../../../../lib/openprofile.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,6 +91,7 @@ export async function GET(req, { params }) {
           email: person.email,
           confidence: Number(person.confidence ?? 0),
           page: `${siteUrl()}/authors/${encodeURIComponent(String(person.slug))}`,
+          openprofile: profileUrl(siteUrl(), String(person.slug)),
           links: (person.links ?? []).map((l) => ({
             network: l.network,
             url: l.url,

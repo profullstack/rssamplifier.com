@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { accounts, apikeys, dataset } from '@rssamplifier/db';
+import { accounts, apikeys, dataset, profiles } from '@rssamplifier/db';
 
 import Toolbar from '../Toolbar.jsx';
 import { AddPasskey } from '../Passkey.jsx';
@@ -30,12 +30,15 @@ export default async function AccountPage({ searchParams }) {
   const client = db();
   const userId = String(user.id);
 
-  const [follows, credentials, topics, keys, grant] = await Promise.all([
+  const [follows, credentials, topics, keys, grant, claimed] = await Promise.all([
     accounts.followedFeeds(client, userId),
     accounts.credentialsForUser(client, userId),
     accounts.followedTopics(client, userId),
     apikeys.keysForUser(client, userId),
     dataset.activeGrant(client, userId),
+    // The author profiles this account has claimed, so the way back to
+    // editing one is here and not only on the page it was claimed from.
+    profiles.profilesForUser(client, userId),
   ]);
 
   // Only for an account that has one, so the overwhelming majority of readers —
@@ -60,6 +63,26 @@ export default async function AccountPage({ searchParams }) {
       )}
 
       {params.revoked && <p className="notice">That passkey has been removed.</p>}
+
+      {claimed.length > 0 && (
+        <>
+          <h2>Your profiles</h2>
+          <p className="hint">
+            Author pages you have claimed. Each serves an{' '}
+            <a href="https://logicsrc.com/openprofile">OpenProfile.md</a> you can correct here, from
+            the CLI, or over the API with one of the keys below.
+          </p>
+          <ul>
+            {claimed.map((p) => (
+              <li key={p.author_id}>
+                <a href={`/authors/${encodeURIComponent(String(p.slug))}`}>{p.name}</a>
+                {' · '}
+                <a href={`/authors/${encodeURIComponent(String(p.slug))}/edit`}>edit profile</a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <h2>Passkeys</h2>
       {credentials.length === 0 ? (

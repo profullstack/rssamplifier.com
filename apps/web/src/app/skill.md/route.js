@@ -49,6 +49,12 @@ is not a search engine for the whole web.
   their own site as a \`rel="me"\` claim, an h-card or JSON-LD; role mailboxes
   are dropped at extraction, so an address here belongs to a person.
 - \`GET ${base}/api/authors/{slug}\` — one author, with everything they publish.
+  \`GET ${base}/api/authors?feed={url}\` finds the people behind one feed.
+- \`GET ${base}/authors/{slug}/openprofile.md\` — the same person as an
+  OpenProfile.md (logicsrc.com/openprofile), Broadcast section per show. The
+  person claims it (\`POST /api/authors/{slug}/claim\`) and corrects it with
+  \`PUT /api/authors/{slug}/openprofile\` (text/markdown or a JSON patch; API key
+  or an OpenAccess grant for \`openprofile:edit\`).
 - \`GET ${base}/api/feeds/{slug}\` also carries \`authors\` and \`links\`. \`links\` is
   the blog's own accounts — Mastodon, Bluesky, X, LinkedIn, GitHub and the rest
   — which is what a blog with no byline has instead of an author, and roughly a

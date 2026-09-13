@@ -26,7 +26,10 @@
     "list_authors",
     "get_author",
     "directory_stats",
-    "submit_feed"
+    "submit_feed",
+    "get_openprofile",
+    "update_openprofile",
+    "claim_openprofile"
   ],
   "catalogs": [
     "https://openmcp.logicsrc.com"

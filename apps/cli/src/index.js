@@ -20,7 +20,7 @@
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 
 const DEFAULT_API = 'https://rssamplifier.com';
 
@@ -102,6 +102,21 @@ export const COMMANDS = [
       'Everything the directory knows about one feed: where it lives, how many posts it has, what it was last seen publishing.',
     options: ['--json'],
     examples: ['rssamp show technotim-live'],
+  },
+  {
+    name: 'profile',
+    usage: 'profile <slug> | profile edit <slug> [--file f.md] | profile claim <slug>',
+    summary: "An author's OpenProfile.md: read it, claim it, correct it",
+    detail:
+      'The person behind a feed as a portable profile file (logicsrc.com/openprofile): identity, accounts, topics, and a Broadcast section for every show they publish. `profile <slug>` prints it. `profile claim <slug>` says the author is you, verified on the spot by the address you published or by your site linking back. `profile edit <slug>` opens the file in $EDITOR and sends it back; with --file it sends that file instead. Claiming and editing need a credential: --token, or RSSAMPLIFIER_TOKEN, or OPENACCESS_TOKEN in the environment (an rssamplifier API key from /account, or an OpenAccess grant for openprofile:edit).',
+    options: ['--file <path>', '--token <key>', '--feed <url>', '--json'],
+    examples: [
+      'rssamp profile ada-lovelace',
+      'rssamp profile --feed https://ada.example/podcast/feed.xml',
+      'rssamp profile claim ada-lovelace --token rsa_...',
+      'EDITOR=vim rssamp profile edit ada-lovelace',
+      'rssamp profile edit ada-lovelace --file profile.md',
+    ],
   },
   {
     name: 'submit',
@@ -338,6 +353,35 @@ async function requestText(url) {
 }
 
 /**
+ * Open text in the user's editor and hand back what they saved, or null when
+ * there is no editor to open. A temp file beside the system's, removed after.
+ *
+ * @param {string} text
+ * @param {string} slug
+ * @returns {Promise<string|null>}
+ */
+async function editInEditor(text, slug) {
+  const editor = process.env['VISUAL'] || process.env['EDITOR'];
+  if (!editor) return null;
+  const [fs, os, path, child] = await Promise.all([
+    import('node:fs/promises'),
+    import('node:os'),
+    import('node:path'),
+    import('node:child_process'),
+  ]);
+  const file = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'rssamp-profile-')), `${slug}.openprofile.md`);
+  await fs.writeFile(file, text);
+  try {
+    // `sh -c` so `EDITOR="code --wait"` works the way every other tool lets it.
+    const result = child.spawnSync('sh', ['-c', `${editor} "$1"`, 'rssamp', file], { stdio: 'inherit' });
+    if (result.status !== 0) throw new Error(`${editor} exited with ${result.status}`);
+    return await fs.readFile(file, 'utf8');
+  } finally {
+    await fs.rm(path.dirname(file), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
  * The names the installer writes. `update` and `remove` will touch a file only
  * if it is called one of these, which is the guard that keeps them from acting
  * on a checkout: `node src/index.js remove` is somebody in the repository, and
@@ -474,6 +518,82 @@ export async function run(argv, io = {}) {
 
   try {
     switch (command) {
+      case 'profile': {
+        const sub = args[0] === 'edit' || args[0] === 'claim' ? args[0] : 'show';
+        const slugArg = sub === 'show' ? args[0] : args[1];
+        const token =
+          (typeof flags.token === 'string' && flags.token) ||
+          process.env['RSSAMPLIFIER_TOKEN'] ||
+          process.env['OPENACCESS_TOKEN'] ||
+          '';
+        const authed = token ? { authorization: `Bearer ${token}` } : {};
+
+        // A feed URL instead of a slug: the owner of that feed.
+        let slug = slugArg ? String(slugArg).toLowerCase() : '';
+        if (!slug && typeof flags.feed === 'string') {
+          const found = await request(`${base}/api/authors?feed=${encodeURIComponent(flags.feed)}`);
+          slug = found.authors?.[0]?.slug ?? '';
+          if (!slug) {
+            err(`profile: nobody is credited on ${flags.feed} yet`);
+            return 1;
+          }
+        }
+        if (!slug) {
+          err('profile: give an author slug, or --feed <url>');
+          return 1;
+        }
+        const endpoint = `${base}/api/authors/${encodeURIComponent(slug)}/openprofile`;
+
+        if (sub === 'show') {
+          if (asJson) {
+            log(JSON.stringify(await request(`${endpoint}?format=json`), null, 2));
+            return 0;
+          }
+          log((await requestText(endpoint)).replace(/\n$/, ''));
+          return 0;
+        }
+
+        if (!token) {
+          err(`profile ${sub}: needs a credential. Pass --token, or set RSSAMPLIFIER_TOKEN (an API key from ${base}/account) or OPENACCESS_TOKEN.`);
+          return 1;
+        }
+
+        if (sub === 'claim') {
+          const body = await request(`${base}/api/authors/${encodeURIComponent(slug)}/claim`, {
+            method: 'POST',
+            headers: { ...authed, 'content-type': 'application/json' },
+            body: '{}',
+          });
+          log(asJson ? JSON.stringify(body, null, 2) : `Claimed ${slug} (${body.method}). Edit it: rssamp profile edit ${slug}`);
+          return 0;
+        }
+
+        // edit: from a file, or through $EDITOR on the file as served now.
+        let markdown;
+        if (typeof flags.file === 'string') {
+          markdown = await (io.readFile ?? ((p) => import('node:fs/promises').then((fs) => fs.readFile(p, 'utf8'))))(flags.file);
+        } else {
+          const current = await requestText(endpoint);
+          markdown = await (io.edit ?? editInEditor)(current, slug);
+          if (markdown == null) {
+            err('profile edit: no $EDITOR, and no --file. Set one, or write the file and pass --file.');
+            return 1;
+          }
+          if (markdown === current) {
+            log('Unchanged.');
+            return 0;
+          }
+        }
+        const saved = await request(endpoint, {
+          method: 'PUT',
+          headers: { ...authed, 'content-type': 'text/markdown; charset=utf-8' },
+          body: markdown,
+        });
+        if (asJson) log(JSON.stringify(saved, null, 2));
+        else log(`Saved. ${saved.url ?? endpoint}`);
+        return 0;
+      }
+
       case 'submit': {
         if (args.length === 0) {
           err('submit: give at least one URL or an .opml file');
