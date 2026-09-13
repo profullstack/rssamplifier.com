@@ -146,6 +146,59 @@ test('the masthead repair still skips what has no masthead to fix', () => {
   assert.ok(!wants.test('/topics/physics.rss'), 'a feed is subscribed to, not read in a browser');
 });
 
+/** The webring hop exemption, likewise read back rather than copied. */
+function ringHopFromSource() {
+  const [, literal] = proxySource().match(/const RING_HOP\s*=\s*\/([\s\S]*?)\/;/) ?? [];
+  assert.ok(literal, 'proxy.js still declares RING_HOP as a regex literal');
+  return new RegExp(literal);
+}
+
+test('a webring hop goes through unrationed, and only a hop', () => {
+  // A hop is a 302 from a link on somebody else's page. Refusing one is a
+  // broken link on their site, and a busy ring is many addresses clicking
+  // once each, which a per-address limit would start refusing exactly when
+  // the ring worked.
+  const hop = ringHopFromSource();
+
+  for (const path of [
+    '/ring/physics/next',
+    '/ring/physics/previous',
+    '/ring/physics/prev',
+    '/ring/physics/random',
+    '/ring/physics/some-blog/next',
+    '/ring/physics/some-blog/previous',
+    '/ring/physics/some-blog/prev',
+    '/ring/physics/some-blog/random',
+  ]) {
+    assert.ok(hop.test(path), `${path} is a hop`);
+  }
+
+  for (const path of [
+    '/ring',
+    '/ring/physics',
+    '/ring/physics/opml',
+    '/ring/physics/openwebring.json',
+    '/ring/physics/check',
+    '/ring/physics/next/',
+    '/api/rings',
+    '/api/rings/physics',
+    '/some-blog/read',
+    '/random',
+  ]) {
+    assert.ok(!hop.test(path), `${path} is not a hop`);
+  }
+
+  // The exemption returns before the throttle decides, and the matcher still
+  // sees the hop, so it is counted rather than invisible.
+  const source = proxySource();
+  const exemption = source.indexOf('RING_HOP.test(request.nextUrl.pathname)');
+  const throttle = source.indexOf('attempt(callerIdentity(request)');
+  assert.ok(exemption > -1 && throttle > -1 && exemption < throttle, 'the hop is answered before attempt()');
+
+  const pattern = matcherFromSource();
+  assert.ok(new RegExp(`^${pattern}$`).test('/ring/physics/next'), 'a hop still reaches the counter');
+});
+
 /**
  * The refusal is a 402 carrying the offer, not a 429 describing one.
  *

@@ -21,6 +21,8 @@ import {
   drainDiscoveryQueue,
   drainDiscoveryKeywords,
   drainImport,
+  seedTopRings,
+  verifyRingMembers,
 } from '@rssamplifier/ingest';
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 import { findFeedCard } from '@rssamplifier/feed';
@@ -96,6 +98,21 @@ const cardEnabled = env['CARD_BACKFILL'] !== '0' && env['CARD_BACKFILL'] !== 'fa
 // below has one: a tick spends minutes inside the crawl, and work queued after
 // that only happens if the process lives long enough to reach it.
 const cardIntervalMs = (Number(env['CARD_BACKFILL_SECONDS']) || 20) * 1000;
+
+// OpenWebring (logicsrc.com/openwebring). The rings are seeded from the most
+// covered topics and every member's front page is read for a link back, one
+// site at a time, oldest verdict first; see packages/ingest/src/webring.js.
+// How many members a pass checks, how often a pass runs, how long a verdict
+// stands before the member is looked at again, how many topics get a ring,
+// and how often the rings are re-seeded so a feed new to a topic joins at
+// the end. RING_VERIFY=0 pauses all of it without changing the tuning.
+const ringEnabled = env['RING_VERIFY'] !== '0' && env['RING_VERIFY'] !== 'false';
+const ringBatch = Number(env['RING_BATCH']) || 25;
+const ringIntervalMs = (Number(env['RING_SECONDS']) || 60) * 1000;
+const ringRecheckDays = Number(env['RING_RECHECK_DAYS']) || 7;
+const ringTopics = Number(env['RING_TOPICS']) || 20;
+const ringSeedMs = (Number(env['RING_SEED_SECONDS']) || 21_600) * 1000;
+const ringBase = (env['SITE_URL'] || 'https://rssamplifier.com').replace(/\/+$/, '');
 
 // Items keyed for grouping per tick. Each one is a title hashed in process and
 // a single-column update, so the batch is bounded by the write round trip
@@ -245,6 +262,10 @@ let carding = false;
 // Guards the enrichment pass against overlapping itself. A batch of five feeds
 // that each need four fetches of a slow server can outlast its own interval.
 let enriching = false;
+// The same guard for the webring pass, which fetches strangers' front pages
+// one at a time and must not stack, and when the rings were last seeded.
+let ringing = false;
+let lastRingSeed = 0;
 
 // And for the alert pass, where stacking would be worse than wasteful: two
 // overlapping passes read the same watermark and would send the same digest
@@ -757,6 +778,48 @@ async function cardTick() {
 }
 
 /**
+ * Keep the webrings seeded and verified.
+ *
+ * Two jobs on one timer. Seeding runs every RING_SEED_SECONDS: one ring per
+ * well-covered topic, existing members keeping their place and new feeds
+ * appended (webrings.seedTopicRing). Verification runs every tick: a bounded
+ * batch of the members whose verdict is oldest, each one a fetch of their
+ * front page and of their descriptor, sequentially, because every one is a
+ * request to a stranger's server and the crawl beside this already owns the
+ * outbound budget. The hop routes never do any of this; they read only what
+ * this pass last wrote, which is what keeps a hop a cheap 302.
+ */
+async function ringTick() {
+  if (!ringEnabled || stopping || ringing) return;
+  ringing = true;
+
+  try {
+    if (Date.now() - lastRingSeed >= ringSeedMs) {
+      lastRingSeed = Date.now();
+      const seeded = await seedTopRings(db, { topics: ringTopics, minMembers: 5 });
+      // Logged only when something changed: once the rings exist, a line
+      // every six hours saying "0 added" is not a log.
+      if (seeded.created || seeded.added) log('rings-seeded', seeded);
+    }
+
+    const result = await verifyRingMembers(db, {
+      batch: ringBatch,
+      base: ringBase,
+      recheckDays: ringRecheckDays,
+      onEvent: publishLog ? recorder.record : null,
+      stopping: () => stopping,
+    });
+    // Silent when nothing was due, which is the steady state between recheck
+    // periods.
+    if (result.checked) log('rings', result);
+  } catch (err) {
+    log('rings-error', { message: String(err?.message ?? err) });
+  } finally {
+    ringing = false;
+  }
+}
+
+/**
  * Tell people about the posts they asked to be told about.
  *
  * The crawl above is what makes this possible and also what makes it need its
@@ -1047,6 +1110,7 @@ const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
 const cardTimer = setInterval(cardTick, cardIntervalMs);
 const alertTimer = setInterval(alertTick, alertIntervalMs);
 const enrichTimer = setInterval(enrichTick, authorIntervalMs);
+const ringTimer = setInterval(ringTick, ringIntervalMs);
 const queueTimer = setInterval(queueTick, queueSampleMs);
 const statsTimer = setInterval(statsTick, statsWarmMs);
 const searchTimer = setInterval(searchTick, searchIntervalMs);
@@ -1058,6 +1122,7 @@ void backfillTick();
 void cardTick();
 void alertTick();
 void enrichTick();
+void ringTick();
 void queueTick();
 // Run once at boot, so a deploy does not leave the page slow until the first
 // interval comes round.
@@ -1071,6 +1136,8 @@ log('started', {
   clusterBackfill,
   cardBatch: cardEnabled ? cardBatch : 0,
   authorBatch: authorEnabled ? authorBatch : 0,
+  ringBatch: ringEnabled ? ringBatch : 0,
+  ringTopics: ringEnabled ? ringTopics : 0,
   crawlAutocommit: ['1', 'true'].includes(String(env['TURSO_CRAWL_AUTOCOMMIT'] ?? '').toLowerCase()),
   auxiliaryWrites: !['0', 'false'].includes(String(env['CRAWL_AUXILIARY_WRITES'] ?? '').toLowerCase()),
   catchupOnly,
@@ -1091,6 +1158,7 @@ function shutdown(signal) {
   clearInterval(backfillTimer);
   clearInterval(cardTimer);
   clearInterval(enrichTimer);
+  clearInterval(ringTimer);
   clearInterval(alertTimer);
   clearInterval(queueTimer);
   clearInterval(statsTimer);

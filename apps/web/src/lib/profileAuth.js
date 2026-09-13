@@ -1,5 +1,6 @@
 import { apikeys, profiles } from '@rssamplifier/db';
 import { hashToken, looksLikeApiKey } from '@rssamplifier/auth';
+import { fetchPage as boundedFetch, linksTo } from '@rssamplifier/feed';
 
 import { db } from './db.js';
 import { SCOPE_PROFILE_EDIT, bearerToken, principalFromToken } from './openaccess.js';
@@ -195,27 +196,27 @@ function ownedByEmail(profile, caller) {
     Boolean(caller.principal && caller.principal === profile.owner_principal);
 }
 
+/** The rels that make a link a profile claim: OpenProfile's own, and IndieWeb's. */
+export const PROFILE_RELS = ['openprofile', 'me'];
+
 /**
- * Does this HTML point at one of these URLs with rel="openprofile" or rel="me"?
+ * Does this HTML point at one of these URLs?
  *
- * A plain regex over the markup, because the question is "is this exact URL
- * in a link with this rel", which needs no parser and must not need a
- * browser. Attribute order is not assumed.
+ * With no options, the OpenProfile question: an exact link carrying
+ * rel="openprofile" or rel="me". The options are what the OpenWebring check
+ * needs of the same scan, `rels: null` for any link at all and `prefix` for
+ * a link that continues past the URL into a hop, and the scan itself lives
+ * in @rssamplifier/feed (`linksTo`) so the poller runs the same one. Kept
+ * here under its old name so every caller of the claim check reads as it
+ * did.
  *
  * @param {string} html
  * @param {string[]} urls
+ * @param {{ rels?: string[]|null, prefix?: boolean }} [opts]
  * @returns {boolean}
  */
-export function linksBack(html, urls) {
-  const wanted = new Set(urls.map((u) => u.replace(/\/+$/, '').toLowerCase()));
-  const tags = html.match(/<(?:a|link)\b[^>]*>/gi) ?? [];
-  for (const tag of tags) {
-    const rel = /\brel\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1]?.toLowerCase() ?? '';
-    if (!/\b(openprofile|me)\b/.test(rel)) continue;
-    const href = /\bhref\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1] ?? '';
-    if (wanted.has(href.trim().replace(/\/+$/, '').toLowerCase())) return true;
-  }
-  return false;
+export function linksBack(html, urls, opts = {}) {
+  return linksTo(html, urls, { rels: PROFILE_RELS, ...opts });
 }
 
 /**
@@ -241,31 +242,24 @@ export function adminEmails() {
     .filter(Boolean);
 }
 
+/** How the claim check names itself to the site it reads. */
+export const PROFILE_USER_AGENT = 'rssamplifier-openprofile/1 (+https://rssamplifier.com/about)';
+
 /**
- * A small fetch for the linkback check: one page, a short timeout, a bounded
- * body. The site being checked is the author's own, which is exactly the
- * page the crawler already reads for rel="me".
+ * A small fetch for the linkback check: one page, an eight-second deadline,
+ * a 512 KB body. The site being checked is the author's own, which is
+ * exactly the page the crawler already reads for rel="me".
+ *
+ * The fetch itself is @rssamplifier/feed's `fetchPage`, shared with the
+ * webring check; only the name this one wears is decided here. The options
+ * let the ring check borrow it with its own name and an `accept` for JSON.
  *
  * @param {string} url
+ * @param {{ userAgent?: string, accept?: string }} [opts]
  * @returns {Promise<string|null>}
  */
-export async function fetchPage(url) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      redirect: 'follow',
-      headers: { 'user-agent': 'rssamplifier-openprofile/1 (+https://rssamplifier.com/about)', accept: 'text/html' },
-    });
-    if (!res.ok) return null;
-    const text = await res.text();
-    return text.slice(0, 512 * 1024);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+export async function fetchPage(url, opts = {}) {
+  return boundedFetch(url, { userAgent: PROFILE_USER_AGENT, accept: 'text/html', ...opts });
 }
 
 export { profiles };

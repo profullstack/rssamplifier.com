@@ -496,3 +496,56 @@ export async function resolveFeed(input, conditional = {}) {
 
   return { ok: false, error: 'no-feed-found' };
 }
+
+/**
+ * One page, bounded: a short deadline, a capped body, and null for anything
+ * that is not a 200 with a body.
+ *
+ * The fetch behind the OpenProfile claim check and the OpenWebring member
+ * check. Both read a stranger's front page to see whether it links back at
+ * us, so neither wants the crawler's fifteen seconds and five megabytes, and
+ * both name themselves so a publisher reading their logs can see what asked
+ * and why. Every failure is a null: to the caller, a site that is down and a
+ * site that answered without the link are the same fact, "no link found".
+ *
+ * `isPublicHost` first, as `safeFetch` does. The address comes out of a row
+ * a stranger submitted, which is exactly as untrusted as a page URL.
+ *
+ * @param {string} url
+ * @param {{ userAgent?: string, accept?: string, timeoutMs?: number, maxBytes?: number }} [opts]
+ * @returns {Promise<string|null>}
+ */
+export async function fetchPage(url, opts = {}) {
+  const {
+    userAgent = USER_AGENT,
+    accept = 'text/html',
+    timeoutMs = 8000,
+    maxBytes = 512 * 1024,
+  } = opts;
+
+  let target;
+  try {
+    target = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(target.protocol)) return null;
+  if (!(await isPublicHost(target.hostname))) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(target.href, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: { 'user-agent': userAgent, accept },
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    return text.slice(0, maxBytes);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
