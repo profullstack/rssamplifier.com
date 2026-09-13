@@ -334,6 +334,17 @@ export async function seedTopicRing(db, topicSlug, opts = {}) {
 export const MIN_RING_TOPIC_LENGTH = 3;
 
 /**
+ * Category tags that are containers rather than subjects. Publishers file
+ * under these by default (WordPress's own is "uncategorized"), so they rank
+ * high and mean nothing; a ring of "uncategorized" is a ring of anything.
+ */
+export const RING_TOPIC_STOPLIST = new Set([
+  'uncategorized', 'uncategorised', 'general', 'misc', 'miscellaneous', 'other', 'others',
+  'blog', 'blogs', 'blogging', 'post', 'posts', 'article', 'articles', 'feed', 'rss', 'default',
+  'news-feed', 'updates', 'update', 'home', 'homepage', 'main', 'featured', 'all', 'various', 'random',
+]);
+
+/**
  * The topics worth a ring: the subjects publishers file themselves under.
  *
  * The rollup's own order is no use here. `topics` counts every phrase the
@@ -370,6 +381,7 @@ export async function topRingTopics(db, opts = {}) {
   const ranked = [];
   for (const r of rows) {
     const slug = String(r.slug);
+    if (RING_TOPIC_STOPLIST.has(slug)) continue;
     const counted = await db.execute({
       sql: `select count(*) as n
               from feed_keywords k indexed by feed_keywords_slug_idx
