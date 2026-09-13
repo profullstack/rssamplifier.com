@@ -1,0 +1,50 @@
+/*
+ * Tailwind and the shadcn/ui tokens, for the pages built from src/components/ui.
+ *
+ * Loaded after globals.css and without Tailwind's preflight, so nothing here
+ * reaches a page that does not ask for it: the site's own stylesheet keeps
+ * styling every element as before, and a utility class only applies where it
+ * is written. The utilities are left out of a cascade layer on purpose; the
+ * site's rules are unlayered, and a layered utility would lose to every one
+ * of them.
+ *
+ * The tokens are the site's own palette under shadcn's names, so a card or a
+ * button here is the same ink, paper and accent as the rest of the site, in
+ * light and in dark, without a second theme to keep in step.
+ */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css';
+@source '../';
+
+:root {
+  --radius: 0.625rem;
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--ink);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--accent-soft);
+  --color-secondary-foreground: var(--ink);
+  --color-muted: color-mix(in srgb, var(--line) 40%, var(--surface));
+  --color-muted-foreground: var(--muted);
+  --color-accent: var(--accent-soft);
+  --color-accent-foreground: var(--ink);
+  --color-destructive: #b91c1c;
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--accent);
+  --font-sans: var(--sans);
+  --font-serif: var(--serif);
+  --font-mono: var(--mono);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
