@@ -304,7 +304,11 @@ export default function RootLayout({ children }) {
             <p>
               Machine-readable: <a href="/mcp">MCP server</a> · <a href="/cli">CLI</a> ·{' '}
               <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}
-              <a href="/llms.txt">llms.txt</a> · <a href="/crawlstats">Crawler status</a>
+              <a href="/llms.txt">llms.txt</a> · <a href="/crawlstats">Crawler status</a> ·{' '}
+              {/* Here rather than in Browse: a ring is a thing another site
+                  links into and a program reads, and its index page is the
+                  human face of /.well-known/openwebring.json. */}
+              <a href="/ring">Webrings</a>
             </p>
             {/* The install command itself, not just a link to it. Somebody who
                 scrolled to the bottom of a feed page is exactly the person who

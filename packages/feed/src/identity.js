@@ -1462,3 +1462,80 @@ function jsonLdPeople(document) {
 
   return people;
 }
+
+/**
+ * Does this page carry a link to one of these URLs?
+ *
+ * The general form of the question `linksBackTo` answers for rel="me", and
+ * the one the OpenProfile claim and the OpenWebring check both ask: "is this
+ * URL in an <a> or a <link> on the page", with two knobs. `rels` names the
+ * rel tokens the link must carry, or null for any link at all, which is what
+ * a webring asks for since a member owes the ring one plain link. `prefix`
+ * accepts a link that starts with a wanted URL and continues past a `/`, `?`
+ * or `#`, so `/ring/x/next?from=...` counts as a link to `/ring/x` while
+ * `/ring/xy` does not.
+ *
+ * A regex over the markup rather than a parse, because the question needs
+ * no DOM and this runs inside a request as well as inside the crawler.
+ * Attribute order is not assumed and the quoting can be double, single or
+ * none. Matching is case-insensitive and trailing-slash tolerant.
+ *
+ * @param {string} html
+ * @param {string[]} urls
+ * @param {{ rels?: string[]|null, prefix?: boolean }} [opts]
+ * @returns {boolean}
+ */
+export function linksTo(html, urls, opts = {}) {
+  if (typeof html !== 'string' || !html) return false;
+  const rels = opts.rels === undefined ? ['me'] : opts.rels;
+  const prefix = Boolean(opts.prefix);
+  const wanted = urls.map((u) => String(u).trim().replace(/\/+$/, '').toLowerCase()).filter(Boolean);
+  if (wanted.length === 0) return false;
+
+  const tags = html.match(/<(?:a|link)\b[^>]*>/gi) ?? [];
+  for (const tag of tags) {
+    if (rels) {
+      const rel = attributeOf(tag, 'rel')?.toLowerCase() ?? '';
+      const tokens = rel.split(/\s+/).filter(Boolean);
+      if (!rels.some((r) => tokens.includes(r.toLowerCase()))) continue;
+    }
+    const href = attributeOf(tag, 'href');
+    if (!href) continue;
+    const found = decodeHrefEntities(href).trim().replace(/\/+$/, '').toLowerCase();
+    for (const w of wanted) {
+      if (found === w) return true;
+      if (prefix && (found.startsWith(`${w}/`) || found.startsWith(`${w}?`) || found.startsWith(`${w}#`))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * One attribute's value off one tag, however it was quoted.
+ *
+ * @param {string} tag
+ * @param {string} name
+ * @returns {string|null}
+ */
+function attributeOf(tag, name) {
+  const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
+  if (!m) return null;
+  return m[1] ?? m[2] ?? m[3] ?? null;
+}
+
+/**
+ * The five entities that appear in an href, decoded once.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function decodeHrefEntities(value) {
+  return value
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}

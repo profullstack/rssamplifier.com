@@ -39,3 +39,18 @@ export {
   searchesFor,
   worthSearching,
 } from './src/websearch.js';
+export {
+  RING_USER_AGENT,
+  DISCLOSURES,
+  checkRingMember,
+  descriptorNamesRing,
+  descriptorUrlFor,
+  fetchRingPage,
+  linksToRing,
+  parseRingDescriptor,
+  ringLinkTargets,
+  ringUrl,
+  seedTopRings,
+  statusAfter,
+  verifyRingMembers,
+} from './src/webring.js';

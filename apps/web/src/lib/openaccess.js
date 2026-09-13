@@ -15,6 +15,9 @@ export const CLIENT_ID = 'rssamplifier.com';
 /** Edit the OpenProfile.md of an author the principal has claimed. */
 export const SCOPE_PROFILE_EDIT = 'openprofile:edit';
 
+/** State who makes a site the principal has in one of this host's webrings. */
+export const SCOPE_RING_EDIT = 'openwebring:edit';
+
 /** @type {OpenAccessApp|null} */
 let app = null;
 

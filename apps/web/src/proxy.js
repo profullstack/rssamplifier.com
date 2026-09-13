@@ -95,6 +95,20 @@ export async function proxy(request) {
     return dare;
   }
 
+  /*
+   * A webring hop is never rationed. The request is a 302 from a link on
+   * somebody else's page, so refusing it is a broken link on their site
+   * rather than a slower answer on ours; it costs one read that lib/rings.js
+   * caches per worker and no write; and a busy ring is many readers on many
+   * addresses each clicking once, which is exactly the traffic a per-address
+   * limit sized against crawlers would start refusing at the moment the ring
+   * worked. Counted like everything else, so the ledger still shows it.
+   */
+  if (RING_HOP.test(request.nextUrl.pathname)) {
+    countRequest(request, tierFor(request).name, false);
+    return NextResponse.next();
+  }
+
   const tier = (await hasValidPass(request)) ? TIERS.pass : tierFor(request);
 
   const verdict = attempt(callerIdentity(request), Date.now(), tier);
@@ -233,6 +247,16 @@ function tooMany(verdict, tier) {
  */
 const WANTS_MASTHEAD =
   /^\/(?!_next\/static|_next\/image|api\/|auth\/magic|favicon\.ico|robots\.txt|sitemap\.xml|.*\.(?:png|jpg|jpeg|gif|svg|ico|webp|css|js|txt|xml|rss|atom|opml|m3u|pls|json)$).*$/;
+
+/**
+ * Which requests are webring hops, which the throttle lets through.
+ *
+ * The four hops, with or without a member slug in the path: /ring/x/next,
+ * /ring/x/some-blog/random. Not the ring page, the ring file, the OPML or
+ * the check, which are answered at the ordinary rungs. A literal here for
+ * the same reason as the two above: test/proxy.test.js reads it back.
+ */
+const RING_HOP = /^\/ring\/[^/]+(?:\/[^/]+)?\/(?:next|previous|prev|random)$/;
 
 /**
  * Which requests are worth the look.

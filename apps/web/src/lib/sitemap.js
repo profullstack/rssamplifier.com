@@ -38,6 +38,9 @@ export const STATIC_PAGES = [
   { path: '/reels', changefreq: 'daily', priority: '0.7' },
   { path: '/topics', changefreq: 'daily', priority: '0.8' },
   { path: '/authors', changefreq: 'daily', priority: '0.8' },
+  // The webrings, index only. Each ring's page is linked from it and its
+  // members are already in the blog chunks under their own URL.
+  { path: '/ring', changefreq: 'daily', priority: '0.6' },
   // The two platform namespaces, alongside the categories for the same reason:
   // they are entry points into the directory that are about something.
   //

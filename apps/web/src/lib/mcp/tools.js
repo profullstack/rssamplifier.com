@@ -1,10 +1,12 @@
-import { q, newId, authors as people } from '@rssamplifier/db';
+import { q, newId, authors as people, webrings } from '@rssamplifier/db';
 import { topicSlug } from '@rssamplifier/feed';
 import { submitCatalogue, hashIp, EXPRESS_MAX } from '@rssamplifier/ingest';
 import { submitFeedTool } from '@profullstack/submit-feed/core';
 import { loadAuthorProfile } from '../authorProfile.js';
 import { overridesFromBody, profileUrl } from '../openprofile.js';
 import { adminEmails, callerOf, claimVerdict, fetchPage, isOwner, profiles as profileStore } from '../profileAuth.js';
+import { hop, hopUrl, hostEntry, memberEntry, ringFile, ringUrl } from '../openwebring.js';
+import { loadRing } from '../rings.js';
 
 import { db, siteUrl } from '../db.js';
 import { readerView } from '../reader.js';
@@ -637,6 +639,93 @@ export const TOOLS = [
       const client = db();
       const [stats, kinds] = await Promise.all([q.crawlStats(client), q.countFeedsByKind(client)]);
       return { ...stats, byKind: kinds };
+    },
+  },
+
+  {
+    name: 'list_rings',
+    title: 'List the webrings this site hosts',
+    description:
+      'The OpenWebring rings hosted here (logicsrc.com/openwebring): one per well-covered topic, each an ordered circular list of member sites with next, previous and random hops. Every entry carries the ring page, the ring file, an OPML of the members\' feeds, and how many members are listed and active. A member site may declare who makes it (human, ai or both); absent means it has not said.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    async run() {
+      const base = siteUrl();
+      const rings = await webrings.listRings(db());
+      return {
+        total: rings.length,
+        host: `${base}/.well-known/openwebring.json`,
+        rings: rings.map((ring) => ({ ...hostEntry({ base, ring }), active: ring.active_count })),
+      };
+    },
+  },
+
+  {
+    name: 'get_ring',
+    title: 'One webring and its members in order',
+    description:
+      "A ring's members in ring order, each with its site, feed, status (active, pending or inactive) and, where the site declared them, made_by and disclosure. The same document as /ring/<slug>/openwebring.json. Use ring_next to follow a hop rather than computing one from this list.",
+    inputSchema: {
+      type: 'object',
+      properties: { slug: { type: 'string', description: 'The ring slug, from list_rings.' } },
+      required: ['slug'],
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    async run(args) {
+      const slug = String(args?.slug ?? '').trim().toLowerCase();
+      if (!slug) throw invalid('slug is required');
+      const loaded = await loadRing(slug);
+      if (!loaded) throw invalid(`no ring '${slug}': try list_rings`);
+      const base = siteUrl();
+      return {
+        ...ringFile({ base, ring: loaded.ring, members: loaded.members }),
+        active: loaded.ring.active_count,
+        page: ringUrl(base, loaded.ring.slug),
+        opml: `${ringUrl(base, loaded.ring.slug)}/opml`,
+      };
+    },
+  },
+
+  {
+    name: 'ring_next',
+    title: 'Follow a webring hop',
+    description:
+      'Which member a hop lands on, without following a redirect: the site after or before `from` in ring order, or a random one. `from` is a member site URL or its slug; omit it for a random active member. Pending and inactive members are listed by get_ring but skipped here, and the ring wraps around. Nothing is recorded about who asked.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'The ring slug, from list_rings.' },
+        from: { type: 'string', description: 'The member site the reader is on: its URL or its slug.' },
+        direction: {
+          type: 'string',
+          enum: ['next', 'previous', 'random'],
+          description: 'Default next.',
+        },
+      },
+      required: ['slug'],
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    async run(args) {
+      const slug = String(args?.slug ?? '').trim().toLowerCase();
+      if (!slug) throw invalid('slug is required');
+      const loaded = await loadRing(slug);
+      if (!loaded) throw invalid(`no ring '${slug}': try list_rings`);
+
+      const direction = ['next', 'previous', 'random'].includes(args?.direction) ? args.direction : 'next';
+      const fromRaw = String(args?.from ?? '').trim();
+      // A slug has no dot and no slash; anything else is read as an address.
+      const from = !fromRaw ? null : /^[a-z0-9_-]+$/i.test(fromRaw) ? { slug: fromRaw } : { url: fromRaw };
+      const target = hop(loaded.members, direction, from);
+      const base = siteUrl();
+
+      return {
+        ring: loaded.ring.slug,
+        direction,
+        from: fromRaw || null,
+        member: target ? memberEntry(target) : null,
+        url: target?.site_url ?? null,
+        hop: hopUrl(base, loaded.ring.slug, direction, from && 'url' in from ? from.url : null),
+      };
     },
   },
 

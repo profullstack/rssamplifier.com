@@ -29,7 +29,10 @@
     "submit_feed",
     "get_openprofile",
     "update_openprofile",
-    "claim_openprofile"
+    "claim_openprofile",
+    "list_rings",
+    "get_ring",
+    "ring_next"
   ],
   "catalogs": [
     "https://openmcp.logicsrc.com"
