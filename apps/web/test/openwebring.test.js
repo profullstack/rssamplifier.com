@@ -254,6 +254,30 @@ test('a descriptor naming the ring counts as linking back', () => {
   assert.equal(descriptorUrlFor('not a url'), null);
 });
 
+test('a member on a shared host points at its descriptor from the page, and the check follows it', async () => {
+  // A blog under /~name/ cannot put a file at the host's /.well-known/, so its
+  // page says where the file is (the spec's second discovery route). The
+  // href is relative and the rel is one of several.
+  const site = 'https://host.example/~name/blog/';
+  const page = `<link rel="alternate openwebring" href="openwebring.json"><a href="${BASE}/ring/physics/next?from=${site}">next</a>`;
+  const asked = [];
+  const fetchText = async (url, opts) => {
+    asked.push(url);
+    if (url === site) return page;
+    if (url === 'https://host.example/~name/blog/openwebring.json') return JSON.stringify({ made_by: 'both', disclosure: 'ai-assisted', rings: [] });
+    return null;
+  };
+  const found = await checkRingMember({ base: BASE, ringSlug: 'physics', memberUrl: site, fetchText });
+  assert.deepEqual(found, { status: 'active', linked: 'page', reachable: true, madeBy: 'both', disclosure: 'ai-assisted', descriptorUrl: 'https://host.example/~name/blog/openwebring.json' });
+  assert.deepEqual(asked, [site, 'https://host.example/.well-known/openwebring.json', 'https://host.example/~name/blog/openwebring.json'], 'the origin first, then the page\'s own pointer');
+
+  // No pointer and no well-known file: nothing is fetched a third time.
+  const bare = [];
+  const none = await checkRingMember({ base: BASE, ringSlug: 'physics', memberUrl: site, fetchText: async (url) => { bare.push(url); return url === site ? '<p>plain</p>' : null; } });
+  assert.equal(none.madeBy, null);
+  assert.equal(bare.length, 2);
+});
+
 test('checking a member asks two URLs and decides from both', async () => {
   const page = `<a href="${BASE}/ring/physics/next?from=https://alpha.example/">next</a>`;
   const descriptor = JSON.stringify({ made_by: 'both', disclosure: 'ai-assisted', rings: [] });

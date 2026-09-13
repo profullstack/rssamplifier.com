@@ -80,6 +80,35 @@ export function linksToRing(html, base, slug) {
  * @param {string} siteUrl
  * @returns {string|null}
  */
+/**
+ * The descriptor a page points at with <link rel="openwebring" href="...">,
+ * resolved against the page, or null. The spec's second discovery route:
+ * a member whose site is a path on a shared host (a user directory, a blog
+ * under /~name/) cannot put a file at that host's /.well-known/, so the
+ * page says where the file is instead. Attribute order is not assumed.
+ *
+ * @param {string|null|undefined} html
+ * @param {string} pageUrl
+ * @returns {string|null}
+ */
+export function descriptorLinkFrom(html, pageUrl) {
+  if (typeof html !== 'string') return null;
+  const tags = html.match(/<link\b[^>]*>/gi) ?? [];
+  for (const tag of tags) {
+    const rel = /\brel\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1]?.toLowerCase() ?? '';
+    if (!/\bopenwebring\b/.test(rel)) continue;
+    const href = /\bhref\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1]?.trim();
+    if (!href) continue;
+    try {
+      const u = new URL(href, pageUrl);
+      if (/^https?:$/.test(u.protocol)) return u.toString();
+    } catch {
+      // A href that is not a URL is no descriptor.
+    }
+  }
+  return null;
+}
+
 export function descriptorUrlFor(siteUrl) {
   try {
     const u = new URL(siteUrl);
@@ -223,11 +252,22 @@ export async function checkRingMember({ base, ringSlug, memberUrl, fetchText }) 
   const html = await fetchText(memberUrl, { accept: 'text/html' }).catch(() => null);
   const linkedFromPage = linksToRing(html, base, ringSlug);
 
-  const descriptorUrl = descriptorUrlFor(memberUrl);
+  // The well-known file on the origin first; when there is none, the file
+  // the page itself points at. Both are the member's own words; a page on a
+  // shared host has only the second.
+  let descriptorUrl = descriptorUrlFor(memberUrl);
   let descriptor = null;
   if (descriptorUrl) {
     const text = await fetchText(descriptorUrl, { accept: 'application/json' }).catch(() => null);
     descriptor = parseRingDescriptor(text);
+  }
+  if (!descriptor) {
+    const linked = descriptorLinkFrom(html, memberUrl);
+    if (linked && linked !== descriptorUrl) {
+      const text = await fetchText(linked, { accept: 'application/json' }).catch(() => null);
+      descriptor = parseRingDescriptor(text);
+      if (descriptor) descriptorUrl = linked;
+    }
   }
   const namedInDescriptor = descriptorNamesRing(descriptor, base, ringSlug);
 
