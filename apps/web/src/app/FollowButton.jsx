@@ -35,6 +35,7 @@ import { buttonVariants } from '@/components/ui/button';
  *   label: string,
  *   followingLabel?: string,
  *   variant?: '' | 'ui',
+ *   ring?: string,
  *   onChange?: (following: boolean) => void,
  * }} props
  */
@@ -48,6 +49,7 @@ export default function FollowButton({
   label,
   followingLabel = 'Following ✓',
   variant = '',
+  ring = '',
   onChange,
 }) {
   const [on, setOn] = useState(following);
@@ -133,6 +135,8 @@ export default function FollowButton({
           "the whole topic" and a hidden field carrying it says the same thing
           less clearly. */}
       {segment && <input type="hidden" name="segment" value={segment} />}
+      {/* Which ring the reader was in when they followed, for the ring's score. */}
+      {ring && <input type="hidden" name="ring" value={ring} />}
       {/* Follows the button rather than the server's answer, so the no-JS
           submit asks for whatever the label is currently offering. */}
       <input type="hidden" name="action" value={on ? 'unfollow' : 'follow'} />

@@ -6,6 +6,7 @@ import { SIGNED_IN_HINT_COOKIE } from '../lib/session-hint.js';
 import DockPlayer from './DockPlayer.jsx';
 import ServiceWorker from './ServiceWorker.jsx';
 import HeaderMore from './HeaderMore.jsx';
+import RingLeaders from './RingLeaders.jsx';
 import Script from "next/script";
 import { jsonLdScript } from '../lib/jsonld.js';
 
@@ -296,6 +297,7 @@ export default function RootLayout({ children }) {
                   which is where somebody wonders who wrote the thing. */}
               <a href="/authors">Authors</a>
             </p>
+            <RingLeaders />
             {/* The two platform namespaces, on a line of their own rather than
                 appended to the browse row above. That row is the directory's
                 own categories — what a feed *is* — and these are two places

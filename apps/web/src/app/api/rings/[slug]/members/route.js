@@ -50,6 +50,11 @@ export async function POST(req, { params }) {
   const { found, missing } = await resolveMembers(client, form.members);
   const added = found.length ? await webrings.addRingMembers(client, loaded.ring.slug, found) : 0;
   forgetRing(loaded.ring.slug);
+  for (const f of found.slice(0, added)) {
+    await webrings
+      .recordRingEvent(client, { kind: 'add', ringSlug: loaded.ring.slug, memberSlug: f.slug, userId: String(user.id) })
+      .catch(() => {});
+  }
 
   if (wantsHtml) {
     const query = missing.length ? `?missing=${encodeURIComponent(missing.join('\n'))}` : '?saved=1';

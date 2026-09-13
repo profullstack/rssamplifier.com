@@ -1,5 +1,5 @@
 import { webrings } from '@rssamplifier/db';
-import { Plus, Tag } from 'lucide-react';
+import { Plus, Tag, Trophy } from 'lucide-react';
 
 import { db, siteUrl } from '../../lib/db.js';
 import { Button } from '@/components/ui/button';
@@ -48,6 +48,11 @@ export default async function RingsPage() {
         <Button asChild variant="outline" size="sm">
           <a href="/topics" title="Any topic page has a Webring button; the ring is at /ring/<topic>">
             <Tag /> Every topic is a ring
+          </a>
+        </Button>
+        <Button asChild variant="ghost" size="sm">
+          <a href="/ring/leaders">
+            <Trophy /> Leaders
           </a>
         </Button>
       </div>

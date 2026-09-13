@@ -1,4 +1,4 @@
-import { webrings } from '@rssamplifier/db';
+import { accounts, webrings } from '@rssamplifier/db';
 import { notFound } from 'next/navigation';
 import {
   Bot,
@@ -14,6 +14,10 @@ import {
 } from 'lucide-react';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { currentUser } from '../../../lib/auth.js';
+import FollowButton from '../../FollowButton.jsx';
+import LikeButton from '../../LikeButton.jsx';
+import ShareButton from '../../ShareButton.jsx';
 import { loadRing } from '../../../lib/rings.js';
 import { findMember, madeByLabel, ringUrl } from '../../../lib/openwebring.js';
 import { frameable } from '../../../lib/frameable.js';
@@ -83,7 +87,7 @@ function stepAll(members, current, random = Math.random) {
 export default async function ViewPage({ params, searchParams }) {
   const { slug } = await params;
   const query = await searchParams;
-  const loaded = await loadRing(slug);
+  const [loaded, user] = await Promise.all([loadRing(slug), currentUser()]);
   if (!loaded) notFound();
 
   const { ring, members } = loaded;
@@ -111,6 +115,19 @@ export default async function ViewPage({ params, searchParams }) {
   const MadeIcon = current ? MADE_BY_ICON[current.made_by] : null;
   const frame = current ? await frameable(current.site_url) : { ok: false, reason: 'nobody' };
   const position = current ? members.indexOf(current) + 1 : 0;
+  const client = db();
+  const [liked, likes, following] = await Promise.all([
+    user ? webrings.ringLiked(client, ring.slug, String(user.id)) : false,
+    webrings.ringLikes(client, ring.slug),
+    user && current ? accounts.isFollowing(client, String(user.id), String(current.feed_id)) : false,
+  ]);
+  // Looking at a site in the ring is an action too, for whoever is signed in.
+  if (user && current) {
+    webrings
+      .recordRingEvent(client, { kind: 'view', ringSlug: ring.slug, memberSlug: current.member_slug, userId: String(user.id) })
+      .catch(() => {});
+  }
+  const here = `${siteUrl()}/view/${encodeURIComponent(ring.slug)}${current ? `?at=${encodeURIComponent(current.member_slug)}` : ''}`;
 
   return (
     <>
@@ -139,6 +156,20 @@ export default async function ViewPage({ params, searchParams }) {
                 <ChevronsRight />
               </a>
             </Button>
+            <LikeButton
+              endpoint={`/api/rings/${encodeURIComponent(ring.slug)}/like`}
+              liked={liked}
+              likes={likes}
+              signedIn={Boolean(user)}
+              next={`/view/${encodeURIComponent(ring.slug)}${current ? `?at=${encodeURIComponent(current.member_slug)}` : ''}`}
+              compact
+            />
+            <ShareButton
+              url={here}
+              title={`${ring.title} webring`}
+              beacon={`/api/rings/${encodeURIComponent(ring.slug)}/share`}
+              compact
+            />
           </div>
 
           <div className="flex items-center gap-1">
@@ -181,6 +212,17 @@ export default async function ViewPage({ params, searchParams }) {
               <Badge variant={current.status === 'active' ? 'default' : 'outline'} className="max-md:hidden">
                 {STATUS_LABEL[current.status] ?? STATUS_LABEL.pending}
               </Badge>
+              <FollowButton
+                endpoint="/api/follows"
+                slug={String(current.member_slug)}
+                following={following}
+                signedIn={Boolean(user)}
+                next={`/view/${encodeURIComponent(ring.slug)}?at=${encodeURIComponent(current.member_slug)}`}
+                label="Follow"
+                followingLabel="Following"
+                variant="ui"
+                ring={ring.slug}
+              />
               <Button asChild variant="ghost" size="icon" className="size-8">
                 <a href={current.site_url} target="_blank" rel="noopener" title="Open in a new tab">
                   <ExternalLink />
