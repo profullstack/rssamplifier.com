@@ -125,6 +125,11 @@ function shapeMember(row) {
     title: String(row.title ?? row.member_slug),
     feed_url: String(row.feed_url ?? ''),
     language: row.language == null ? null : String(row.language),
+    description: row.description == null ? null : String(row.description),
+    image_url: row.image_url == null ? null : String(row.image_url),
+    card_url: row.card_url == null ? null : String(row.card_url),
+    item_count: Number(row.item_count ?? 0),
+    category: row.category == null ? null : String(row.category),
   };
 }
 
@@ -174,7 +179,8 @@ export async function membersOf(db, ringSlug) {
   const { rows } = await db.execute({
     sql: `select m.ring_slug, m.feed_id, m.member_slug, m.position, m.site_url, m.made_by,
                  m.made_by_source, m.disclosure, m.descriptor_url, m.status, m.checked_at,
-                 m.joined_at, f.title, f.feed_url, f.language
+                 m.joined_at, f.title, f.feed_url, f.language, f.description, f.image_url, f.card_url,
+                 f.item_count, f.category
             from ring_members m
             join feeds f on f.id = m.feed_id
            where m.ring_slug = ?
@@ -196,7 +202,8 @@ export async function memberBySlug(db, ringSlug, memberSlug) {
   const { rows } = await db.execute({
     sql: `select m.ring_slug, m.feed_id, m.member_slug, m.position, m.site_url, m.made_by,
                  m.made_by_source, m.disclosure, m.descriptor_url, m.status, m.checked_at,
-                 m.joined_at, f.title, f.feed_url, f.language
+                 m.joined_at, f.title, f.feed_url, f.language, f.description, f.image_url, f.card_url,
+                 f.item_count, f.category
             from ring_members m
             join feeds f on f.id = m.feed_id
            where m.ring_slug = ? and m.member_slug = ?
@@ -471,7 +478,8 @@ export async function membersDueForCheck(db, limit, opts = {}) {
   const { rows } = await db.execute({
     sql: `select m.ring_slug, m.feed_id, m.member_slug, m.position, m.site_url, m.made_by,
                  m.made_by_source, m.disclosure, m.descriptor_url, m.status, m.checked_at,
-                 m.joined_at, f.title, f.feed_url, f.language
+                 m.joined_at, f.title, f.feed_url, f.language, f.description, f.image_url, f.card_url,
+                 f.item_count, f.category
             from ring_members m
             join feeds f on f.id = m.feed_id
             join rings r on r.slug = m.ring_slug
@@ -564,7 +572,8 @@ export async function setMemberMadeBy(db, ringSlug, feedId, word) {
   const { rows } = await db.execute({
     sql: `select m.ring_slug, m.feed_id, m.member_slug, m.position, m.site_url, m.made_by,
                  m.made_by_source, m.disclosure, m.descriptor_url, m.status, m.checked_at,
-                 m.joined_at, f.title, f.feed_url, f.language
+                 m.joined_at, f.title, f.feed_url, f.language, f.description, f.image_url, f.card_url,
+                 f.item_count, f.category
             from ring_members m
             join feeds f on f.id = m.feed_id
            where m.ring_slug = ? and m.feed_id = ?

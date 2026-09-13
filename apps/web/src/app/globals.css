@@ -3920,3 +3920,76 @@ html:not([data-dock]) .playlist-hint {
 .profile-edit .hint {
   margin: 0.15rem 0 0.35rem;
 }
+
+/* Webring pages (/ring/<slug>): the members as the directory's own feed cards,
+   with the ring's two facts on each (who makes it, whether it links here), a
+   follow button per card, the hops as buttons, and the join instructions folded
+   away until wanted. */
+ol.feed-list.ring-members {
+  list-style: none;
+  margin: 1.5rem 0 1rem;
+  padding: 0;
+  counter-reset: ring;
+}
+.ring-hops {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0 0.75rem;
+}
+.ring-hops .button {
+  text-decoration: none;
+}
+.ring-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.5rem;
+}
+.ring-member h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.ring-position {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted, #6b7280);
+  min-width: 1.5em;
+  text-align: right;
+}
+.ring-member .feed-meta {
+  flex-wrap: wrap;
+  row-gap: 0.35rem;
+}
+.ring-member .ring-follow {
+  margin: 0.6rem 0 0;
+  padding: 0;
+  border: 0;
+}
+.ring-join {
+  margin: 1.25rem 0;
+  padding: 0.25rem 0;
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+.ring-join > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.75rem 0;
+}
+.ring-join > summary::-webkit-details-marker {
+  display: none;
+}
+.ring-join > summary h2 {
+  display: inline;
+  margin: 0;
+  font-size: 1.15rem;
+}
+.ring-join > summary::after {
+  content: ' +';
+  color: var(--muted, #6b7280);
+  font-weight: 400;
+}
+.ring-join[open] > summary::after {
+  content: ' −';
+}
+
