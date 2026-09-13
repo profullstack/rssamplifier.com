@@ -145,13 +145,16 @@ export async function profilesForUser(db, userId) {
 
 /**
  * The topics of several feeds at once, strongest first per feed, as
- * `feed_id -> keyword[]`. What the Topics of a profile and the `Topics` key of
- * each Broadcast group are made of.
+ * `feed_id -> [{ keyword, source }]`. What the Topics of a profile and the
+ * `Topics` key of each Broadcast group are made of. `source` rides along
+ * because the two differ: 'category' is the publisher's own tag and
+ * 'content' is a phrase counted out of their text, and a show's Broadcast
+ * lists only the first kind.
  *
  * @param {Client} db
  * @param {string[]} feedIds
  * @param {number} [perFeed]
- * @returns {Promise<Map<string, string[]>>}
+ * @returns {Promise<Map<string, Array<{ keyword: string, source: string }>>>}
  */
 export async function keywordsForFeeds(db, feedIds, perFeed = 8) {
   const out = new Map();
@@ -165,7 +168,7 @@ export async function keywordsForFeeds(db, feedIds, perFeed = 8) {
   for (const row of rows) {
     const id = String(row.feed_id);
     const list = out.get(id) ?? [];
-    if (list.length < perFeed) list.push(String(row.keyword));
+    if (list.length < perFeed) list.push({ keyword: String(row.keyword), source: String(row.source) });
     out.set(id, list);
   }
   return out;

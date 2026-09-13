@@ -70,8 +70,12 @@ test('no row means no profile: the generated file stands', async () => {
 
 test('the Topics inputs come from the feeds themselves', async () => {
   const topics = await profiles.keywordsForFeeds(db, [String(podcast.id), String(blog.id)]);
-  assert.deepEqual(topics.get(String(podcast.id)), ['history', 'mathematics'], 'category first, then by count');
-  assert.deepEqual(topics.get(String(blog.id)), ['mathematics']);
+  assert.deepEqual(
+    topics.get(String(podcast.id)),
+    [{ keyword: 'history', source: 'category' }, { keyword: 'mathematics', source: 'content' }],
+    'category first, then by count',
+  );
+  assert.deepEqual(topics.get(String(blog.id)), [{ keyword: 'mathematics', source: 'content' }]);
   assert.equal((await profiles.keywordsForFeeds(db, [])).size, 0);
 });
 
