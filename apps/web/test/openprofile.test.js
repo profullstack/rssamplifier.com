@@ -9,7 +9,6 @@ import {
   overridesFromBody,
   overridesFromForm,
   profileUrl,
-  yearMonth,
 } from '../src/lib/openprofile.js';
 import { claimVerdict, isOwner, linksBack } from '../src/lib/profileAuth.js';
 import { principalFromToken } from '../src/lib/openaccess.js';
@@ -57,10 +56,9 @@ const TOPICS = new Map([
   ['f1', ['history', 'mathematics']],
   ['f2', ['mathematics', 'writing']],
 ]);
-const FIRST = new Map([['f1', '2024-11-15T00:00:00.000Z']]);
 
 test('the generated file says what the author published, and nothing they did not', () => {
-  const doc = generateAuthorProfile({ person: ADA, feeds: FEEDS, topicsByFeed: TOPICS, firstByFeed: FIRST, base: BASE });
+  const doc = generateAuthorProfile({ person: ADA, feeds: FEEDS, topicsByFeed: TOPICS, base: BASE });
 
   assert.equal(doc.name, 'Ada Lovelace');
   const identity = Object.fromEntries(doc.identity.map((e) => [e.key, e.value]));
@@ -84,12 +82,12 @@ test('the generated file says what the author published, and nothing they did no
     Show: 'The Analytical Engine',
     Kind: 'podcast',
     Language: 'en',
-    Since: '2024-11',
     Feed: 'https://ada.example/podcast/feed.xml',
     Listen: 'https://ada.example/podcast',
     Topics: 'history, mathematics',
   });
   assert.equal('Seeking' in shows[0], false);
+  assert.equal('Since' in shows[0], false, 'the feed window is not when the show started');
   assert.equal(doc.sections.some((s) => s.name === 'guest'), false, 'no Guest section unless the person wrote one');
 
   const links = doc.sections.find((s) => s.name === 'links');
@@ -98,7 +96,7 @@ test('the generated file says what the author published, and nothing they did no
 
 test('two owned shows become ### groups in one Broadcast section', () => {
   const feeds = [FEEDS[0], { ...FEEDS[2], role: 'owner' }];
-  const doc = generateAuthorProfile({ person: ADA, feeds, topicsByFeed: TOPICS, firstByFeed: FIRST, base: BASE });
+  const doc = generateAuthorProfile({ person: ADA, feeds, topicsByFeed: TOPICS, base: BASE });
   const shows = broadcasts(doc);
   assert.deepEqual(shows.map((s) => s.Show), ['The Analytical Engine', 'Somebody Elses Show']);
   assert.equal(shows[1].Listen, `${BASE}/other-show`, 'a show with no site listens on its directory page');
@@ -110,7 +108,7 @@ test('the overlay wins per part, the rest stays generated, and the file round-tr
     identity: { Email: 'ada@example.com', Location: 'London', Avatar: null },
     sections: { guest: '- **Available**: yes\n- **Expertise**: early computing', links: 'none' },
   };
-  const { markdown, doc } = authorProfile({ person: ADA, feeds: FEEDS, topicsByFeed: TOPICS, firstByFeed: FIRST, base: BASE, overrides });
+  const { markdown, doc } = authorProfile({ person: ADA, feeds: FEEDS, topicsByFeed: TOPICS, base: BASE, overrides });
   assert.equal(doc.headline, 'Countess, programmer.');
   const identity = Object.fromEntries(doc.identity.map((e) => [e.key, e.value]));
   assert.equal(identity.Email, 'ada@example.com', 'the owner chose to publish it');
@@ -125,7 +123,7 @@ test('the overlay wins per part, the rest stays generated, and the file round-tr
 });
 
 test('a PUT body as Markdown becomes the whole overlay; as JSON it is a patch', () => {
-  const generated = generateAuthorProfile({ person: ADA, feeds: FEEDS, topicsByFeed: TOPICS, firstByFeed: FIRST, base: BASE });
+  const generated = generateAuthorProfile({ person: ADA, feeds: FEEDS, topicsByFeed: TOPICS, base: BASE });
 
   const edited = '# Ada Lovelace\n\n- Kind: person\n- Web: https://ada.example\n\nCountess.\n\n## Guest\n\n- **Available**: yes\n';
   const fromMd = overridesFromBody({ contentType: 'text/markdown; charset=utf-8', text: edited, existing: null, generated });
@@ -235,7 +233,5 @@ test('an OpenAccess token yields a principal with scopes and an email when the h
 });
 
 test('small helpers', () => {
-  assert.equal(yearMonth('2024-11-15T00:00:00Z'), '2024-11');
-  assert.equal(yearMonth(null), null);
   assert.equal(profileUrl(BASE, 'ada lovelace'), `${BASE}/authors/ada%20lovelace/openprofile.md`);
 });

@@ -258,7 +258,8 @@ curl -X POST https://rssamplifier.com/api/discover \
 Every author page carries `<link rel="openprofile">` to `/authors/{slug}/openprofile.md`, the
 person as one portable file: identity block, Accounts (their `rel="me"` links), Topics (their feeds'
 subjects), and a Broadcast section ([OpenBroadcast](https://logicsrc.com/openbroadcast)) for every
-podcast or show they publish, with only the facts their own feed states. The file never fills in
+podcast or show they publish, with only the facts their own feed states (not `Since`: a feed is a
+window on a show, and the oldest episode the directory holds is not when the show began). The file never fills in
 what the person did not say: no `Seeking`, `Pays`, `Charges`, no Guest section, and no email even
 when the API republishes one.
 

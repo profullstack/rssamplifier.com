@@ -20,6 +20,12 @@ import {
  * Guest section: those are the person's to write, through the overlay, and
  * absent means unstated.
  *
+ * `Since` is deliberately not written either. A feed is a window on a show,
+ * the last fifty or hundred episodes, and the oldest item the directory holds
+ * says when that window starts, not when the show did. A podcast running since
+ * 2019 would read "Since: 2026-06", which is exactly the false claim the spec
+ * forbids; the owner can write the year themselves.
+ *
  * Email is deliberately not in the generated file even when the table has it.
  * The API republishes an address the author published; the profile is a
  * document other directories will copy, and the owner adds `Email` to it
@@ -69,18 +75,6 @@ function label(network) {
 }
 
 /**
- * `YYYY-MM` from an ISO stamp, or null when it does not parse.
- *
- * @param {string|null|undefined} iso
- * @returns {string|null}
- */
-export function yearMonth(iso) {
-  if (!iso) return null;
-  const m = /^(\d{4})-(\d{2})/.exec(String(iso));
-  return m ? `${m[1]}-${m[2]}` : null;
-}
-
-/**
  * The generated document, before the owner's corrections.
  *
  * @param {{
@@ -89,12 +83,11 @@ export function yearMonth(iso) {
  *   feeds: Array<{ id: string, slug: string, title: string, kind?: string|null, role?: string|null,
  *                  feed_url?: string|null, site_url?: string|null, language?: string|null }>,
  *   topicsByFeed?: Map<string, string[]>,
- *   firstByFeed?: Map<string, string>,
  *   base: string,
  * }} input
  * @returns {import('@profullstack/openprofile').OpenProfileDoc}
  */
-export function generateAuthorProfile({ person, feeds, topicsByFeed, firstByFeed, base }) {
+export function generateAuthorProfile({ person, feeds, topicsByFeed, base }) {
   const links = (person.links ?? []).filter((l) => l.network !== 'email');
   const handleLink = HANDLE_NETWORKS.map((n) => links.find((l) => l.network === n && l.handle)).find(
     Boolean,
@@ -136,7 +129,6 @@ export function generateAuthorProfile({ person, feeds, topicsByFeed, firstByFeed
       Show: f.title,
       Kind: BROADCAST_KINDS.get(String(f.kind)) ?? null,
       Language: f.language ?? null,
-      Since: yearMonth(firstByFeed?.get(String(f.id))),
       Feed: f.feed_url ?? null,
       Listen: f.site_url ?? `${base}/${encodeURIComponent(String(f.slug))}`,
       Topics: (topicsByFeed?.get(String(f.id)) ?? []).slice(0, 8).join(', ') || null,
@@ -150,7 +142,6 @@ export function generateAuthorProfile({ person, feeds, topicsByFeed, firstByFeed
           Show: shows[0].title,
           Kind: BROADCAST_KINDS.get(String(shows[0].kind)) ?? null,
           Language: shows[0].language ?? null,
-          Since: yearMonth(firstByFeed?.get(String(shows[0].id))),
           Feed: shows[0].feed_url ?? null,
           Listen: shows[0].site_url ?? `${base}/${encodeURIComponent(String(shows[0].slug))}`,
           Topics: (topicsByFeed?.get(String(shows[0].id)) ?? []).slice(0, 8).join(', ') || null,

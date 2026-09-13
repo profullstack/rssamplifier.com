@@ -68,11 +68,7 @@ test('no row means no profile: the generated file stands', async () => {
   assert.equal(await profiles.profileForAuthor(db, ada.id), null);
 });
 
-test('the Since and Topics inputs come from the feeds themselves', async () => {
-  const first = await profiles.firstPublishedAt(db, [String(podcast.id), String(blog.id)]);
-  assert.equal(first.get(String(podcast.id)), '2024-11-15T00:00:00.000Z');
-  assert.equal(first.has(String(blog.id)), false, 'a feed with no dated item is absent');
-
+test('the Topics inputs come from the feeds themselves', async () => {
   const topics = await profiles.keywordsForFeeds(db, [String(podcast.id), String(blog.id)]);
   assert.deepEqual(topics.get(String(podcast.id)), ['history', 'mathematics'], 'category first, then by count');
   assert.deepEqual(topics.get(String(blog.id)), ['mathematics']);

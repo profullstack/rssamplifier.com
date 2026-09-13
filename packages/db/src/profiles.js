@@ -144,31 +144,6 @@ export async function profilesForUser(db, userId) {
 }
 
 /**
- * When each feed first published, as `feed_id -> ISO date`, for the `Since`
- * key of a Broadcast section. Feeds with no dated item are absent.
- *
- * @param {Client} db
- * @param {string[]} feedIds
- * @returns {Promise<Map<string, string>>}
- */
-export async function firstPublishedAt(db, feedIds) {
-  const out = new Map();
-  if (feedIds.length === 0) return out;
-  const { rows } = await db.execute({
-    sql: `select feed_id, min(published_at) as first_at
-            from feed_items
-           where feed_id in (${feedIds.map(() => '?').join(',')})
-             and published_at is not null and published_at <> ''
-           group by feed_id`,
-    args: feedIds,
-  });
-  for (const row of rows) {
-    if (row.first_at) out.set(String(row.feed_id), String(row.first_at));
-  }
-  return out;
-}
-
-/**
  * The topics of several feeds at once, strongest first per feed, as
  * `feed_id -> keyword[]`. What the Topics of a profile and the `Topics` key of
  * each Broadcast group are made of.
