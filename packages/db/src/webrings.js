@@ -224,20 +224,24 @@ export async function memberBySlug(db, ringSlug, memberSlug) {
  * @returns {Promise<Array<{ id: string, slug: string, site_url: string, created_at: string }>>}
  */
 export async function topicRingCandidates(db, topicSlug, limit) {
-  // Walked from feeds in admission order (feeds_created_idx) with a primary
-  // key probe into feed_keywords per row, so the statement stops the moment
-  // `limit` members are found. The other way round, a range scan of the
-  // topic's keyword rows joined, grouped and sorted before the limit applies,
-  // is a full pass over a big topic: the first seed in production timed out
-  // on the largest topic before anything was written. A small topic walks
-  // the directory with a point lookup per feed, which is the cheap case.
+  // Driven from the topic's own keyword rows, strongest first. The index
+  // feed_keywords_slug_idx is (slug, count desc), so the range scan comes
+  // out already in this order and the statement stops at the `limit`th
+  // feed that can link; `cross join` pins that join order, because left to
+  // itself the planner drove every variant of this from feeds by status,
+  // 580,000 rows probed and sorted, and took 80 seconds on the biggest
+  // topic against a 30-second request deadline (measured 2026-09-13).
+  //
+  // So a ring's order is the topic's own: the sites most about it first.
+  // Stable all the same: a position is written once and new members append.
   const { rows } = await db.execute({
     sql: `select f.id, f.slug, f.site_url, f.created_at
-            from feeds f
-           where f.status = 'active'
+            from feed_keywords k indexed by feed_keywords_slug_idx
+            cross join feeds f on f.id = k.feed_id
+           where k.slug = ?
+             and f.status = 'active'
              and f.site_url is not null and f.site_url <> ''
-             and exists (select 1 from feed_keywords k where k.feed_id = f.id and k.slug = ?)
-           order by f.created_at asc, f.id asc
+           order by k.count desc
            limit ?`,
     args: [topicSlug, limit],
   });
@@ -273,11 +277,15 @@ export async function seedTopicRing(db, topicSlug, opts = {}) {
   const limit = Math.max(1, Number(opts.limit ?? DEFAULT_RING_LIMIT) || DEFAULT_RING_LIMIT);
   const now = nowIso();
 
-  const label = await db.execute({
-    sql: `select ${topicLabelSql('?')} as keyword`,
-    args: [topicSlug],
-  });
-  const title = String(label.rows[0]?.keyword ?? topicSlug);
+  // The rollup already holds the topic's label; recomputing it groups every
+  // keyword row of the slug (seven seconds on the biggest topic). The
+  // recomputation is the fallback for a topic the rollup has not seen.
+  const rolled = await db.execute({ sql: `select keyword from topics where slug = ?`, args: [topicSlug] });
+  let title = rolled.rows[0]?.keyword ? String(rolled.rows[0].keyword) : '';
+  if (!title) {
+    const label = await db.execute({ sql: `select ${topicLabelSql('?')} as keyword`, args: [topicSlug] });
+    title = String(label.rows[0]?.keyword ?? topicSlug);
+  }
 
   const existing = await ringBySlug(db, topicSlug);
   if (!existing) {
@@ -348,7 +356,9 @@ export const MIN_RING_TOPIC_LENGTH = 3;
 export async function topRingTopics(db, opts = {}) {
   const count = Math.max(1, Number(opts.count ?? 20) || 20);
   const minFeeds = Math.max(1, Number(opts.minFeeds ?? 5) || 5);
-  const pool = Math.max(count, Number(opts.pool ?? count * 15) || count * 15);
+  // Each candidate costs a range scan of its keyword rows (six seconds on
+  // the biggest topic), so the pool is kept to a few times the rings wanted.
+  const pool = Math.max(count, Number(opts.pool ?? count * 5) || count * 5);
   const { rows } = await db.execute({
     sql: `select slug, keyword from topics
            where feed_count >= ? and length(slug) >= ?
@@ -361,9 +371,9 @@ export async function topRingTopics(db, opts = {}) {
   for (const r of rows) {
     const slug = String(r.slug);
     const counted = await db.execute({
-      sql: `select count(distinct k.feed_id) as n
-              from feed_keywords k
-              join feeds f on f.id = k.feed_id
+      sql: `select count(*) as n
+              from feed_keywords k indexed by feed_keywords_slug_idx
+              cross join feeds f on f.id = k.feed_id
              where k.slug = ? and k.source = 'category'
                and f.status = 'active'
                and f.site_url is not null and f.site_url <> ''`,
