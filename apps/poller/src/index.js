@@ -795,11 +795,18 @@ async function ringTick() {
 
   try {
     if (Date.now() - lastRingSeed >= ringSeedMs) {
+      // Stamped only once the pass has run: a pass that throws is retried
+      // ten minutes on, not six hours on, which is what the first deploy
+      // would have waited after the largest topic timed out.
+      const seeded = await seedTopRings(db, {
+        topics: ringTopics,
+        minMembers: 5,
+        onError: (topic, err) => log('ring-seed-error', { topic, message: String(err?.message ?? err) }),
+      });
       lastRingSeed = Date.now();
-      const seeded = await seedTopRings(db, { topics: ringTopics, minMembers: 5 });
       // Logged only when something changed: once the rings exist, a line
       // every six hours saying "0 added" is not a log.
-      if (seeded.created || seeded.added) log('rings-seeded', seeded);
+      if (seeded.created || seeded.added || seeded.failed) log('rings-seeded', seeded);
     }
 
     const result = await verifyRingMembers(db, {
@@ -814,6 +821,8 @@ async function ringTick() {
     if (result.checked) log('rings', result);
   } catch (err) {
     log('rings-error', { message: String(err?.message ?? err) });
+    // Try the seed again soon rather than at the next six-hour mark.
+    lastRingSeed = Math.min(lastRingSeed, Date.now() - ringSeedMs + 10 * 60 * 1000);
   } finally {
     ringing = false;
   }
