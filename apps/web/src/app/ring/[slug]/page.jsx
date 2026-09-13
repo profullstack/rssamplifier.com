@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDashed,
+  Eye,
   Link2,
   Link2Off,
   Rss,
@@ -124,6 +125,11 @@ export default async function RingPage({ params, searchParams }) {
       </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Button asChild size="sm">
+          <a href={`/view/${encodeURIComponent(ring.slug)}`} title="Browse the ring's sites one by one, framed">
+            <Eye /> View webring
+          </a>
+        </Button>
         <Button asChild variant="outline" size="sm">
           <a href={`${page}/previous`} rel="prev">
             <ChevronLeft /> Previous
