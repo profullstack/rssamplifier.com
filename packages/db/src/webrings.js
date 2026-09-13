@@ -224,18 +224,19 @@ export async function memberBySlug(db, ringSlug, memberSlug) {
  * @returns {Promise<Array<{ id: string, slug: string, site_url: string, created_at: string }>>}
  */
 export async function topicRingCandidates(db, topicSlug, limit) {
-  // Driven from feed_keywords, whose (slug, count) index makes this a range
-  // scan of one topic's rows, rather than from feeds, where the same filter
-  // is a walk of the whole directory with a subquery per row. Grouped on the
-  // feed because a feed can carry several spellings of one slug.
+  // Walked from feeds in admission order (feeds_created_idx) with a primary
+  // key probe into feed_keywords per row, so the statement stops the moment
+  // `limit` members are found. The other way round, a range scan of the
+  // topic's keyword rows joined, grouped and sorted before the limit applies,
+  // is a full pass over a big topic: the first seed in production timed out
+  // on the largest topic before anything was written. A small topic walks
+  // the directory with a point lookup per feed, which is the cheap case.
   const { rows } = await db.execute({
     sql: `select f.id, f.slug, f.site_url, f.created_at
-            from feed_keywords k
-            join feeds f on f.id = k.feed_id
-           where k.slug = ?
-             and f.status = 'active'
+            from feeds f
+           where f.status = 'active'
              and f.site_url is not null and f.site_url <> ''
-           group by f.id
+             and exists (select 1 from feed_keywords k where k.feed_id = f.id and k.slug = ?)
            order by f.created_at asc, f.id asc
            limit ?`,
     args: [topicSlug, limit],
@@ -352,15 +353,21 @@ export async function topRingTopics(db, opts = {}) {
  * @param {string} topicSlug
  * @returns {Promise<number>}
  */
-export async function topicRingSize(db, topicSlug) {
+export async function topicRingSize(db, topicSlug, opts = {}) {
+  // `cap` stops the count once it is high enough to answer the caller's
+  // question ("at least five?"), so the biggest topics cost the same as the
+  // smallest. Without it the count is exact.
+  const cap = Number(opts.cap) > 0 ? Number(opts.cap) : null;
   const { rows } = await db.execute({
-    sql: `select count(distinct f.id) as n
-            from feed_keywords k
-            join feeds f on f.id = k.feed_id
-           where k.slug = ?
-             and f.status = 'active'
-             and f.site_url is not null and f.site_url <> ''`,
-    args: [topicSlug],
+    sql: `select count(*) as n from (
+            select f.id
+              from feeds f
+             where f.status = 'active'
+               and f.site_url is not null and f.site_url <> ''
+               and exists (select 1 from feed_keywords k where k.feed_id = f.id and k.slug = ?)
+             ${cap ? 'limit ?' : ''}
+          )`,
+    args: cap ? [topicSlug, cap] : [topicSlug],
   });
   return Number(rows[0]?.n ?? 0);
 }

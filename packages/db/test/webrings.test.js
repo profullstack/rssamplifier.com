@@ -128,6 +128,8 @@ test('the top topics are the most covered ones with enough feeds to ring', async
   assert.equal(await webrings.topicRingSize(db, 'physics'), 5, 'the feeds that can link, distinct');
   assert.equal(await webrings.topicRingSize(db, 'chemistry'), 1);
   assert.equal(await webrings.topicRingSize(db, 'nothing'), 0);
+  assert.equal(await webrings.topicRingSize(db, 'physics', { cap: 3 }), 3, 'a capped count stops at the cap');
+  assert.equal(await webrings.topicRingSize(db, 'chemistry', { cap: 3 }), 1, 'and is exact under it');
 });
 
 test('a check records status and stamp, and a descriptor sets made_by', async () => {

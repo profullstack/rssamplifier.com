@@ -337,9 +337,14 @@ export async function verifyRingMembers(db, opts) {
  * eligible feeds fall under `minMembers` is skipped rather than made into
  * a ring of two, since a ring needs somewhere to hop to.
  *
+ * A topic whose queries fail (the first production seed hit the request
+ * deadline on the largest topic) is counted as failed and reported through
+ * `onError`, and the pass goes on to the next one; one slow topic must not
+ * cost every other ring its seed.
+ *
  * @param {import('@libsql/client').Client} db
- * @param {{ topics?: number, minMembers?: number, limit?: number }} [opts]
- * @returns {Promise<{ rings: number, created: number, added: number, skipped: number }>}
+ * @param {{ topics?: number, minMembers?: number, limit?: number, onError?: ((topic: string, err: unknown) => void)|null }} [opts]
+ * @returns {Promise<{ rings: number, created: number, added: number, skipped: number, failed: number }>}
  */
 export async function seedTopRings(db, opts = {}) {
   const topics = Math.max(1, Number(opts.topics ?? 20) || 20);
@@ -350,19 +355,24 @@ export async function seedTopRings(db, opts = {}) {
   // on a topic, and a topic can be well covered by feeds that have no site
   // to link from or that the crawler has given up on.
   const candidates = await webrings.topRingTopics(db, { count: topics * 2, minFeeds: minMembers });
-  const tally = { rings: 0, created: 0, added: 0, skipped: 0 };
+  const tally = { rings: 0, created: 0, added: 0, skipped: 0, failed: 0 };
 
   for (const topic of candidates) {
     if (tally.rings >= topics) break;
-    const size = await webrings.topicRingSize(db, topic.slug);
-    if (size < minMembers) {
-      tally.skipped += 1;
-      continue;
+    try {
+      const size = await webrings.topicRingSize(db, topic.slug, { cap: minMembers });
+      if (size < minMembers) {
+        tally.skipped += 1;
+        continue;
+      }
+      const result = await webrings.seedTopicRing(db, topic.slug, { limit });
+      tally.rings += 1;
+      if (result.created) tally.created += 1;
+      tally.added += result.added;
+    } catch (err) {
+      tally.failed += 1;
+      opts.onError?.(topic.slug, err);
     }
-    const result = await webrings.seedTopicRing(db, topic.slug, { limit });
-    tally.rings += 1;
-    if (result.created) tally.created += 1;
-    tally.added += result.added;
   }
 
   return tally;
