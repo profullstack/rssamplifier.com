@@ -113,6 +113,42 @@ test('saving stores the overlay and the switch, and keeps the claim', async () =
   assert.deepEqual(mine.map((p) => p.slug), ['ada-lovelace']);
 });
 
+test('the listing is newest change first, pages by keyset, honours since and the public switch', async () => {
+  const bob = await authors.upsertAuthor(db, {
+    identityKey: 'https://bob.example',
+    slug: 'bob',
+    name: 'Bob',
+    normName: 'bob',
+    siteUrl: 'https://bob.example',
+    confidence: 0.9,
+  });
+  await authors.addAuthorLinks(db, bob.id, [{ network: 'github', url: 'https://github.com/bob', source: 'rel-me' }]);
+  const weak = await authors.upsertAuthor(db, { identityKey: 'x@weak', slug: 'weak', name: 'Weak', normName: 'weak', confidence: 0.3 });
+  assert.ok(weak.id);
+
+  // Ada corrects her overlay after Bob's row landed, so Ada moved most
+  // recently: an edit surfaces the way a re-crawl does.
+  await new Promise((r) => setTimeout(r, 5));
+  await profiles.saveProfile(db, ada.id, { overrides: { headline: 'Countess, programmer, host.' } });
+  const all = await profiles.listOpenProfiles(db, { limit: 10 });
+  assert.deepEqual(all.map((r) => r.slug), ['ada-lovelace', 'bob'], 'the weak attribution is not listed');
+  assert.deepEqual(all[1].urls, ['https://github.com/bob']);
+  assert.ok(all[0].updated_at >= all[1].updated_at);
+
+  const first = await profiles.listOpenProfiles(db, { limit: 1 });
+  const second = await profiles.listOpenProfiles(db, { limit: 1, cursor: { updatedAt: first[0].updated_at, id: first[0].id } });
+  assert.deepEqual([first[0].slug, second[0].slug], ['ada-lovelace', 'bob']);
+  const third = await profiles.listOpenProfiles(db, { limit: 1, cursor: { updatedAt: second[0].updated_at, id: second[0].id } });
+  assert.deepEqual(third, []);
+
+  const moved = await profiles.listOpenProfiles(db, { since: all[0].updated_at });
+  assert.deepEqual(moved.map((r) => r.slug), ['ada-lovelace']);
+
+  await profiles.saveProfile(db, ada.id, { public: false });
+  assert.deepEqual((await profiles.listOpenProfiles(db, {})).map((r) => r.slug), ['bob'], 'public off hides the profile');
+  await profiles.saveProfile(db, ada.id, { public: true });
+});
+
 test('a bad overrides column reads as an empty overlay rather than a crash', async () => {
   await db.execute({ sql: "update author_profiles set overrides = '{not json' where author_id = ?", args: [ada.id] });
   const row = await profiles.profileForAuthor(db, ada.id);
