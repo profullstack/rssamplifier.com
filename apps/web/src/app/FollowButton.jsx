@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 
+import { buttonVariants } from '@/components/ui/button';
+
 /**
  * The follow toggle on a feed page or a topic page.
  *
@@ -32,6 +34,7 @@ import { useEffect, useState } from 'react';
  *   next: string,
  *   label: string,
  *   followingLabel?: string,
+ *   variant?: '' | 'ui',
  *   onChange?: (following: boolean) => void,
  * }} props
  */
@@ -44,6 +47,7 @@ export default function FollowButton({
   next,
   label,
   followingLabel = 'Following ✓',
+  variant = '',
   onChange,
 }) {
   const [on, setOn] = useState(following);
@@ -136,7 +140,15 @@ export default function FollowButton({
           loudly as the invitation to do it. */}
       <button
         type="submit"
-        className={on ? 'secondary-button' : ''}
+        className={
+          // The site's own button on the site's own pages; on a page built
+          // from the ui components, the matching shadcn button.
+          variant === 'ui'
+            ? buttonVariants({ variant: on ? 'outline' : 'default', size: 'sm' })
+            : on
+              ? 'secondary-button'
+              : ''
+        }
         // A toggle in a state, which is what a screen reader needs to hear from
         // a button whose label is the only other thing that changed.
         aria-pressed={on}
