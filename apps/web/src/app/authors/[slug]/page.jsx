@@ -12,6 +12,8 @@ import { CATEGORIES } from '../../CategoryIndex.jsx';
 import ListFilter from '../../ListFilter.jsx';
 import { FILTER_FROM } from '../../../lib/listFilter.js';
 import { jsonLdScript } from '../../../lib/jsonld.js';
+import { profileUrl } from '../../../lib/openprofile.js';
+import { profiles } from '@rssamplifier/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,9 +54,9 @@ export async function generateMetadata({ params }) {
  * anything back; this way the next crawler along — ours or anybody else's —
  * gets the answer in the form it was asked in.
  *
- * @param {{ params: Promise<{ slug: string }> }} props
+ * @param {{ params: Promise<{ slug: string }>, searchParams: Promise<{ claim?: string }> }} props
  */
-export default async function AuthorPage({ params }) {
+export default async function AuthorPage({ params, searchParams }) {
   const { slug } = await params;
   const person = await authors.authorBySlug(db(), slug);
   if (!person) notFound();
@@ -70,6 +72,14 @@ export default async function AuthorPage({ params }) {
   const follow = user
     ? await alerts.authorFollowState(db(), String(user.id), String(person.id))
     : { following: false, alerts: false };
+
+  // Their OpenProfile.md (logicsrc.com/openprofile): generated from this same
+  // page's rows, corrected by the person once they claim it. Whether it is
+  // claimed decides which of two buttons the page offers.
+  const profile = await profiles.profileForAuthor(db(), String(person.id));
+  const openprofile = profileUrl(siteUrl(), slug);
+  const ownsProfile = Boolean(user && profile?.claimed_at && profile.owner_user_id === String(user.id));
+  const query = await searchParams;
 
   // What they have published lately, read off their own feeds' ids rather than
   // searched for -- see `postsByAuthor`. A profile that lists the blogs but not
@@ -114,6 +124,10 @@ export default async function AuthorPage({ params }) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }}
       />
+      {/* The profile file, where OpenProfile.md says a platform points at it:
+          a <link rel="openprofile"> on the person's page. React hoists it into
+          <head>. Only while it is served. */}
+      {(!profile || profile.public) && <link rel="openprofile" href={openprofile} />}
 
       <p className="eyebrow">
         <a href="/authors">Authors</a>
@@ -153,6 +167,31 @@ export default async function AuthorPage({ params }) {
       </header>
 
       <AuthorLinks links={links} prominent />
+
+      {/* The profile as a file, and the person's way in to it. Unclaimed: a
+          claim button, verified on the spot by the address they published or by
+          their site linking back. Claimed by this reader: edit. Claimed by
+          somebody else: just the file. */}
+      <p className="format-links profile-actions">
+        <span>Profile:</span>
+        {(!profile || profile.public) && (
+          <a href={openprofile} type="text/markdown" title="OpenProfile.md, the portable profile file">
+            openprofile.md
+          </a>
+        )}
+        {ownsProfile ? (
+          <a href={`/authors/${encodeURIComponent(slug)}/edit`}>edit</a>
+        ) : profile?.claimed_at ? (
+          <span className="hint">claimed</span>
+        ) : (
+          <form action={`/api/authors/${encodeURIComponent(slug)}/claim`} method="post" className="inline-form">
+            <button type="submit" className="linklike" title="Is this you? Claim the profile and correct it.">
+              this is me
+            </button>
+          </form>
+        )}
+      </p>
+      {query?.claim && <p className="notice">Could not verify the claim: {query.claim}</p>}
 
       {/* Follow the person, and then decide whether to be told. Above the
           subscribe links deliberately: those hand the reader a document to take
@@ -263,8 +302,9 @@ export default async function AuthorPage({ params }) {
         Everything on this page was read from markup {person.name} published — a{' '}
         <code>rel=&quot;me&quot;</code> link, an h-card, or the feed&rsquo;s own author element.
         Nothing was inferred from anywhere else. To correct or remove it,{' '}
-        <a href="/contact">get in touch</a>. Machine-readable:{' '}
-        <a href={`/api/authors/${encodeURIComponent(slug)}`}>JSON</a>
+        <a href="/contact">get in touch</a>, or claim the profile above and correct it yourself.
+        Machine-readable: <a href={`/api/authors/${encodeURIComponent(slug)}`}>JSON</a>,{' '}
+        <a href={openprofile}>OpenProfile.md</a>
       </p>
 
       <AdBanner />

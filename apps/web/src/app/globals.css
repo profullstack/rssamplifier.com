@@ -3889,3 +3889,34 @@ html:not([data-dock]) .playlist-hint {
 .filtered-out {
   display: none !important;
 }
+
+/* The profile row on an author page: the file, and the way in to it. A form
+   with one button sits inline among links and reads as one of them. */
+.profile-actions .inline-form {
+  display: inline;
+}
+.profile-actions .linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.profile-edit label {
+  display: block;
+  margin-top: 1rem;
+  font-weight: 600;
+}
+.profile-edit textarea,
+.profile-edit input[type='text'] {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+}
+.profile-edit .hint {
+  margin: 0.15rem 0 0.35rem;
+}

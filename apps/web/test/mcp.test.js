@@ -238,12 +238,18 @@ test('every tool is described well enough for a model to choose it', () => {
   }
 });
 
-test('exactly one tool writes, and it says so', () => {
+test('the tools that write say so, and they are the ones a person acts through', () => {
   const writers = TOOLS.filter((t) => t.annotations.readOnlyHint === false);
   assert.deepEqual(
     writers.map((t) => t.name),
-    ['submit_feed'],
+    // submit_feed adds to the directory; the two profile tools change only the
+    // caller's own claimed profile, behind a credential in the Authorization
+    // header, which their descriptions say.
+    ['update_openprofile', 'claim_openprofile', 'submit_feed'],
   );
+  for (const t of writers.filter((w) => w.name.endsWith('_openprofile'))) {
+    assert.match(t.description, /Authorization header/);
+  }
 });
 
 test('markup comes out as prose, with the paragraphs still in it', () => {

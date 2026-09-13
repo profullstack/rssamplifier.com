@@ -18,7 +18,9 @@
       }
     ]
   },
-  "scopes": {},
+  "scopes": {
+    "openprofile:edit": "Correct an author's OpenProfile.md you have claimed: PUT /api/authors/{slug}/openprofile (text/markdown, the whole file, or a JSON patch), POST /api/authors/{slug}/claim. The grant's principal is recorded as the owner; a claim is verified by the address the author published or by their site linking back."
+  },
   "honours": [
     "profullstack.com/all-access"
   ],

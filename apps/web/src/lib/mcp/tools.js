@@ -2,6 +2,9 @@ import { q, newId, authors as people } from '@rssamplifier/db';
 import { topicSlug } from '@rssamplifier/feed';
 import { submitCatalogue, hashIp, EXPRESS_MAX } from '@rssamplifier/ingest';
 import { submitFeedTool } from '@profullstack/submit-feed/core';
+import { loadAuthorProfile } from '../authorProfile.js';
+import { overridesFromBody, profileUrl } from '../openprofile.js';
+import { adminEmails, callerOf, claimVerdict, fetchPage, isOwner, profiles as profileStore } from '../profileAuth.js';
 
 import { db, siteUrl } from '../db.js';
 import { readerView } from '../reader.js';
@@ -509,6 +512,121 @@ export const TOOLS = [
   },
 
   {
+    name: 'get_openprofile',
+    title: "One author's OpenProfile.md",
+    description:
+      "The person as a portable profile file (logicsrc.com/openprofile): identity block, Accounts, Topics, a Broadcast section (logicsrc.com/openbroadcast) for every show they publish, corrected by the person once they have claimed it. Returns the Markdown and the parsed sections. Pass either the author's slug or a feed URL; with a feed URL you get the profile of the feed's owner.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: "The author's slug in this directory." },
+        feed: { type: 'string', description: 'A feed URL; the owner of that feed is looked up.' },
+      },
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    async run(args) {
+      const slug = await profileSlug(args);
+      const loaded = await loadAuthorProfile(slug);
+      if (!loaded) throw invalid(`no author with slug '${slug}'`);
+      if (loaded.profile && !loaded.profile.public) throw invalid(`the profile of '${slug}' is not public`);
+      return profileShape(loaded);
+    },
+  },
+
+  {
+    name: 'update_openprofile',
+    title: "Correct an author's OpenProfile.md",
+    description:
+      "Edit a profile you have claimed. Send the whole file as `markdown` (everything in it becomes your word; a section you leave out is dropped) or a patch: `headline`, `identity` {Key: value, or null to remove}, `sections` {name: Markdown body, or null to drop}, `public`. Sections you do not mention stay as generated. Needs a credential in the Authorization header: one of your rssamplifier API keys, or an OpenAccess bearer for `openprofile:edit` (openaccess.logicsrc.com). Claim first with claim_openprofile.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: "The author's slug." },
+        markdown: { type: 'string', description: 'The whole OpenProfile.md, replacing every section.' },
+        name: { type: 'string' },
+        headline: { type: 'string' },
+        prose: { type: 'string' },
+        identity: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
+        sections: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
+        public: { type: 'boolean', description: 'false hides the file; the author page stays.' },
+      },
+      required: ['slug'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async run(args, ctx) {
+      const slug = String(args?.slug ?? '').trim().toLowerCase();
+      if (!slug) throw invalid('slug is required');
+      const loaded = await loadAuthorProfile(slug);
+      if (!loaded) throw invalid(`no author with slug '${slug}'`);
+
+      const caller = await callerOf(requestFrom(ctx), { user: async () => null });
+      if (!caller.kind) throw invalid('send an API key or an OpenAccess bearer in the Authorization header');
+      if (!isOwner(caller, loaded.profile)) {
+        throw invalid(loaded.profile?.claimed_at ? 'you are not the owner of this profile' : 'unclaimed: call claim_openprofile first');
+      }
+
+      const { slug: _s, ...body } = args ?? {};
+      const next = overridesFromBody({
+        contentType: 'application/json',
+        text: JSON.stringify(body),
+        existing: loaded.profile?.overrides ?? null,
+        generated: loaded.generated,
+      });
+      if (next.error) throw invalid(next.error);
+
+      await profileStore.saveProfile(db(), String(loaded.person.id), {
+        overrides: next.overrides,
+        ...(typeof next.public === 'boolean' ? { public: next.public } : {}),
+      });
+      const after = await loadAuthorProfile(slug);
+      return { ok: true, ...profileShape(after ?? loaded) };
+    },
+  },
+
+  {
+    name: 'claim_openprofile',
+    title: 'Claim an author profile as yourself',
+    description:
+      "Say that an author in this directory is you, so you can correct the profile. Verified on the spot, no reviewer: the email behind your credential matches the address the author published about themselves, or the author's own site links back at the profile with rel=\"openprofile\" or rel=\"me\". Needs a credential in the Authorization header: an rssamplifier API key, or an OpenAccess bearer for `openprofile:edit`.",
+    inputSchema: {
+      type: 'object',
+      properties: { slug: { type: 'string', description: "The author's slug." } },
+      required: ['slug'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    async run(args, ctx) {
+      const slug = String(args?.slug ?? '').trim().toLowerCase();
+      if (!slug) throw invalid('slug is required');
+      const client = db();
+      const person = await people.authorBySlug(client, slug);
+      if (!person) throw invalid(`no author with slug '${slug}'`);
+
+      const caller = await callerOf(requestFrom(ctx), { user: async () => null });
+      if (!caller.kind) throw invalid('send an API key or an OpenAccess bearer in the Authorization header');
+
+      const profile = await profileStore.profileForAuthor(client, String(person.id));
+      const base = siteUrl();
+      const verdict = await claimVerdict({
+        caller,
+        person,
+        profile,
+        profileUrl: profileUrl(base, slug),
+        pageUrl: `${base}/authors/${encodeURIComponent(slug)}`,
+        admins: adminEmails(),
+        fetchText: fetchPage,
+      });
+      if (!verdict.ok) throw invalid(verdict.error);
+
+      const claimed = await profileStore.claimProfile(client, String(person.id), {
+        userId: caller.userId,
+        principal: caller.principal,
+        method: verdict.method,
+      });
+      return { ok: true, slug, method: verdict.method, claimedAt: claimed.claimed_at, url: profileUrl(base, slug) };
+    },
+  },
+
+  {
     name: 'directory_stats',
     title: 'Directory and crawler status',
     description:
@@ -680,6 +798,7 @@ function author(a) {
     role: a.role,
     confidence: Number(a.confidence ?? 0),
     page: `${siteUrl()}/authors/${a.slug}`,
+    openprofile: profileUrl(siteUrl(), String(a.slug)),
     links: (a.links ?? []).map((l) => ({
       network: l.network,
       url: l.url,
@@ -765,4 +884,57 @@ function invalid(message) {
   const err = /** @type {Error & { toolError?: true }} */ (new Error(message));
   err.toolError = true;
   return err;
+}
+
+/**
+ * A Request the profile auth can read, from the tool context's headers.
+ *
+ * @param {ToolContext} ctx
+ * @returns {Request}
+ */
+function requestFrom(ctx) {
+  const headers = new Headers();
+  const auth = ctx?.header?.('authorization');
+  if (auth) headers.set('authorization', auth);
+  return new Request('http://mcp.local/', { headers });
+}
+
+/**
+ * The slug an OpenProfile tool was asked about: given, or looked up from a
+ * feed URL (its owner, else its first credited author).
+ *
+ * @param {any} args
+ * @returns {Promise<string>}
+ */
+async function profileSlug(args) {
+  const slug = String(args?.slug ?? '').trim().toLowerCase();
+  if (slug) return slug;
+  const feedUrl = String(args?.feed ?? '').trim();
+  if (!feedUrl) throw invalid('slug or feed is required');
+  const feed = await q.feedByUrl(db(), feedUrl);
+  if (!feed) throw invalid(`no feed with url '${feedUrl}' in the directory`);
+  const credited = await people.authorsForFeed(db(), String(feed.id));
+  if (!credited[0]) throw invalid(`nobody is credited on '${feedUrl}' yet`);
+  return String(credited[0].slug);
+}
+
+/**
+ * A loaded profile, in the shape the profile tools return.
+ *
+ * @param {NonNullable<Awaited<ReturnType<typeof loadAuthorProfile>>>} loaded
+ * @returns {object}
+ */
+function profileShape(loaded) {
+  return {
+    slug: String(loaded.person.slug),
+    url: loaded.url,
+    page: loaded.page,
+    claimed: Boolean(loaded.profile?.claimed_at),
+    public: loaded.profile?.public ?? true,
+    name: loaded.doc.name,
+    identity: Object.fromEntries(loaded.doc.identity.map((e) => [e.key, e.value])),
+    headline: loaded.doc.headline,
+    sections: loaded.doc.sections.map((s) => ({ title: s.title, name: s.name, body: s.body })),
+    markdown: loaded.markdown,
+  };
 }
