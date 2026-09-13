@@ -173,3 +173,65 @@ export async function keywordsForFeeds(db, feedIds, perFeed = 8) {
   }
   return out;
 }
+
+/**
+ * Every author with a public profile, newest change first, for a directory
+ * that pulls profiles (nichedb): keyset paging over (updated_at, id), where
+ * updated_at is the later of the author row's and the overlay's, so an edit
+ * and a re-crawl both surface. `since` narrows to changes at or after a stamp.
+ *
+ * Only authors above the site's own confidence floor: a weak attribution
+ * the site itself does not list is not a person to publish elsewhere.
+ *
+ * @param {Client} db
+ * @param {{ since?: string|null, limit?: number, cursor?: { updatedAt: string, id: string }|null, minConfidence?: number }} [opts]
+ * @returns {Promise<Array<{ id: string, slug: string, name: string, site_url: string|null, updated_at: string, urls: string[] }>>}
+ */
+export async function listOpenProfiles(db, opts = {}) {
+  const limit = Math.min(Math.max(Number(opts.limit ?? 100) || 100, 1), 500);
+  const minConfidence = Number(opts.minConfidence ?? 0.6);
+  const stamp = 'max(a.updated_at, coalesce(p.updated_at, a.updated_at))';
+  const where = ['a.confidence >= ?', 'coalesce(p.public, 1) = 1'];
+  const args = [minConfidence];
+  if (opts.since) {
+    where.push(`${stamp} >= ?`);
+    args.push(opts.since);
+  }
+  if (opts.cursor) {
+    where.push(`(${stamp} < ? or (${stamp} = ? and a.id < ?))`);
+    args.push(opts.cursor.updatedAt, opts.cursor.updatedAt, opts.cursor.id);
+  }
+  const { rows } = await db.execute({
+    sql: `select a.id, a.slug, a.name, a.site_url, ${stamp} as updated_at
+            from authors a
+            left join author_profiles p on p.author_id = a.id
+           where ${where.join(' and ')}
+           order by updated_at desc, a.id desc
+           limit ?`,
+    args: [...args, limit],
+  });
+  const ids = rows.map((r) => String(r.id));
+  /** @type {Map<string, string[]>} */
+  const urls = new Map();
+  if (ids.length) {
+    const links = await db.execute({
+      sql: `select author_id, url from author_links
+             where author_id in (${ids.map(() => '?').join(',')}) and network <> 'email'
+             order by verified desc, network asc`,
+      args: ids,
+    });
+    for (const l of links.rows) {
+      const list = urls.get(String(l.author_id)) ?? [];
+      list.push(String(l.url));
+      urls.set(String(l.author_id), list);
+    }
+  }
+  return rows.map((r) => ({
+    id: String(r.id),
+    slug: String(r.slug),
+    name: String(r.name),
+    site_url: r.site_url == null ? null : String(r.site_url),
+    updated_at: String(r.updated_at),
+    urls: urls.get(String(r.id)) ?? [],
+  }));
+}

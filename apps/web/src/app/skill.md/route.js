@@ -55,6 +55,9 @@ is not a search engine for the whole web.
   person claims it (\`POST /api/authors/{slug}/claim\`) and corrects it with
   \`PUT /api/authors/{slug}/openprofile\` (text/markdown or a JSON patch; API key
   or an OpenAccess grant for \`openprofile:edit\`).
+- \`GET ${base}/api/openprofiles?since=&limit=&cursor=\` — every public profile,
+  newest change first, with each file's URL, page, accounts and site; for a
+  directory that pulls them.
 - \`GET ${base}/api/feeds/{slug}\` also carries \`authors\` and \`links\`. \`links\` is
   the blog's own accounts — Mastodon, Bluesky, X, LinkedIn, GitHub and the rest
   — which is what a blog with no byline has instead of an author, and roughly a

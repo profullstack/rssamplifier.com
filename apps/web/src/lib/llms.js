@@ -170,6 +170,7 @@ export async function llmsTxt(opts = {}) {
     `- [Authors, JSON](${base}/api/authors): the people behind the feeds and where else they publish; ?network=email|fediverse|bluesky|github|website|linktree, ?q= searches names, ?min= sets the confidence floor`,
     `- [One author, JSON](${base}/api/authors/{slug}): their links and everything they publish here; ?feed=<url> on /api/authors finds the people behind one feed`,
     `- [One author, OpenProfile.md](${base}/authors/{slug}/openprofile.md): the same person as a portable profile file (logicsrc.com/openprofile) with a Broadcast section per show they publish; the person claims it at /authors/{slug} and edits it with PUT ${base}/api/authors/{slug}/openprofile`,
+    `- [All public profiles, JSON](${base}/api/openprofiles): every author's OpenProfile.md URL, newest change first; ?since=<ISO> for what moved, ?cursor= to continue, ?limit= up to 500; what a directory pulls`,
     `- [OPML export](${base}/opml): the whole directory as a subscription list, one category with ?kind=, or one subject with ?topic=`,
     `- [Submit](${base}/api/submit): POST {"url":"..."} or {"urls":[...]} or {"opml":"..."}`,
     `- [Discover](${base}/api/discover): POST {"keywords":["..."]} — find blogs by subject`,

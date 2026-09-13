@@ -12,6 +12,7 @@ import {
 } from '../src/lib/openprofile.js';
 import { claimVerdict, isOwner, linksBack } from '../src/lib/profileAuth.js';
 import { principalFromToken } from '../src/lib/openaccess.js';
+import { decodeCursor, encodeCursor } from '../src/app/api/openprofiles/route.js';
 
 const BASE = 'https://rssamplifier.test';
 
@@ -231,6 +232,14 @@ test('an OpenAccess token yields a principal with scopes and an email when the h
   assert.deepEqual(p, { sub: 'oa:1', scopes: ['openprofile:edit', 'x'], email: 'ada@example.com' });
   assert.equal(await principalFromToken('t', { verify: async () => { throw new Error('bad'); } }), null);
   assert.equal(await principalFromToken(null), null);
+});
+
+test('the listing cursor round-trips and rejects junk', () => {
+  const at = { updatedAt: '2026-09-13T04:00:00.000Z', id: 'a1' };
+  assert.deepEqual(decodeCursor(encodeCursor(at)), at);
+  assert.equal(decodeCursor('not-base64-json'), null);
+  assert.equal(decodeCursor(Buffer.from('[1,2]').toString('base64url')), null);
+  assert.equal(decodeCursor(null), null);
 });
 
 test('small helpers', () => {

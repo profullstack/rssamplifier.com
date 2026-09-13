@@ -241,6 +241,7 @@ All send `access-control-allow-origin: *` and need no key.
 | `/api/authors` | The people behind the feeds; `?feed={url}` finds the people behind one feed |
 | `/authors/{slug}/openprofile.md` | One person as an [OpenProfile.md](https://logicsrc.com/openprofile), Broadcast section per show they publish |
 | `/api/authors/{slug}/openprofile` | The same file, `?format=json` for the parsed shape; `PUT` it to correct it (owner only) |
+| `/api/openprofiles` | Every public profile, newest change first (`?since=`, `?cursor=`, `?limit=` up to 500); what a directory pulls |
 | `/api/authors/{slug}/claim` | `POST` to claim an author as yourself; verified by the address they published or by their site linking back |
 
 ```bash
