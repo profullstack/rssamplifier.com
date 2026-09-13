@@ -246,11 +246,20 @@ test('ring topics come from what publishers file under, never the commonest word
   }
   await q.refreshTopics(db, 1);
 
+  for (const who of ['carol', 'alice', 'bob']) {
+    await db.execute({
+      sql: 'insert or ignore into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?)',
+      args: [feeds[who].id, 'uncategorized', 'Uncategorized', 1, 40, 'category'],
+    });
+  }
+  await q.refreshTopics(db, 1);
+  assert.ok(webrings.RING_TOPIC_STOPLIST.has('uncategorized'));
+
   const top = await webrings.topRingTopics(db, { count: 5, minFeeds: 1 });
   assert.deepEqual(
     top.map((t) => t.slug),
     ['physics', 'chemistry'],
-    'physics has three linkable feeds filed under it, chemistry one; one is prose, de is too short',
+    'physics has three linkable feeds filed under it, chemistry one; one is prose, de is too short, uncategorized is a container',
   );
   assert.equal(top[0].feed_count, await webrings.topicRingSize(db, 'physics'), 'counted on the feeds a ring can use, not the rollup');
 
