@@ -317,6 +317,11 @@ const nextConfig = {
       { source: '/register', destination: '/signup', permanent: true },
       { source: '/sign-up', destination: '/signup', permanent: true },
       { source: '/sign-in', destination: '/login', permanent: true },
+
+      // The directory of every OpenWebring ring, across hosts, is nichedb.dev.
+      // Our own rings are indexed at /ring; /rings is what people say, and it
+      // goes to the whole directory rather than to one host's slice of it.
+      { source: '/rings', destination: 'https://nichedb.dev/rings', permanent: true },
     ];
   },
 
