@@ -800,3 +800,160 @@ export async function feedForRingInput(db, input) {
   });
   return shape(found.rows[0]);
 }
+
+/* -------------------------------------------------------- likes and events */
+
+/** What people do with rings; the leaderboard weighs each (lib/ringLeaderboard.js). */
+export const RING_EVENT_KINDS = ['view', 'share', 'like', 'follow', 'add', 'make'];
+
+/**
+ * Like a ring, or take the like back. On or off, never counted twice.
+ *
+ * @param {Client} db
+ * @param {string} ringSlug
+ * @param {string} userId
+ * @param {boolean} liked
+ * @returns {Promise<boolean>} the state afterwards
+ */
+export async function likeRing(db, ringSlug, userId, liked) {
+  if (liked) {
+    await db.execute({
+      sql: `insert into ring_likes (ring_slug, user_id, created_at) values (?, ?, ?)
+            on conflict (ring_slug, user_id) do nothing`,
+      args: [ringSlug, userId, nowIso()],
+    });
+  } else {
+    await db.execute({ sql: `delete from ring_likes where ring_slug = ? and user_id = ?`, args: [ringSlug, userId] });
+  }
+  return liked;
+}
+
+/**
+ * @param {Client} db
+ * @param {string} ringSlug
+ * @param {string} userId
+ * @returns {Promise<boolean>}
+ */
+export async function ringLiked(db, ringSlug, userId) {
+  const { rows } = await db.execute({
+    sql: `select 1 as one from ring_likes where ring_slug = ? and user_id = ? limit 1`,
+    args: [ringSlug, userId],
+  });
+  return rows.length > 0;
+}
+
+/**
+ * @param {Client} db
+ * @param {string} ringSlug
+ * @returns {Promise<number>}
+ */
+export async function ringLikes(db, ringSlug) {
+  const { rows } = await db.execute({ sql: `select count(*) as n from ring_likes where ring_slug = ?`, args: [ringSlug] });
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Likes per ring, for a list of rings.
+ *
+ * @param {Client} db
+ * @param {string[]} slugs
+ * @returns {Promise<Record<string, number>>}
+ */
+export async function ringLikeCounts(db, slugs) {
+  /** @type {Record<string, number>} */
+  const out = {};
+  if (slugs.length === 0) return out;
+  const marks = slugs.map(() => '?').join(', ');
+  const { rows } = await db.execute({
+    sql: `select ring_slug, count(*) as n from ring_likes where ring_slug in (${marks}) group by ring_slug`,
+    args: slugs,
+  });
+  for (const r of rows) out[String(r.ring_slug)] = Number(r.n);
+  return out;
+}
+
+/**
+ * One fact with a time: somebody did this with this ring.
+ *
+ * @param {Client} db
+ * @param {{ kind: string, ringSlug: string, memberSlug?: string|null, userId?: string|null }} event
+ * @returns {Promise<void>}
+ */
+export async function recordRingEvent(db, { kind, ringSlug, memberSlug = null, userId = null }) {
+  if (!RING_EVENT_KINDS.includes(kind)) throw new Error(`unknown ring event: ${kind}`);
+  await db.execute({
+    sql: `insert into ring_events (kind, ring_slug, member_slug, user_id, created_at) values (?, ?, ?, ?, ?)`,
+    args: [kind, ringSlug, memberSlug, userId, nowIso()],
+  });
+}
+
+/**
+ * The log since a moment, oldest first, for the leaderboard to project.
+ *
+ * @param {Client} db
+ * @param {string} sinceIso
+ * @param {number} [limit]
+ * @returns {Promise<Array<{ kind: string, ring_slug: string, member_slug: string|null, user_id: string|null, created_at: string }>>}
+ */
+export async function ringEventsSince(db, sinceIso, limit = 100000) {
+  const { rows } = await db.execute({
+    sql: `select kind, ring_slug, member_slug, user_id, created_at from ring_events
+           where created_at >= ? order by created_at asc, id asc limit ?`,
+    args: [sinceIso, limit],
+  });
+  return rows.map((r) => ({
+    kind: String(r.kind),
+    ring_slug: String(r.ring_slug),
+    member_slug: r.member_slug == null ? null : String(r.member_slug),
+    user_id: r.user_id == null ? null : String(r.user_id),
+    created_at: String(r.created_at),
+  }));
+}
+
+/**
+ * The rings people like most: likes, then linking members, then size.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<Array<Ring & { likes: number }>>}
+ */
+export async function topRings(db, limit = 5) {
+  const { rows } = await db.execute({
+    sql: `${RING_SELECT}
+           where r.public = 1
+           order by (select count(*) from ring_likes l where l.ring_slug = r.slug) desc,
+                    active_count desc, member_count desc, r.slug asc
+           limit ?`,
+    args: [limit],
+  });
+  const rings = rows.map(shapeRing);
+  const likes = await ringLikeCounts(db, rings.map((r) => r.slug));
+  return rings.map((r) => ({ ...r, likes: likes[r.slug] ?? 0 }));
+}
+
+/**
+ * A title for each slug: the ring's own, or the topic's for a ring that is
+ * still computed from its topic, or the slug.
+ *
+ * @param {Client} db
+ * @param {string[]} slugs
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function ringNames(db, slugs) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  if (slugs.length === 0) return out;
+  const marks = slugs.map(() => '?').join(', ');
+  const rings = await db.execute({ sql: `select slug, title from rings where slug in (${marks})`, args: slugs });
+  for (const r of rings.rows) out[String(r.slug)] = String(r.title);
+  const rest = slugs.filter((s) => !(s in out));
+  if (rest.length) {
+    const topics = await db.execute({
+      sql: `select slug, keyword from topics where slug in (${rest.map(() => '?').join(', ')})`,
+      args: rest,
+    });
+    for (const r of topics.rows) out[String(r.slug)] = String(r.keyword);
+  }
+  for (const s of slugs) out[s] ??= s;
+  return out;
+}

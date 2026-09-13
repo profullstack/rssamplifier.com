@@ -1,7 +1,9 @@
 import { webrings } from '@rssamplifier/db';
 
 /** Slugs that are pages under /ring, so a ring cannot take them. */
-const RESERVED = new Set(['new', 'edit', 'next', 'previous', 'prev', 'random', 'opml', 'check', 'view']);
+const RESERVED = new Set([
+  'new', 'edit', 'next', 'previous', 'prev', 'random', 'opml', 'check', 'view', 'leaders', 'like', 'share',
+]);
 
 /**
  * The fields of the make-a-ring and edit-a-ring forms, from a form post or

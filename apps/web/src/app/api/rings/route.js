@@ -76,6 +76,12 @@ export async function POST(req) {
 
   const added = await webrings.addRingMembers(client, slug, found);
   forgetRing(slug);
+  await webrings.recordRingEvent(client, { kind: 'make', ringSlug: slug, userId: String(user.id) }).catch(() => {});
+  for (const f of found) {
+    await webrings
+      .recordRingEvent(client, { kind: 'add', ringSlug: slug, memberSlug: f.slug, userId: String(user.id) })
+      .catch(() => {});
+  }
 
   const page = `/ring/${encodeURIComponent(slug)}`;
   if (wantsHtml) {

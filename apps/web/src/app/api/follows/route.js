@@ -1,4 +1,4 @@
-import { accounts, q } from '@rssamplifier/db';
+import { accounts, q, webrings } from '@rssamplifier/db';
 
 import { db } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
@@ -20,16 +20,19 @@ export async function POST(req) {
 
   let slug = '';
   let action = 'toggle';
+  let ring = '';
 
   try {
     if ((req.headers.get('content-type') ?? '').includes('application/json')) {
       const body = await req.json();
       slug = String(body?.slug ?? '');
       action = String(body?.action ?? 'toggle');
+      ring = String(body?.ring ?? '');
     } else {
       const form = await req.formData();
       slug = String(form.get('slug') ?? '');
       action = String(form.get('action') ?? 'toggle');
+      ring = String(form.get('ring') ?? '');
     }
   } catch {
     return json({ error: 'bad-request' }, 400);
@@ -55,6 +58,13 @@ export async function POST(req) {
 
   if (shouldFollow) await accounts.follow(client, String(user.id), feedId);
   else await accounts.unfollow(client, String(user.id), feedId);
+
+  // A follow made from inside a ring is a point for the reader and the ring.
+  if (shouldFollow && ring) {
+    await webrings
+      .recordRingEvent(client, { kind: 'follow', ringSlug: ring.slice(0, 120), memberSlug: slug, userId: String(user.id) })
+      .catch(() => {});
+  }
 
   if (wantsHtml) return redirect(`/${slug}`);
   return json({ ok: true, slug, following: shouldFollow });

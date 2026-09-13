@@ -1,4 +1,4 @@
-import { accounts } from '@rssamplifier/db';
+import { accounts, webrings } from '@rssamplifier/db';
 import { notFound } from 'next/navigation';
 import {
   Bot,
@@ -13,6 +13,7 @@ import {
   Rss,
   Shuffle,
   Tag,
+  Trophy,
   User,
   Users,
 } from 'lucide-react';
@@ -24,6 +25,8 @@ import { joinSnippet, madeByLabel, ringUrl } from '../../../lib/openwebring.js';
 import { feedImage } from '../../../lib/thumbs.js';
 import { decodeXml } from '../../../lib/opml-scan.js';
 import FollowButton from '../../FollowButton.jsx';
+import LikeButton from '../../LikeButton.jsx';
+import ShareButton from '../../ShareButton.jsx';
 import { Avatar } from '../../Thumb.jsx';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -104,6 +107,10 @@ export default async function RingPage({ params, searchParams }) {
   for (const m of members) if (m.made_by && m.made_by in said) said[m.made_by] += 1;
   const unstated = members.length - said.human - said.ai - said.both;
   const owner = ownsRing(user, ring);
+  const [liked, likes] = await Promise.all([
+    user ? webrings.ringLiked(db(), ring.slug, String(user.id)) : false,
+    webrings.ringLikes(db(), ring.slug),
+  ]);
   const checked = typeof query.checked === 'string' ? query.checked : '';
   const outcome = typeof query.status === 'string' ? query.status : '';
 
@@ -151,6 +158,23 @@ export default async function RingPage({ params, searchParams }) {
         <Button asChild variant="secondary" size="sm">
           <a href={`${page}/opml`} title="Every member's feed, as an OPML subscription list">
             <Rss /> Subscribe to all
+          </a>
+        </Button>
+        <LikeButton
+          endpoint={`/api/rings/${encodeURIComponent(ring.slug)}/like`}
+          liked={liked}
+          likes={likes}
+          signedIn={Boolean(user)}
+          next={path}
+        />
+        <ShareButton
+          url={page}
+          title={`${ring.title} webring`}
+          beacon={`/api/rings/${encodeURIComponent(ring.slug)}/share`}
+        />
+        <Button asChild variant="ghost" size="sm">
+          <a href="/ring/leaders" title="Who does the most with rings, and which rings people like">
+            <Trophy /> Leaders
           </a>
         </Button>
         {ring.topic_slug && (
@@ -299,6 +323,7 @@ export default async function RingPage({ params, searchParams }) {
                         label="Follow"
                         followingLabel="Following"
                         variant="ui"
+                        ring={ring.slug}
                       />
                     </div>
                   </CardFooter>
