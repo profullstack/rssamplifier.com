@@ -39,7 +39,7 @@ export default function AddSocialSource({ network, label, input, canonical }) {
   );
 
   return (
-    <main className="prose">
+    <>
       <h1>{label}</h1>
 
       <p>
@@ -60,7 +60,7 @@ export default function AddSocialSource({ network, label, input, canonical }) {
       <p>
         <a href={platform.index}>Browse what is already here</a>
       </p>
-    </main>
+    </>
   );
 }
 
