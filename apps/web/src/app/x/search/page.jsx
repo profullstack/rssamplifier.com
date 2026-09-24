@@ -89,5 +89,14 @@ export default async function XSearchPage({ searchParams }) {
     );
   }
 
+  // The one social route that passes no `base`, and deliberately. The others
+  // hand `FeedPage` their landing path so the Subscribe row offers
+  // `/r/machinelearning.rss` rather than the slug — but a search's address is
+  // `/x/search?q=…`, and the feed links are built by appending an extension to
+  // it, which would produce `/x/search?q=bitcoin.rss`: an extension on the
+  // query rather than the path. There is no document at the other end either
+  // (`/x/search.rss?q=bitcoin` is a 404 — the rewrites serve extensions on
+  // `/x/{handle}`-shaped paths, not on this one), so there is nothing to point
+  // at yet. The slug links are left alone because they work.
   return FeedPage({ params: Promise.resolve({ slug: String(feed.slug) }) });
 }
