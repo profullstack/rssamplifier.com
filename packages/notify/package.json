@@ -4,13 +4,19 @@
   "description": "Alerts: web push, email digests and webhooks for followed blogs and topics",
   "type": "module",
   "main": "index.js",
-  "exports": { ".": "./index.js" },
-  "files": ["index.js", "src"],
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "src"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js",
     "vapid": "node scripts/vapid.js"
   },
   "dependencies": {
+    "@profullstack/notifications": "^0.1.0",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/mail": "workspace:*"
   }

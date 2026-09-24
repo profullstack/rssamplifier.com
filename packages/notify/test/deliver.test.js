@@ -455,7 +455,7 @@ test('a channel that keeps failing retires itself', async () => {
   assert.equal((await alerts.usersWithAlerts(db)).length, 0);
 });
 
-test('an endpoint reported gone is retired at once', async () => {
+test('an endpoint reported gone is deleted at once', async () => {
   const userId = await reader('gone@example.com');
   await alerts.addChannel(db, {
     userId,
@@ -478,9 +478,8 @@ test('an endpoint reported gone is retired at once', async () => {
     vapid,
   });
 
-  const [web] = (await alerts.channelsForUser(db, userId)).filter((c) => c.kind === 'web');
-  assert.equal(Number(web.enabled), 0, 'one 410 is enough — the browser is not coming back');
-  assert.equal(Number(web.failures), 1);
+  const web = (await alerts.channelsForUser(db, userId)).filter((c) => c.kind === 'web');
+  assert.equal(web.length, 0, 'one 410 is enough — the browser is not coming back, so its row is deleted');
 });
 
 test('an account with no channel is never considered', async () => {

@@ -1,6 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import {
+  PushError,
+  getSubscription,
+  getVapidPublicKey,
+  pushSupport,
+  subscribe as subscribeBrowser,
+} from '@profullstack/notifications/client';
 
 /**
  * Turning on alerts in this browser.
@@ -9,7 +16,9 @@ import { useEffect, useState } from 'react';
  * is minted by the browser against the push service it trusts, and the result —
  * an endpoint and two encryption keys — exists only in JavaScript. So this is a
  * button that does four things in order, each of which can fail on its own:
- * register a service worker, ask permission, subscribe, and tell the server.
+ * ask permission, fetch the server's key, subscribe, and tell the server. The
+ * first three are `@profullstack/notifications/client`, shared with every other
+ * Profullstack app.
  *
  * It reports where it got to rather than succeeding or failing, because the
  * failures are things a reader can act on. "Blocked" means the permission was
@@ -26,23 +35,28 @@ export default function PushToggle() {
     let live = true;
 
     (async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        if (live) setState('unsupported');
+      // Why not, in words, rather than a flat "not supported": plain http, an
+      // iPhone that needs the site on its Home Screen first, notifications
+      // blocked in settings. Each has a different fix and the reader is told it.
+      const support = pushSupport();
+      if (!support.supported) {
+        if (!live) return;
+        if (support.reason === 'denied') setState('blocked');
+        else {
+          setDetail(support.message ?? '');
+          setState('unsupported');
+        }
         return;
       }
 
       // The deployment may have no VAPID pair, in which case there is nothing to
-      // subscribe against and the honest answer is to say so.
-      const res = await fetch('/api/alerts/push', { headers: { accept: 'application/json' } });
-      const config = await res.json().catch(() => null);
-      if (!live) return;
-      if (!config?.enabled) {
-        setState('unconfigured');
-        return;
-      }
-
-      if (Notification.permission === 'denied') {
-        setState('blocked');
+      // subscribe against and the honest answer is to say so. The key is asked
+      // for at run time, never compiled in, so a build without it cannot turn
+      // into every browser being told push is unsupported.
+      try {
+        await getVapidPublicKey();
+      } catch {
+        if (live) setState('unconfigured');
         return;
       }
 
@@ -50,8 +64,7 @@ export default function PushToggle() {
       // question as whether the account has any browsers attached — the account
       // page lists those, and this button speaks only for the one in front of
       // you.
-      const reg = await navigator.serviceWorker.getRegistration();
-      const existing = await reg?.pushManager.getSubscription();
+      const existing = await getSubscription();
       if (live) setState(existing ? 'on' : 'off');
     })().catch(() => {
       if (live) setState('error');
@@ -67,42 +80,34 @@ export default function PushToggle() {
     setDetail('');
 
     try {
-      const config = await (await fetch('/api/alerts/push')).json();
-      if (!config?.enabled) {
-        setState('unconfigured');
-        return;
-      }
-
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        setState(permission === 'denied' ? 'blocked' : 'off');
-        return;
-      }
-
-      // `register` rather than `getRegistration`: the reader may have arrived,
-      // pressed this and never triggered the deferred registration in
-      // ServiceWorker.jsx, and `ready` on an unregistered worker never resolves.
-      const reg = await navigator.serviceWorker.register('/sw.js');
-      await navigator.serviceWorker.ready;
-
-      const subscription = await reg.pushManager.subscribe({
-        // Non-negotiable on every current browser: a subscription that could
-        // deliver silently is not allowed, and asking for one throws.
-        userVisibleOnly: true,
-        applicationServerKey: decodeKey(config.key),
+      // Asks permission, fetches the key, registers /sw.js if nothing has yet
+      // (the deferred registration in ServiceWorker.jsx may not have run), and
+      // replaces a subscription made under an older key.
+      await subscribeBrowser({
+        save: async (subscription) => {
+          const saved = await fetch('/api/alerts/push', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ...subscription, label: browserLabel() }),
+          });
+          if (!saved.ok) throw new Error(`push: ${saved.status}`);
+        },
       });
-
-      const saved = await fetch('/api/alerts/push', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...subscription.toJSON(), label: browserLabel() }),
-      });
-
-      if (!saved.ok) throw new Error(`push: ${saved.status}`);
       setState('on');
     } catch (err) {
-      setState('error');
-      setDetail(String(err?.message ?? err));
+      if (err instanceof PushError && err.reason === 'no-server-key') {
+        setState('unconfigured');
+      } else if (err instanceof PushError && err.reason === 'denied') {
+        // Refused outright, or the prompt was dismissed — which leaves the
+        // button usable, because the browser will ask again.
+        setState(Notification.permission === 'denied' ? 'blocked' : 'off');
+      } else if (err instanceof PushError) {
+        setDetail(err.message);
+        setState('unsupported');
+      } else {
+        setState('error');
+        setDetail(String(err?.message ?? err));
+      }
     } finally {
       setBusy(false);
     }
@@ -139,7 +144,7 @@ export default function PushToggle() {
   if (state === 'loading') return <p className="hint">Checking this browser…</p>;
 
   if (state === 'unsupported') {
-    return <p className="hint">This browser cannot receive push notifications.</p>;
+    return <p className="hint">{detail || 'This browser cannot receive push notifications.'}</p>;
   }
 
   if (state === 'unconfigured') {
@@ -165,21 +170,6 @@ export default function PushToggle() {
       )}
     </>
   );
-}
-
-/**
- * The VAPID public key, as `pushManager.subscribe` wants it.
- *
- * base64url in, raw bytes out. The API takes a BufferSource and rejects the
- * string form, which is the single most common way this call fails.
- *
- * @param {string} key
- * @returns {Uint8Array}
- */
-function decodeKey(key) {
-  const padded = String(key).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(padded.padEnd(Math.ceil(padded.length / 4) * 4, '='));
-  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 
 /**

@@ -1,27 +1,25 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createECDH, createDecipheriv, createHmac, createPublicKey, verify } from 'node:crypto';
+import { createECDH, createDecipheriv, createHmac, createPrivateKey, createPublicKey, verify } from 'node:crypto';
 
-import {
-  b64url,
-  fromB64url,
-  encryptPayload,
-  vapidHeader,
-  generateVapidKeys,
-  vapidConfig,
-} from '../src/webpush.js';
+import { encrypt } from '@profullstack/notifications/server';
+
+import { generateVapidKeys, vapidConfig, sendPush } from '../src/webpush.js';
 
 /**
- * The push encryption, checked against the specification rather than against
+ * The push sender, checked against the specification rather than against
  * itself.
  *
- * This is the one part of the feature where a bug is invisible from the outside:
- * a wrongly derived key produces a body a push service accepts, forwards, and a
- * browser silently fails to decrypt. Nothing anywhere reports an error. So the
- * test is the published worked example from RFC 8291 §5, with its salt and its
- * ephemeral key pinned — a round trip through our own code would agree with
- * itself no matter which way round the key info went.
+ * The encryption and signing now come from `@profullstack/notifications`, but
+ * this is still the one part of the feature where a bug is invisible from the
+ * outside: a wrongly derived key produces a body a push service accepts,
+ * forwards, and a browser silently fails to decrypt. So the published worked
+ * example from RFC 8291 §5 stays here, pinned against the package, and the
+ * adapter is checked for the request it actually puts on the wire.
  */
+
+const b64url = (buf) => Buffer.from(buf).toString('base64url');
+const fromB64url = (value) => Buffer.from(String(value ?? ''), 'base64url');
 
 // RFC 8291 §5, verbatim.
 const VECTOR = {
@@ -34,68 +32,81 @@ const VECTOR = {
   body: 'DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN',
 };
 
-test('encryption reproduces the RFC 8291 worked example exactly', () => {
-  const server = createECDH('prime256v1');
-  server.setPrivateKey(fromB64url(VECTOR.asPrivate));
+const SUBSCRIPTION = {
+  endpoint: 'https://fcm.googleapis.com/fcm/send/abc123?x=1',
+  keys: { p256dh: VECTOR.uaPublic, auth: VECTOR.auth },
+};
 
-  const body = encryptPayload({ p256dh: VECTOR.uaPublic, auth: VECTOR.auth }, VECTOR.plaintext, {
+test('encryption reproduces the RFC 8291 worked example exactly', () => {
+  const ecdh = createECDH('prime256v1');
+  ecdh.setPrivateKey(fromB64url(VECTOR.asPrivate));
+  const point = ecdh.getPublicKey();
+  const privateKey = createPrivateKey({
+    format: 'jwk',
+    key: {
+      kty: 'EC',
+      crv: 'P-256',
+      d: VECTOR.asPrivate,
+      x: b64url(point.subarray(1, 33)),
+      y: b64url(point.subarray(33, 65)),
+    },
+  });
+
+  const body = encrypt(SUBSCRIPTION, Buffer.from(VECTOR.plaintext), {
+    privateKey,
+    publicKey: point,
     salt: fromB64url(VECTOR.salt),
-    serverKeys: server,
   });
 
   assert.equal(b64url(body), VECTOR.body);
 });
 
-test('the header block is the aes128gcm framing a browser expects', () => {
-  const body = encryptPayload({ p256dh: VECTOR.uaPublic, auth: VECTOR.auth }, 'hi');
-
-  assert.equal(body.subarray(0, 16).length, 16, 'a 16-byte salt');
-  assert.equal(body.readUInt32BE(16), 4096, 'the record size');
-  assert.equal(body.readUInt8(20), 65, 'the key length');
-  assert.equal(body.readUInt8(21), 0x04, 'an uncompressed point follows');
-});
-
-test('a fresh key pair and salt are used for every message', () => {
-  const keys = { p256dh: VECTOR.uaPublic, auth: VECTOR.auth };
-  const first = encryptPayload(keys, 'same text');
-  const second = encryptPayload(keys, 'same text');
-
-  // Reuse would mean reusing the AES nonce for a key, which is the failure that
-  // makes two ciphertexts readable against each other.
-  assert.notEqual(b64url(first), b64url(second));
-  assert.notEqual(b64url(first.subarray(0, 16)), b64url(second.subarray(0, 16)));
-});
-
-test('a browser holding the subscription can read what we send', () => {
-  const payload = JSON.stringify({ title: 'A post', url: 'https://example.com/p' });
-  const body = encryptPayload({ p256dh: VECTOR.uaPublic, auth: VECTOR.auth }, payload);
-
-  assert.equal(decryptAsBrowser(body, VECTOR.uaPrivate, VECTOR.uaPublic, VECTOR.auth), payload);
-});
-
-test('a VAPID header is a signature over the right claims', () => {
+/**
+ * Send one push through a stub push service and return what it received.
+ *
+ * @param {{ status?: number, env?: object }} [opts]
+ */
+async function capture({ status = 201 } = {}) {
   const keys = generateVapidKeys();
-  const now = 1_700_000_000_000;
+  const vapid = { ...keys, subject: 'mailto:hello@example.com' };
+  /** @type {{ url: string, init: any }[]} */
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url, init });
+    return new Response(null, { status });
+  };
+  const payload = JSON.stringify({ title: 'A post', url: 'https://example.com/p' });
+  const result = await sendPush(SUBSCRIPTION, payload, vapid, { fetch });
+  return { result, calls, keys, payload };
+}
 
-  const header = vapidHeader(
-    'https://fcm.googleapis.com/fcm/send/abc123?x=1',
-    { ...keys, subject: 'mailto:hello@example.com' },
-    { now },
-  );
+test('a push is the encrypted, signed request a push service expects', async () => {
+  const before = Math.floor(Date.now() / 1000);
+  const { result, calls, keys, payload } = await capture();
 
+  assert.deepEqual(result, { ok: true });
+  assert.equal(calls.length, 1);
+  const [{ url, init }] = calls;
+  assert.equal(url, SUBSCRIPTION.endpoint);
+  assert.equal(init.method, 'POST');
+  assert.equal(init.headers['content-encoding'], 'aes128gcm');
+  // Four hours, and not urgent: an alert about a blog post is worth reading,
+  // not worth waking a phone for.
+  assert.equal(init.headers.ttl, '14400');
+  assert.equal(init.headers.urgency, 'normal');
+
+  const header = init.headers.authorization;
   const token = /t=([^,]+)/.exec(header)?.[1] ?? '';
   const [head, claims, signature] = token.split('.');
   const decode = (part) => JSON.parse(Buffer.from(part, 'base64url').toString());
 
   assert.deepEqual(decode(head), { typ: 'JWT', alg: 'ES256' });
-  assert.deepEqual(decode(claims), {
-    // The origin only. A token whose audience carries the path is rejected with
-    // a flat 401 and no explanation, which is a miserable thing to debug.
-    aud: 'https://fcm.googleapis.com',
-    exp: now / 1000 + 43_200,
-    sub: 'mailto:hello@example.com',
-  });
-
+  const decoded = decode(claims);
+  // The origin only. A token whose audience carries the path is rejected with
+  // a flat 401 and no explanation, which is a miserable thing to debug.
+  assert.equal(decoded.aud, 'https://fcm.googleapis.com');
+  assert.equal(decoded.sub, 'mailto:hello@example.com');
+  assert.ok(decoded.exp - before <= 24 * 3600, 'within the 24 hours RFC 8292 allows');
   assert.equal(/k=(.+)$/.exec(header)?.[1], keys.publicKey, 'the public key travels with it');
 
   const point = fromB64url(keys.publicKey);
@@ -103,17 +114,37 @@ test('a VAPID header is a signature over the right claims', () => {
     format: 'jwk',
     key: { kty: 'EC', crv: 'P-256', x: b64url(point.subarray(1, 33)), y: b64url(point.subarray(33, 65)) },
   });
-
   assert.ok(
-    verify(
-      'sha256',
-      Buffer.from(`${head}.${claims}`),
-      // The raw r||s pair. Node's default DER wrapping is what every push
-      // service rejects as a malformed signature.
-      { key: pub, dsaEncoding: 'ieee-p1363' },
-      fromB64url(signature),
-    ),
+    verify('sha256', Buffer.from(`${head}.${claims}`), { key: pub, dsaEncoding: 'ieee-p1363' }, fromB64url(signature)),
   );
+
+  const body = Buffer.from(init.body);
+  assert.equal(body.readUInt32BE(16), 4096, 'the record size');
+  assert.equal(decryptAsBrowser(body, VECTOR.uaPrivate, VECTOR.uaPublic, VECTOR.auth), payload);
+});
+
+test('404 and 410 mean the browser is gone', async () => {
+  for (const status of [404, 410]) {
+    const { result } = await capture({ status });
+    assert.deepEqual(result, { ok: false, gone: true, error: `push-${status}` });
+  }
+});
+
+test('any other failure is counted, not retired', async () => {
+  const { result } = await capture({ status: 500 });
+  assert.deepEqual(result, { ok: false, gone: false, error: 'push-500' });
+});
+
+test('a subscription that cannot be encrypted to is retired without a request', async () => {
+  const vapid = { ...generateVapidKeys(), subject: 'mailto:x@y.z' };
+  let called = false;
+  const fetch = async () => {
+    called = true;
+    return new Response(null, { status: 201 });
+  };
+  const result = await sendPush({ endpoint: 'https://push.example.com/x', keys: { p256dh: 'k', auth: 'a' } }, '{}', vapid, { fetch });
+  assert.deepEqual(result, { ok: false, error: 'incomplete-subscription', gone: true });
+  assert.equal(called, false);
 });
 
 test('generated keys are a 65-byte uncompressed point and a 32-byte scalar', () => {
@@ -131,7 +162,12 @@ test('an unconfigured deployment reports no push rather than throwing', () => {
 
   const config = vapidConfig({ VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: 'priv' });
   assert.equal(config?.publicKey, 'pub');
+  assert.equal(config?.privateKey, 'priv');
   assert.match(String(config?.subject), /^mailto:/, 'RFC 8292 requires a contact');
+  assert.equal(
+    vapidConfig({ VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: 'priv', VAPID_SUBJECT: 'mailto:ops@example.com' })?.subject,
+    'mailto:ops@example.com',
+  );
 });
 
 /**
