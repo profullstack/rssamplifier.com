@@ -44,7 +44,7 @@ export default async function XStatusPage() {
   ]);
 
   return (
-    <main className="prose">
+    <>
       <h1>X collection status</h1>
 
       <p>
@@ -139,6 +139,6 @@ export default async function XStatusPage() {
       <p>
         <a href="/x">Back to X</a> · <a href="/crawlstats">Crawler status</a>
       </p>
-    </main>
+    </>
   );
 }

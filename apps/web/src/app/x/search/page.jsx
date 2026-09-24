@@ -54,7 +54,7 @@ export default async function XSearchPage({ searchParams }) {
 
   if (!query) {
     return (
-      <main className="prose">
+      <>
         <h1>Search X</h1>
         <p>
           Any X search can be a feed. Type one below — X&rsquo;s own operators work, so{' '}
@@ -67,7 +67,7 @@ export default async function XSearchPage({ searchParams }) {
         <p>
           <a href="/x">Browse the X sources already here</a>
         </p>
-      </main>
+      </>
     );
   }
 

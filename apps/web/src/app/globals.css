@@ -309,6 +309,12 @@ h2 {
 .feed-row {
   background: var(--surface);
   padding: 1.15rem 1.35rem;
+  /* The anchor for a stretched link. A row that carries a second link of its
+     own — the social listings offer the feed beside the page — cannot simply be
+     wrapped in one `<a>`, so the title's anchor is spread over the card instead
+     and the second link is lifted back on top of it. Inert on the rows that
+     have no such link. */
+  position: relative;
   /* A grid rather than a block so the cover art can sit in a column of its own
      and the text keeps its own left edge whether or not there is a picture —
      the avatar is always rendered (a monogram where there is no icon), so the
@@ -4003,4 +4009,59 @@ html:not([data-dock]) .playlist-hint {
 }
 .profile-edit .hint {
   margin: 0.15rem 0 0.35rem;
+}
+
+/* --------------------------------------- social index (/r, /x, /ig, /fb) */
+
+/*
+ * The "add a source" form at the top of each network index.
+ *
+ * This had no rule at all, which is why the strip looked broken: the base
+ * `input[type='text']` is `width: 100%`, so the label was stranded on its own
+ * line above a full-bleed field and the button sat flush underneath it with no
+ * gap. The same card as `.submit-box`, laid out as a labelled row.
+ */
+.add-source {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.25rem 1.35rem;
+  margin: 0 0 2rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.add-source label {
+  /* Its own line above the pair: a placeholder is not a label, and this one is
+     the only thing saying what the field will accept. */
+  grid-column: 1 / -1;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+/* One column once the field and the button can no longer share a line without
+   squeezing the field down to nothing. */
+@media (max-width: 34rem) {
+  .add-source {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The title's anchor, spread over the whole card so the row clicks through
+   anywhere — see the note on `.feed-row`'s `position`. */
+.row-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+/* And the one link that has to stay clickable on top of that overlay. Given a
+   rule of its own rather than left bare, because inside `.feed-meta` — mono,
+   small, muted — an unmarked link reads as another piece of metadata. */
+.feed-meta .row-aside {
+  position: relative;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }

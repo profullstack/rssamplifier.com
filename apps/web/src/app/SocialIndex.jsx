@@ -4,6 +4,8 @@ import { socialDisplayTitle, socialPathFor } from '@rssamplifier/social';
 import { db, siteUrl } from '../lib/db.js';
 import ListFilter from './ListFilter.jsx';
 import { FILTER_FROM } from '../lib/listFilter.js';
+import { Avatar } from './Thumb.jsx';
+import { feedImage } from '../lib/thumbs.js';
 
 /**
  * The index of one network's sources — `/r` and `/x`.
@@ -82,9 +84,14 @@ export default async function SocialIndex({ network, page = 1 }) {
   ]);
 
   const { platform, noun, base, blurb, placeholder, addLabel } = LOOKS[network];
+  const lastPage = Math.max(1, Math.ceil(counts.total / PER_PAGE));
 
+  // A fragment, not a `<main>`: the layout already wraps every page in
+  // `main.wrap`, which is what carries the measure and the gutters. A second
+  // `<main>` inside it was both a duplicate landmark and — dressed in a `.prose`
+  // class that matches no rule in the stylesheet — styled by nothing at all.
   return (
-    <main className="prose">
+    <>
       <h1>{platform}</h1>
 
       <p>
@@ -103,7 +110,7 @@ export default async function SocialIndex({ network, page = 1 }) {
 
       {rows.length >= FILTER_FROM ? (
         <ListFilter
-          target=".feed-list li"
+          target=".feed-list .feed-row"
           noun={`${platform} source`}
           label={`Filter these ${platform} sources`}
           // The escape hatch for a name that is not on this page — the
@@ -114,33 +121,86 @@ export default async function SocialIndex({ network, page = 1 }) {
       ) : null}
 
       {rows.length === 0 ? (
-        <p>Nothing here yet. Add the first one above.</p>
+        <p className="empty">Nothing here yet. Add the first one above.</p>
       ) : (
-        <ul className="feed-list">
+        /*
+         * A `<div>` of rows rather than a `<ul>` of `<li>`, which is what
+         * `CategoryIndex` and every other listing on the site does — and the
+         * reason this page looked wrong. `.feed-list` is a grid whose 1px gaps
+         * show its own background through as hairline dividers, so it wants the
+         * cards themselves as its children. Wrapping each in an `<li>` put an
+         * unstyled element in every cell, leaving the divider colour showing
+         * behind the row, and the stylesheet has no list reset, so the browser's
+         * own `padding-inline-start` indented the whole set inside its border
+         * and hung bullets in the gutter.
+         */
+        <div className="feed-list">
           {rows.map((row) => {
             const href = socialPathFor(row);
             // The canonical name where the imported title says nothing — most
             // of the catalogue is uncrawled and titled with the bare host.
             const name = socialDisplayTitle(row, href.replace(/^\//, ''));
+            const site = row.site_url ? hostOf(String(row.site_url)) : null;
+            const items = Number(row.item_count ?? 0);
+
             return (
-              <li key={String(row.slug)}>
-                <a className="feed-row" href={href}>
-                  <strong>{name}</strong>
-                  {row.description ? <span> — {String(row.description)}</span> : null}
-                </a>{' '}
-                <a href={`${href}.rss`} title="RSS">
-                  rss
-                </a>
-              </li>
+              /*
+               * The row's own parts, in the shape `.feed-row`'s grid is cut for:
+               * the avatar in the first column, then heading, description and
+               * meta line in the second. The old markup used a bare `<strong>`
+               * and `<span>`, which the grid placed on separate rows of their
+               * own and which picked up none of the `.feed-row h3` / `p` type —
+               * so a name and a 500-word subreddit sidebar arrived unstyled,
+               * unclamped and stacked.
+               */
+              <div className="feed-row" key={String(row.slug)}>
+                <Avatar src={feedImage(row)} title={name} slug={row.slug} />
+                <h3>
+                  <a className="row-link" href={href}>
+                    {name}
+                  </a>
+                </h3>
+                {row.description ? <p>{String(row.description)}</p> : null}
+                <div className="feed-meta">
+                  {site ? <span>{site}</span> : null}
+                  <span>
+                    {items.toLocaleString()} {items === 1 ? 'post' : 'posts'}
+                  </span>
+                  {/* Kept, but moved inside the meta line: it used to sit
+                      outside the row's anchor entirely, which dropped it onto
+                      the divider strip below the card as loose text. */}
+                  <a className="row-aside" href={`${href}.rss`} title={`${name} — RSS`}>
+                    rss
+                  </a>
+                </div>
+              </div>
             );
           })}
-        </ul>
+        </div>
       )}
 
-      {rows.length === PER_PAGE ? (
-        <p>
-          <a href={`${base}?page=${page + 1}`}>Next page</a>
-        </p>
+      {/* The house pager, both ends labelled, rather than a lone "Next page"
+          link that never said where you were or offered a way back. */}
+      {lastPage > 1 ? (
+        <nav className="pager" aria-label={`${platform} pages`}>
+          {page > 1 ? (
+            <a href={page === 2 ? base : `${base}?page=${page - 1}`} rel="prev">
+              ← Previous
+            </a>
+          ) : (
+            <span className="disabled">← Previous</span>
+          )}
+          <span className="pill">
+            Page {page.toLocaleString()} of {lastPage.toLocaleString()}
+          </span>
+          {page < lastPage ? (
+            <a href={`${base}?page=${page + 1}`} rel="next">
+              Next →
+            </a>
+          ) : (
+            <span className="disabled">Next →</span>
+          )}
+        </nav>
       ) : null}
 
       <p>
@@ -148,8 +208,25 @@ export default async function SocialIndex({ network, page = 1 }) {
         see <a href="/topics">topics</a>. The directory&rsquo;s own river is at{' '}
         <code>{siteUrl()}/feed.rss</code>.
       </p>
-    </main>
+    </>
   );
+}
+
+/**
+ * The bare host of a URL, for the meta line.
+ *
+ * Falls back to the string it was given: a listing has no reason to refuse to
+ * render over one malformed `site_url` in a directory this size.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
 }
 
 /**
