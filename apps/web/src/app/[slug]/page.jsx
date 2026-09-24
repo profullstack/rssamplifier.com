@@ -36,6 +36,32 @@ import { jsonLdScript } from '../../lib/jsonld.js';
 export const dynamic = 'force-dynamic';
 
 /**
+ * Where a feed's page really lives — its shortcut address when it has one.
+ *
+ * A social row has two addresses: `/{slug}`, which is its permanent identity
+ * and what every existing link points at, and the shortcut the namespace gives
+ * it, `/r/pipesmoking`. `socialPage.js` says the shortcut is the canonical one
+ * and that the canonical tag is what stops the pair being duplicate content —
+ * and the sitemap is built on that promise, listing feeds under `/{slug}` on
+ * the strength of it. This page was not keeping it: reached by its slug, a
+ * subreddit named *itself* as canonical, so both addresses claimed to be the
+ * real one and the tag settled nothing.
+ *
+ * `socialPathFor` already falls back to `/{slug}` for everything that is not
+ * social, so this is safe to call for any feed. The one thing it adds is the
+ * query-string guard: an X search lives at `/x/search?q=…`, and feed links are
+ * built by appending an extension, which would put `.rss` on the query rather
+ * than the path. Those keep the slug, which is an address that works.
+ *
+ * @param {{ social_ref?: string|null, slug?: string }} feed
+ * @returns {string}
+ */
+function landingPath(feed) {
+  const path = socialPathFor(feed);
+  return path.includes('?') ? `/${String(feed?.slug ?? '')}` : path;
+}
+
+/**
  * @param {{ params: Promise<{ slug: string }> }} props
  */
 export async function generateMetadata({ params }) {
@@ -55,7 +81,10 @@ export async function generateMetadata({ params }) {
   // favicon, and the reason this page had no card of its own until the crawler
   // learned to check.
   const card = feedCard(feed);
-  const url = `${siteUrl()}/${slug}`;
+  // The shortcut address where there is one, so this page and `/r/pipesmoking`
+  // agree on which of them is canonical — and so the `rel=alternate` feeds
+  // announced here are the same ones that page offers.
+  const url = `${siteUrl()}${landingPath(feed)}`;
 
   return {
     title,
@@ -186,10 +215,12 @@ export default async function FeedPage({ params, base }) {
   // eyebrow linking nowhere is worse than one that is merely unspecific.
   const category = CATEGORIES[String(feed.category)] ?? CATEGORIES.blog;
 
-  // Where this page lives, as a reader sees it: the social path when one was
-  // passed, `/{slug}` otherwise. Everything in the body that points back at
-  // this page is built from it, so a subreddit's own links stay inside `/r/`.
-  const here = base ?? `/${slug}`;
+  // Where this page lives, as a reader sees it. The social routes pass their
+  // own path; reached by its slug, a social feed still resolves to the shortcut
+  // rather than naming itself, so the Subscribe row on `/r-pipesmoking` offers
+  // `/r/pipesmoking.rss` — the same feed the canonical tag just pointed at.
+  // Everything in the body that points back at this page is built from it.
+  const here = base ?? landingPath(feed);
 
   // This page, absolute, and deliberately ours rather than the blog's own site:
   // sharing from here should land somebody on the archive, the follow button
