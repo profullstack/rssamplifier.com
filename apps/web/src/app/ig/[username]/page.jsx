@@ -51,5 +51,5 @@ export default async function InstagramAccountPage({ params }) {
     );
   }
 
-  return FeedPage({ params: Promise.resolve({ slug: String(feed.slug) }) });
+  return FeedPage({ params: Promise.resolve({ slug: String(feed.slug) }), base: source.path });
 }

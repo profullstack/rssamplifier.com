@@ -107,9 +107,22 @@ export async function generateMetadata({ params }) {
 /**
  * A single blog's page: who they are, and what they have published lately.
  *
- * @param {{ params: Promise<{ slug: string }> }} props
+ * `base` is the path this page is actually being served at, for the social
+ * routes that render this component under a second name — `/r/machinelearning`
+ * rather than `/machine-learning`. They already declared that address as the
+ * canonical one in their metadata, so the links in the body have to agree with
+ * it: a page whose `<link rel=canonical>` says `/r/machinelearning` while its
+ * Subscribe row offers `/machine-learning.json` is handing out an address it
+ * has just told crawlers is not the real one. Defaults to `/{slug}`, which is
+ * what `/{slug}` itself wants.
+ *
+ * It is the *presentation* path only. The slug stays the identity: it is what
+ * the follow and queue endpoints key on, and `/read` exists under `/{slug}`
+ * alone, so those keep using it.
+ *
+ * @param {{ params: Promise<{ slug: string }>, base?: string }} props
  */
-export default async function FeedPage({ params }) {
+export default async function FeedPage({ params, base }) {
   const { slug } = await params;
   const client = db();
 
@@ -173,10 +186,15 @@ export default async function FeedPage({ params }) {
   // eyebrow linking nowhere is worse than one that is merely unspecific.
   const category = CATEGORIES[String(feed.category)] ?? CATEGORIES.blog;
 
+  // Where this page lives, as a reader sees it: the social path when one was
+  // passed, `/{slug}` otherwise. Everything in the body that points back at
+  // this page is built from it, so a subreddit's own links stay inside `/r/`.
+  const here = base ?? `/${slug}`;
+
   // This page, absolute, and deliberately ours rather than the blog's own site:
   // sharing from here should land somebody on the archive, the follow button
   // and the reader, which is the part they cannot get to from the blog.
-  const pageUrl = `${siteUrl()}/${slug}`;
+  const pageUrl = `${siteUrl()}${here}`;
 
   // A podcast described as a Blog is wrong in the one place a machine reads
   // this page, so the type and the property that carries the entries both
@@ -263,7 +281,7 @@ export default async function FeedPage({ params }) {
           come back to the reader on this site rather than leaving it. `.md` is
           in the row because half of what reads this directory is not a person. */}
       <SubscribeLinks
-        base={`/${slug}`}
+        base={here}
         what={`this ${category.one}`}
         formats={podcast || feed.category === 'music' ? ['rss', 'atom', 'json', 'md', 'm3u', 'pls'] : undefined}
       />
@@ -289,7 +307,7 @@ export default async function FeedPage({ params }) {
           following={follow.following}
           alerts={follow.alerts}
           signedIn={Boolean(user)}
-          next={`/${slug}`}
+          next={here}
           label="Follow"
         />
 
@@ -386,7 +404,7 @@ export default async function FeedPage({ params }) {
         total={playable.length}
         queued={alreadyQueued(playable, queued)}
         lanes={entryLanes(playable)}
-        next={`/${slug}`}
+        next={here}
       />
 
       {/* An archive page can carry a hundred entries, and looking for one you
@@ -458,7 +476,7 @@ export default async function FeedPage({ params }) {
                   guid={String(p.guid)}
                   lanes={lanes}
                   queued={queued[String(p.id)] ?? []}
-                  next={`/${slug}`}
+                  next={here}
                   compact
                 />
               </div>
@@ -477,7 +495,7 @@ export default async function FeedPage({ params }) {
         next={nav.next}
         current={String(feed.title)}
         siteUrl={feed.site_url ? String(feed.site_url) : null}
-        feedUrl={`/${slug}.rss`}
+        feedUrl={`${here}.rss`}
       />
     </>
   );
