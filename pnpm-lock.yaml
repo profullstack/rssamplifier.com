@@ -49,6 +49,9 @@ importers:
       '@profullstack/leaderboard':
         specifier: ^0.3.0
         version: 0.3.0
+      '@profullstack/notifications':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@profullstack/openprofile':
         specifier: ^0.1.0
         version: 0.1.0
@@ -213,6 +216,9 @@ importers:
 
   packages/notify:
     dependencies:
+      '@profullstack/notifications':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@rssamplifier/db':
         specifier: workspace:*
         version: link:../db
@@ -692,6 +698,10 @@ packages:
 
   '@profullstack/leaderboard@0.3.1':
     resolution: {integrity: sha512-LbxLwy+RvT/Qez0mfWCk4o9hvcq0kzwBZ0vF+CYp+oGvyqJWUaSTLhCHWGtKKAI3c0ZUXj6ll0iuRjbuZUE2Sg==}
+    engines: {node: '>=20.11'}
+
+  '@profullstack/notifications@0.1.0':
+    resolution: {integrity: sha512-17jiBCRiZVDcIyWnWKYr5E2eVog/1iHgXaruGbmlw7j7Ob4zd6oOqGjh8BP8wm13iFwikczYObQwSrGadBdnGw==}
     engines: {node: '>=20.11'}
 
   '@profullstack/openprofile@0.1.0':
@@ -2484,6 +2494,8 @@ snapshots:
   '@profullstack/leaderboard@0.3.0': {}
 
   '@profullstack/leaderboard@0.3.1': {}
+
+  '@profullstack/notifications@0.1.0': {}
 
   '@profullstack/openprofile@0.1.0': {}
 

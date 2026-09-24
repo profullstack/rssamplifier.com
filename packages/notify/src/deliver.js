@@ -372,6 +372,16 @@ async function fanOut(db, user, items, opts) {
     // deployment's missing configuration.
     if (result === null) continue;
 
+    // A browser the push service says is gone (404/410) is deleted outright
+    // rather than disabled: the endpoint will never work again, and a re-subscribe
+    // from that browser mints a new one. Keeping the row would only list a dead
+    // device on the account page.
+    if (channel.kind === 'web' && result.gone) {
+      await alerts.deletePushChannel(db, user.id, channel.target);
+      failed += 1;
+      continue;
+    }
+
     await alerts.recordChannelResult(db, channel.id, result);
     if (result.ok) sent += 1;
     else failed += 1;

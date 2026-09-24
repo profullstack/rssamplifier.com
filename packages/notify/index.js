@@ -1,12 +1,4 @@
-export {
-  b64url,
-  fromB64url,
-  encryptPayload,
-  vapidHeader,
-  generateVapidKeys,
-  vapidConfig,
-  sendPush,
-} from './src/webpush.js';
+export { generateVapidKeys, vapidConfig, sendPush } from './src/webpush.js';
 
 export {
   SIGNATURE_HEADER,

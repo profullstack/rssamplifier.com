@@ -17,6 +17,10 @@ export const dynamic = 'force-dynamic';
  * needs and which is not a secret: every browser that subscribes is given it.
  * It also answers whether push is configured at all, so the page can say "not
  * available here" instead of offering a button that cannot work.
+ *
+ * The page itself now fetches the key from /api/push/vapid-public-key, the path
+ * `@profullstack/notifications/client` expects; this GET stays for anything
+ * already reading it.
  */
 
 /**

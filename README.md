@@ -482,10 +482,13 @@ pnpm --filter @rssamplifier/notify vapid
 ```
 
 Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` on **both** services — the web app
-hands the public key to browsers, the poller signs with the private one. The pair is an identity:
+hands the public key to browsers (read at run time and served from `GET /api/push/vapid-public-key`,
+which answers 503 when the pair is missing), the poller signs with the private one. The pair is an identity:
 every subscription in the database was created against that public key, so replacing it later
 invalidates all of them at once. Without it the site simply does not offer browser alerts, and the
-other two channels work as normal.
+other two channels work as normal. Sending, encryption and the browser subscribe step come from
+[`@profullstack/notifications`](https://www.npmjs.com/package/@profullstack/notifications); a
+browser the push service reports gone (404/410) has its channel deleted.
 
 Webhooks receive one `POST` of JSON per batch (`{version, type, at, count, items}`). With a signing
 secret the body is HMAC'd into `x-rssamplifier-signature: sha256=…` over the exact bytes sent;

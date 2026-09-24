@@ -9,7 +9,7 @@ import { generateVapidKeys } from '../src/webpush.js';
  * them — browsers keep sending to the old key and every send comes back 403.
  *
  * The public half is not a secret. It is handed to every browser that subscribes
- * and is served from /api/alerts/push, which is why it is fine for it to sit in
+ * and is served from /api/push/vapid-public-key, which is why it is fine for it to sit in
  * the same environment file as the private half.
  */
 
