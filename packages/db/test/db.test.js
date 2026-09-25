@@ -1,24 +1,19 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect, newId, nowIso } from '../src/client.js';
+import { newId, nowIso } from '../src/client.js';
+import { connectTest } from '../src/testdb.js';
 import { migrate, splitStatements } from '../src/migrate.js';
 import * as q from '../src/queries.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('splitStatements keeps trigger bodies intact', () => {
@@ -40,7 +35,7 @@ create index i on t (a);
 test('migrate is idempotent', async () => {
   const again = await migrate(db);
   assert.equal(again.applied.length, 0, 'nothing re-applied');
-  assert.ok(again.skipped.includes('0001_init.sql'));
+  assert.ok(again.skipped.includes('0001_schema.sql'));
 });
 
 test('insert a feed and read it back by slug and url', async () => {
@@ -141,9 +136,9 @@ test('a re-crawl that offers nothing new writes no rows at all', async () => {
   // millions of row-writes that changed nothing, against a Turso account that
   // had reached 286% of its rows-written quota.
   //
-  // Measured with total_changes(), which counts rows the connection has
-  // actually written -- the only way to tell "updated to the same value" from
-  // "not updated", since both leave identical rows behind.
+  // Measured by each row's xmin, the transaction that last wrote it -- the
+  // only way to tell "updated to the same value" from "not updated", since
+  // both leave identical rows behind.
   const feed = await q.insertFeed(db, {
     slug: 'guard-subject',
     feed_url: 'https://guard.example/feed.xml',
@@ -161,25 +156,35 @@ test('a re-crawl that offers nothing new writes no rows at all', async () => {
 
   await q.upsertItems(db, id, items);
 
-  const changes = async () => Number((await db.execute('select total_changes() as n')).rows[0].n);
+  // Postgres has no total_changes(). A row that is rewritten gets a new xmin
+  // (the transaction that last wrote it) and a row left alone keeps its old
+  // one, so comparing two snapshots counts exactly the rows written.
+  const versions = async () => {
+    const { rows } = await db.execute({
+      sql: 'select xmin::text as v from feed_items where feed_id = ? order by guid',
+      args: [id],
+    });
+    return rows.map((r) => String(r.v));
+  };
+  const rewritten = (was, now) => now.filter((v, i) => v !== was[i]).length;
 
   // The same document again, which is what every crawl of a dormant feed sees.
-  const before = await changes();
+  const before = await versions();
   const offered = await q.upsertItems(db, id, items);
-  const written = (await changes()) - before;
+  const written = rewritten(before, await versions());
 
   assert.equal(offered, 2, 'both items are still offered to the database');
   assert.equal(written, 0, 'and neither is rewritten, because neither changed');
 
   // The healing path must still work: a crawl that genuinely fills in a gap
   // has to get through the guard, or the image and audio backfills stop.
-  const healBefore = await changes();
+  const healBefore = await versions();
   await q.upsertItems(db, id, [
     { guid: 'a', title: 'First post', imageUrl: 'https://guard.example/a.jpg' },
     { guid: 'b', title: 'Second post', audio: { url: 'https://guard.example/b.mp3' },
       imageUrl: 'https://guard.example/b.jpg' },
   ]);
-  assert.ok((await changes()) - healBefore > 0, 'a real change is still written');
+  assert.ok(rewritten(healBefore, await versions()) > 0, 'a real change is still written');
 
   const stored = await q.itemsForFeed(db, id, 200);
   assert.equal(stored.find((r) => r.guid === 'b').image_url, 'https://guard.example/b.jpg');
@@ -373,7 +378,7 @@ test('FTS index follows updates and deletes', async () => {
   assert.equal(
     (await q.searchFeeds(db, 'unique-marker-word')).length,
     0,
-    'delete trigger must clear the external-content index',
+    'a deleted feed leaves the search index with it',
   );
 });
 
@@ -577,9 +582,7 @@ test('submission audit and rate-limit window', async () => {
 });
 
 test('eachFeedForExport yields the whole directory, not one page of it', async () => {
-  const exportDir = await mkdtemp(join(tmpdir(), 'rssamp-export-'));
-  const exportDb = connect({ url: `file:${join(exportDir, 'test.db')}` });
-  await migrate(exportDb);
+  const exportDb = await connectTest();
 
   // Titles deliberately collide: the export cursor is (title, id), and a cursor
   // on title alone would either skip or repeat rows wherever a page boundary
@@ -612,7 +615,7 @@ test('eachFeedForExport yields the whole directory, not one page of it', async (
   assert.equal(alive.length, total - 1);
   assert.equal(alive.includes('blog-001'), false, 'dead feeds are excluded from exports');
 
-  await rm(exportDir, { recursive: true, force: true });
+  exportDb.close();
 });
 
 test('monthBounds is a half-open range and rolls over December', () => {
@@ -622,9 +625,7 @@ test('monthBounds is a half-open range and rolls over December', () => {
 });
 
 test('sitemap chunks split an oversized month and cover it exactly once', async () => {
-  const chunkDir = await mkdtemp(join(tmpdir(), 'rssamp-sitemap-'));
-  const chunkDb = connect({ url: `file:${join(chunkDir, 'test.db')}` });
-  await migrate(chunkDb);
+  const chunkDb = await connectTest();
 
   // Two months, one of them far larger than the chunk size — the shape a bulk
   // import leaves behind, where a single month holds the whole directory.
@@ -677,13 +678,11 @@ test('sitemap chunks split an oversized month and cover it exactly once', async 
   const empty = await q.feedsForSitemapChunk(chunkDb, { month: '2026-06', chunkSize: 10 });
   assert.equal(empty.length, 0);
 
-  await rm(chunkDir, { recursive: true, force: true });
+  chunkDb.close();
 });
 
 test('feeds are filtered and counted by kind', async () => {
-  const kindDir = await mkdtemp(join(tmpdir(), 'rssamp-kind-'));
-  const kindDb = connect({ url: `file:${join(kindDir, 'kind.db')}` });
-  await migrate(kindDb);
+  const kindDb = await connectTest();
 
   await q.insertFeed(kindDb, {
     slug: 'a-blog',
@@ -725,14 +724,12 @@ test('feeds are filtered and counted by kind', async () => {
 
   // A category the directory has none of still reports zero rather than being
   // absent, so a page can say "0 podcasts" instead of rendering nothing.
-  const emptyDir = await mkdtemp(join(tmpdir(), 'rssamp-empty-'));
-  const emptyDb = connect({ url: `file:${join(emptyDir, 'empty.db')}` });
-  await migrate(emptyDb);
+  const emptyDb = await connectTest();
   assert.deepEqual(
     await q.countFeedsByKind(emptyDb),
     Object.fromEntries(q.KINDS.map((k) => [k, 0])),
   );
-  await rm(emptyDir, { recursive: true, force: true });
+  emptyDb.close();
 
   // Dead feeds are excluded from a category exactly as they are from the index.
   await kindDb.execute("update feeds set status = 'dead' where slug = 'a-show'");
@@ -744,13 +741,11 @@ test('feeds are filtered and counted by kind', async () => {
   assert.equal(q.normalizeKind('everything'), null);
   assert.equal(q.normalizeKind(null), null);
 
-  await rm(kindDir, { recursive: true, force: true });
+  kindDb.close();
 });
 
 test('a crawl re-derives a derived category, and never a curated one', async () => {
-  const dir2 = await mkdtemp(join(tmpdir(), 'rssamp-recrawl-'));
-  const db2 = connect({ url: `file:${join(dir2, 'recrawl.db')}` });
-  await migrate(db2);
+  const db2 = await connectTest();
 
   // The shape a bulk import leaves behind: no kind was knowable at insert time.
   const { id } = await q.insertFeed(db2, {
@@ -793,13 +788,11 @@ test('a crawl re-derives a derived category, and never a curated one', async () 
   // An unknown category is refused rather than stored.
   assert.equal(await q.curateCategory(db2, ['https://c.example/feed.xml'], 'newsletter'), 0);
 
-  await rm(dir2, { recursive: true, force: true });
+  db2.close();
 });
 
 test('a crawl backfills the language a bulk import never had', async () => {
-  const dir3 = await mkdtemp(join(tmpdir(), 'rssamp-lang-'));
-  const db3 = connect({ url: `file:${join(dir3, 'lang.db')}` });
-  await migrate(db3);
+  const db3 = await connectTest();
 
   // Exactly what `pnpm import:catalogue` leaves behind: a URL, a title from the
   // OPML, and nothing else. The reader's language bar is built by counting this
@@ -839,13 +832,11 @@ test('a crawl backfills the language a bulk import never had', async () => {
   );
   assert.equal(String((await q.feedBySlug(db3, 'ein-blog')).language), 'nl');
 
-  await rm(dir3, { recursive: true, force: true });
+  db3.close();
 });
 
 test('topics: keywords are replaced wholesale, and the rollup drops single-feed topics', async () => {
-  const dir3 = await mkdtemp(join(tmpdir(), 'rssamp-topics-'));
-  const db3 = connect({ url: `file:${join(dir3, 'topics.db')}` });
-  await migrate(db3);
+  const db3 = await connectTest();
 
   const a = await q.insertFeed(db3, {
     slug: 'feed-a',
@@ -916,13 +907,11 @@ test('topics: keywords are replaced wholesale, and the rollup drops single-feed 
   await db3.execute({ sql: 'delete from feeds where id = ?', args: [a.id] });
   assert.equal(await q.countFeedKeywords(db3, a.id), 0);
 
-  await rm(dir3, { recursive: true, force: true });
+  db3.close();
 });
 
 test('topic search ranks matches, and a topic export is the feeds on that topic', async () => {
-  const dirT = await mkdtemp(join(tmpdir(), 'rssamp-topicsearch-'));
-  const dbT = connect({ url: `file:${join(dirT, 'search.db')}` });
-  await migrate(dbT);
+  const dbT = await connectTest();
 
   // Four subjects that between them cover every tier of the ranking, plus two
   // that are only reachable by typing a phrase.
@@ -1004,13 +993,11 @@ test('topic search ranks matches, and a topic export is the feeds on that topic'
   }
   assert.deepEqual(podcasts, [], 'none of these feeds is a podcast');
 
-  await rm(dirT, { recursive: true, force: true });
+  dbT.close();
 });
 
 test('item categories survive a round trip through storage', async () => {
-  const dir4 = await mkdtemp(join(tmpdir(), 'rssamp-itemcat-'));
-  const db4 = connect({ url: `file:${join(dir4, 'cat.db')}` });
-  await migrate(db4);
+  const db4 = await connectTest();
 
   const { id } = await q.insertFeed(db4, {
     slug: 'tagged',
@@ -1031,7 +1018,7 @@ test('item categories survive a round trip through storage', async () => {
     'an item with no categories stores an empty list, not null',
   );
 
-  await rm(dir4, { recursive: true, force: true });
+  db4.close();
 });
 
 test('newId is unique and nowIso offsets correctly', () => {

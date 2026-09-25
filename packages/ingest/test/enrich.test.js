@@ -1,24 +1,18 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q, authors as a } from '@rssamplifier/db';
+import { q, authors as a } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { enrichDue, enrichFeedAuthors, storeCredits } from '../src/enrich.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-enrich-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 /**
@@ -280,17 +274,28 @@ test('a credit re-stored unchanged writes nothing at all', async () => {
 
   await storeCredits(db, feed, credit);
 
-  const changes = async () => Number((await db.execute('select total_changes() as n')).rows[0].n);
-  const before = await changes();
+  // Postgres has no total_changes(). The batch's own row counts are the same
+  // number: each statement reports the rows it inserted or updated, and a
+  // conflict clause whose guard held reports none -- which is the claim.
+  const realBatch = db.batch.bind(db);
+  let written = 0;
+  db.batch = async (statements, mode) => {
+    const results = await realBatch(statements, mode);
+    for (const r of results) written += Number(r.rowsAffected ?? 0);
+    return results;
+  };
 
-  await storeCredits(db, feed, credit);
+  try {
+    await storeCredits(db, feed, credit);
+    assert.equal(written, 0, 'the second store changed no rows');
 
-  assert.equal((await changes()) - before, 0, 'the second store changed no rows');
-
-  // And a credit that genuinely learns something still gets through.
-  const richer = await changes();
-  await storeCredits(db, feed, [{ ...credit[0], bio: 'Writes things.', confidence: 0.95 }]);
-  assert.ok((await changes()) - richer > 0, 'a better credit is still written');
+    // And a credit that genuinely learns something still gets through.
+    written = 0;
+    await storeCredits(db, feed, [{ ...credit[0], bio: 'Writes things.', confidence: 0.95 }]);
+    assert.ok(written > 0, 'a better credit is still written');
+  } finally {
+    db.batch = realBatch;
+  }
 });
 
 test('an author keeps the bio the page published', async () => {

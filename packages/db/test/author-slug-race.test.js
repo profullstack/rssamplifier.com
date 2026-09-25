@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { connectTest } from '../src/testdb.js';
 import { creditStatements, upsertAuthor } from '../src/authors.js';
 
 /**
@@ -22,13 +18,10 @@ import { creditStatements, upsertAuthor } from '../src/authors.js';
  * hours on exactly this.
  */
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-slug-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 
   // feed_authors carries a foreign key to feeds, so the credits have to have
   // somewhere to land.
@@ -46,7 +39,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 const person = (name, email) => ({

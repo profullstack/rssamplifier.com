@@ -315,7 +315,7 @@ export function fetchRingPage(url, opts = {}) {
  * One tick of verification: the members whose check is oldest, one at a
  * time, each recorded as soon as it is known.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{
  *   batch?: number,
  *   base: string,
@@ -382,7 +382,7 @@ export async function verifyRingMembers(db, opts) {
  * `onError`, and the pass goes on to the next one; one slow topic must not
  * cost every other ring its seed.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ topics?: number, minMembers?: number, limit?: number, onError?: ((topic: string, err: unknown) => void)|null }} [opts]
  * @returns {Promise<{ rings: number, created: number, added: number, skipped: number, failed: number, dropped: number }>}
  */

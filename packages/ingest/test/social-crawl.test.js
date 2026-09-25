@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, beforeEach, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q, social } from '@rssamplifier/db';
+import { q, social } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 import { normalizeXFeed, xSource } from '@rssamplifier/social';
 
 import { crawlFeed } from '../src/crawl.js';
@@ -26,17 +23,16 @@ import { SOCIAL_MIN_INTERVAL, MIN_INTERVAL } from '../src/cadence.js';
  * whole X directory over an afternoon and leave no clue why.
  */
 
-let dir;
 let db;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rsa-social-crawl-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  // A fresh database per test, as the SQLite version made a fresh file.
+  db?.close();
+  db = await connectTest();
 });
 
 after(async () => {
-  if (dir) await rm(dir, { recursive: true, force: true });
+  db?.close();
 });
 
 /** @param {string[]} ids */

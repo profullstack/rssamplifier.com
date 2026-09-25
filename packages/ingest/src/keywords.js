@@ -46,7 +46,7 @@ export const CHECK_BUDGET_MS = 60_000;
  * Every exit writes a verdict to the candidate row: a run that says "checked
  * 900, added 12" is only useful if the other 888 can be explained.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ id: string, run_id?: string, site_url: string }} candidate
  * @param {{ rules?: object, seriesRules?: object, resolveImpl?: typeof resolveFeed }} [opts]
  * @returns {Promise<{ status: 'accepted'|'rejected'|'error', slug?: string, score?: number }>}
@@ -192,7 +192,7 @@ export async function checkCandidate(db, candidate, opts = {}) {
  * re-fetching a blog the directory has had for a year is the single most
  * wasteful thing a discovery run can do.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ id: string, run_id: string, keyword: string }} row
  * @param {{ known?: Set<string>, searchOpts?: object }} [opts]
  * @returns {Promise<{ ok: boolean, error: string|null, queued: number }>}
@@ -234,7 +234,7 @@ export async function searchOneKeyword(db, row, opts = {}) {
  * Derived rather than incremented: a tick that dies halfway through a batch
  * would otherwise leave the run claiming numbers that never become true.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} runId
  * @param {{ error?: string|null }} [extra]
  * @returns {Promise<{ keywords: object, candidates: object, done: boolean }>}
@@ -264,7 +264,7 @@ export async function refreshRun(db, runId, extra = {}) {
 /**
  * Start a run: queue the keywords, then spend the inline budget on them.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string[]} keywords
  * @param {{ runId?: string, inlineLimit?: number, searchBudgetMs?: number, checkBudgetMs?: number, notifyEmail?: string|null, ipHash?: string|null, userAgent?: string|null, searchOpts?: object, rules?: object, now?: () => number, onStarted?: (runId: string) => void }} [opts]
  * @returns {Promise<{ runId: string, searched: number, candidates: number, accepted: number, rejected: number, queuedKeywords: number, queuedCandidates: number, error: string|null }>}
@@ -379,7 +379,7 @@ export const DRAIN_BUDGET_MS = 120_000;
 /**
  * Search queued keywords — the poller's half of the search phase.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {number} [limit]
  * @param {{ searchOpts?: object, budgetMs?: number, now?: () => number }} [opts]
  * @returns {Promise<{ searched: number, failed: number, queued: number, fatal: string|null }>}
@@ -429,7 +429,7 @@ export async function drainDiscoveryKeywords(db, limit = 5, opts = {}) {
  * against sites that never asked to be indexed, and there is no deadline to
  * race, because the queue is drained continuously.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {number} [limit]
  * @param {{ rules?: object }} [opts]
  * @returns {Promise<{ checked: number, accepted: number, rejected: number, errored: number }>}

@@ -1,25 +1,20 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { accounts, connect, migrate, q, webrings } from '../index.js';
+import { accounts, q, webrings } from '../index.js';
+import { connectTest } from '../src/testdb.js';
 
 /**
  * Likes are on or off per account; events are a log; the top rings are the
  * ones people like, then the ones whose sites link back.
  */
 
-let dir;
 let db;
 let alice;
 let bob;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-ring-points-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
   alice = await accounts.findOrCreateUser(db, 'alice@example.com');
   bob = await accounts.findOrCreateUser(db, 'bob@example.com');
   const feed = await q.insertFeed(db, {
@@ -37,7 +32,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a like is on or off per account, and counted once', async () => {

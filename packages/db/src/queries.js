@@ -11,7 +11,7 @@ import { topicLabelSql } from './topicLabel.js';
  * CLI all hit the database the same way, and a schema change has one blast
  * radius instead of a dozen.
  *
- * @typedef {import('@libsql/client').Client} Client
+ * @typedef {import('./pg.js').PgClient} Client
  */
 
 /**
@@ -630,7 +630,7 @@ export async function storeCrawl(
     ? String(Math.round(chosen))
     : `case when (select count(*) from feed_items where feed_id = ?) > ?
              then 60
-             else min(max(coalesce(fetch_interval_minutes, 60), 60) * 2, 1440) end`;
+             else least(greatest(coalesce(fetch_interval_minutes, 60), 60) * 2, 1440) end`;
   // The ladder binds two parameters; a literal interval binds none, so the
   // argument list has to follow it. Getting this wrong shifts every later
   // parameter by two and is exactly the kind of silent corruption that a
@@ -645,11 +645,12 @@ export async function storeCrawl(
             last_fetched_at = ?, last_success_at = ?, last_error = null,
             error_count = 0,
             fetch_interval_minutes = ${LADDER},
-            -- strftime's %f is 'SS.SSS', so this produces exactly the
+            -- to_char's MS is three digits, so this produces exactly the
             -- 'YYYY-MM-DDTHH:MM:SS.sssZ' that nowIso() writes elsewhere. The
             -- due query compares next_fetch_at as a string, so a format that
             -- merely sorts differently would quietly break scheduling.
-            next_fetch_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+' || (${LADDER}) || ' minutes'),
+            next_fetch_at = to_char((now() at time zone 'utc') + make_interval(mins => (${LADDER})::int),
+                                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
             item_count = (select count(*) from feed_items where feed_id = ?),
             -- Kept when a crawl cannot work one out, rather than overwritten
             -- with nothing: a date that was true last week is a better answer
@@ -1559,15 +1560,14 @@ export async function jobBacklogs(db) {
     // A short range read off feeds_created_idx: an hour of submissions is a
     // handful of rows however large the directory gets.
     //
-    // `indexed by` because the planner does not agree, and gets it badly wrong.
-    // **This database has never been ANALYZEd** -- there is no `sqlite_stat1` --
-    // so SQLite falls back to its built-in guess that an equality test beats a
-    // range test, picks `feeds_status_success_idx (status=?)`, and visits every
-    // `pending` row to check its `created_at`. `pending` is 330k of 444k rows.
-    // Measured: 17,722ms this way, 654ms forced onto the range, and the same
-    // 5,954 rows come back either way.
+    // Under SQLite this carried `indexed by feeds_created_idx`: that database
+    // was never ANALYZEd, so its planner guessed that the equality on `status`
+    // beat the range on `created_at` and walked 330k `pending` rows (17.7s
+    // against 654ms forced). Postgres has no index hints and does not need one
+    // here: autovacuum keeps statistics, and the planner picks the range scan
+    // on its own. test/job-backlog-plans.test.js pins that choice.
     db.execute({
-      sql: `select count(*) as n from feeds indexed by feeds_created_idx
+      sql: `select count(*) as n from feeds
              where created_at >= ? and status = 'pending'`,
       args: [hourAgo],
     }),
@@ -1587,15 +1587,14 @@ export async function jobBacklogs(db) {
     // stamp, so this touches a few thousand index entries, while asking for the
     // complement would visit every row. The backlog is arithmetic afterwards.
     //
-    // `indexed by` for the same reason as `submitted` above, and it costs even
-    // more here: unforced the planner seeks `status='active'` (109k rows) on
-    // `feeds_status_success_idx` and reads `authors_checked_at` off each one,
-    // when the partial index *is* keyed by exactly the column being counted and
-    // filtered. Measured: 16,067ms unforced, 119ms forced -- 135x, same answer.
+    // This too was `indexed by feeds_authors_due_idx` under SQLite (16,067ms
+    // unforced against 119ms forced, 135x, same answer). The partial index's
+    // predicate `status = 'active'` is repeated in the where clause so the
+    // Postgres planner is allowed to use it; with statistics it does.
     db.execute({
       sql: `select count(*) as n,
                    sum(case when authors_checked_at >= ? then 1 else 0 end) as hour
-            from feeds indexed by feeds_authors_due_idx
+            from feeds
            where status = 'active' and authors_checked_at is not null`,
       args: [hourAgo],
     }),
@@ -1670,17 +1669,17 @@ export async function logActivity(db, hours = 1) {
                  -- it had checked 700 sites and reported 0.
                  --
                  -- Guarded on the leading brace because detail is either a JSON
-                 -- object or a plain error message, and json_extract raises on the
-                 -- second rather than returning null.
+                 -- object or a plain error message, and the jsonb cast raises on
+                 -- the second rather than returning null.
                  coalesce(sum(case when detail like '{%' then coalesce(
-                   json_extract(detail, '$.checked'),
-                   json_extract(detail, '$.searched'),
-                   json_extract(detail, '$.keyed'),
-                   json_extract(detail, '$.looked'),
-                   json_extract(detail, '$.crawled'),
-                   json_extract(detail, '$.topics'),
-                   json_extract(detail, '$.sent'),
-                   json_extract(detail, '$.rows')
+                   (detail::jsonb ->> 'checked')::numeric,
+                   (detail::jsonb ->> 'searched')::numeric,
+                   (detail::jsonb ->> 'keyed')::numeric,
+                   (detail::jsonb ->> 'looked')::numeric,
+                   (detail::jsonb ->> 'crawled')::numeric,
+                   (detail::jsonb ->> 'topics')::numeric,
+                   (detail::jsonb ->> 'sent')::numeric,
+                   (detail::jsonb ->> 'rows')::numeric
                  ) end), 0)                                            as counted,
                  max(at)                                               as last_at,
                  -- The typical cost of one pass, not the total: a job that has
@@ -3154,10 +3153,10 @@ export async function feedsNeedingCard(db, limit = 10, retryAfterMs = 30 * 86_40
   const { rows } = await db.execute({
     sql: `select id, slug, site_url, image_url, card_state
           from feeds
-          where card_state is not 'ok'
+          where card_state is distinct from 'ok'
             and status <> 'dead'
             and (card_checked_at is null or card_checked_at < ?)
-          order by card_checked_at asc
+          order by card_checked_at asc nulls first
           limit ?`,
     args: [nowIso(-retryAfterMs), limit],
   });
@@ -3268,17 +3267,22 @@ export async function randomSlug(db) {
 }
 
 /**
- * Escape a user query for FTS5.
+ * Turn a user query into text for `websearch_to_tsquery`.
  *
- * FTS5 treats bare punctuation as syntax, so an unescaped query like `C++` or
- * `foo AND` is a syntax error rather than a search. Wrapping each term in
- * double quotes makes every token a literal phrase; embedded quotes are doubled
- * per FTS5's own escaping rule.
+ * Each term is wrapped in double quotes, which makes it a literal phrase: a
+ * bare `-` would otherwise negate the term and a bare `or` would union the
+ * terms around it. Embedded quotes are doubled, as they were for FTS5, and the
+ * parser reads a doubled quote as an empty phrase and moves on. Unlike FTS5,
+ * websearch_to_tsquery never raises on odd input (`C++`, `"`, `NEAR(a b)`); it
+ * drops what it cannot use, so an unusable query matches nothing rather than
+ * failing.
  *
  * Quoting is also why a caller cannot smuggle its own operators in: `foo OR bar`
- * searches for the literal word "OR". Somebody who wants either term therefore
- * has no way to say so, which is what `mode` is for. It stays 'all' by default,
- * because a human typing several words into the box means all of them.
+ * searches for the literal word "or" (a stopword, so for "foo"). Somebody who
+ * wants either term therefore has no way to say so, which is what `mode` is
+ * for: 'any' joins the quoted terms with the parser's own OR (it reads the word
+ * in either case). It stays 'all' by default, because a human typing several
+ * words into the box means all of them.
  *
  * @param {string} query
  * @param {'all'|'any'} [mode] 'all' requires every term, 'any' requires one
@@ -3303,12 +3307,9 @@ export function ftsQuery(query, mode = 'all') {
  * forty best matches for anything are forty blog posts and the podcasts that
  * matched are never seen. See searchKindCounts.
  *
- * Ordered by `bm25(...)` rather than by `rank`, which is the same ordering —
- * `rank` *is* bm25 with unit weights — reached by a very different query plan.
- * With a category filter in the WHERE clause, `order by rank` makes SQLite walk
- * the match set the expensive way round: measured against production, a sparse
- * category on a common word took 2-4s that way and 0.1-1.2s this way. Unfiltered
- * the two are level, so both use the same shape rather than branching on it.
+ * Ordered by `ts_rank_cd` over the same query, best match first. The match
+ * itself is the GIN-indexed `search` column (a generated tsvector over title
+ * and summary), so the filter narrows the index hits rather than a ranked set.
  *
  * @param {Client} db
  * @param {string} query
@@ -3327,13 +3328,12 @@ export async function searchItems(db, query, limit = 40, mode = 'all', kinds = n
     sql: `select i.guid, i.title, i.url, i.summary, i.published_at, i.image_url,
                  f.slug as feed_slug, f.title as feed_title, f.category,
                  f.image_url as feed_image, f.card_url as feed_card
-          from feed_items_fts
-          join feed_items i on i.rowid = feed_items_fts.rowid
+          from feed_items i
           join feeds f on f.id = i.feed_id
-          where feed_items_fts match ?${filter.sql}
-          order by bm25(feed_items_fts)
+          where i.search @@ websearch_to_tsquery('english', ?)${filter.sql}
+          order by ts_rank_cd(i.search, websearch_to_tsquery('english', ?)) desc
           limit ?`,
-    args: [match, ...filter.args, limit],
+    args: [match, ...filter.args, match, limit],
   });
   return rows;
 }
@@ -3356,12 +3356,11 @@ export async function searchFeeds(db, query, limit = 20, mode = 'all', kinds = n
 
   const { rows } = await db.execute({
     sql: `select f.slug, f.title, f.description, f.image_url, f.card_url, f.category
-          from feeds_fts
-          join feeds f on f.rowid = feeds_fts.rowid
-          where feeds_fts match ?${filter.sql}
-          order by bm25(feeds_fts)
+          from feeds f
+          where f.search @@ websearch_to_tsquery('english', ?)${filter.sql}
+          order by ts_rank_cd(f.search, websearch_to_tsquery('english', ?)) desc
           limit ?`,
-    args: [match, ...filter.args, limit],
+    args: [match, ...filter.args, match, limit],
   });
   return rows;
 }
@@ -3393,18 +3392,16 @@ export async function searchKindCounts(db, query, mode = 'all') {
   const [posts, feeds] = await Promise.all([
     db.execute({
       sql: `select f.category, count(*) as n
-            from feed_items_fts
-            join feed_items i on i.rowid = feed_items_fts.rowid
+            from feed_items i
             join feeds f on f.id = i.feed_id
-            where feed_items_fts match ?
+            where i.search @@ websearch_to_tsquery('english', ?)
             group by f.category`,
       args: [match],
     }),
     db.execute({
       sql: `select f.category, count(*) as n
-            from feeds_fts
-            join feeds f on f.rowid = feeds_fts.rowid
-            where feeds_fts match ?
+            from feeds f
+            where f.search @@ websearch_to_tsquery('english', ?)
             group by f.category`,
       args: [match],
     }),
@@ -3559,17 +3556,17 @@ export async function submissionEvents(db, id, opts = {}) {
   const sql = (direction) =>
     `select slug, title, status, last_error, item_count, last_fetched_at as at
      from feeds
-     where submission_id = ?1 and last_fetched_at is not null
-       and (?2 is null or last_fetched_at > ?2)
+     where submission_id = ? and last_fetched_at is not null
+       and (?::text is null or last_fetched_at > ?)
      order by last_fetched_at ${direction}
-     limit ?3`;
+     limit ?`;
 
   if (opts.tail) {
-    const { rows } = await db.execute({ sql: sql('desc'), args: [id, since, limit] });
+    const { rows } = await db.execute({ sql: sql('desc'), args: [id, since, since, limit] });
     return rows.reverse();
   }
 
-  const { rows } = await db.execute({ sql: sql('asc'), args: [id, since, limit] });
+  const { rows } = await db.execute({ sql: sql('asc'), args: [id, since, since, limit] });
   return rows;
 }
 

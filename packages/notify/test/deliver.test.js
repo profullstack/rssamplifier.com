@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, beforeEach, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, newId, accounts, alerts, authors, q } from '@rssamplifier/db';
+import { newId, accounts, alerts, authors, q } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { deliverAlerts } from '../src/deliver.js';
 
@@ -18,7 +15,6 @@ import { deliverAlerts } from '../src/deliver.js';
  * what came out of the other end.
  */
 
-let dir;
 let db;
 let sent;
 
@@ -42,16 +38,15 @@ function recorder(outcomes = {}) {
 }
 
 beforeEach(async () => {
-  if (!dir) dir = await mkdtemp(join(tmpdir(), 'rssamp-alerts-'));
   // A fresh database per test: the watermark is process-wide state by design,
   // and tests that shared one would each depend on the order of the others.
-  db = connect({ url: `file:${join(dir, `${newId()}.db`)}` });
-  await migrate(db);
+  db?.close();
+  db = await connectTest();
   sent = { email: [], push: [], webhook: [] };
 });
 
 after(async () => {
-  if (dir) await rm(dir, { recursive: true, force: true });
+  db?.close();
 });
 
 /**

@@ -11,9 +11,14 @@ import { writePath } from '../src/client.js';
  * in-process queue while the Redis queue and its folding sat built and
  * dormant. Everything worked; it simply was not the thing everyone believed
  * was running, and nothing said otherwise.
+ *
+ * On Postgres the fallback is no queue at all: writes go straight to the pool
+ * (`direct`), and `WRITE_QUEUE` is off unless a deployment asks for one
+ * writer. The reason line still has to name why, for the same reason as
+ * before.
  */
 
-const remote = 'libsql://example.turso.io';
+const remote = 'postgres://app:secret@db.example:5432/rssamp';
 
 test('a broker and a remote database select the Redis queue', () => {
   const chosen = writePath({ url: remote, redis: 'redis://x:6379', enabled: true });
@@ -27,21 +32,21 @@ test('no REDIS_URL falls back, and says that is why', () => {
   // have made it obvious.
   const chosen = writePath({ url: remote, redis: undefined, enabled: true });
 
-  assert.equal(chosen.path, 'in-process');
+  assert.equal(chosen.path, 'direct');
   assert.match(chosen.why, /REDIS_URL/);
 });
 
 test('an empty REDIS_URL is treated as absent, not as a broker', () => {
   const chosen = writePath({ url: remote, redis: '', enabled: true });
 
-  assert.equal(chosen.path, 'in-process');
+  assert.equal(chosen.path, 'direct');
   assert.match(chosen.why, /REDIS_URL/);
 });
 
 test('WRITE_QUEUE off is reported as a choice, not as a missing broker', () => {
   const chosen = writePath({ url: remote, redis: 'redis://x:6379', enabled: false });
 
-  assert.equal(chosen.path, 'in-process');
+  assert.equal(chosen.path, 'direct');
   assert.match(chosen.why, /WRITE_QUEUE/);
 });
 
@@ -51,7 +56,7 @@ test('the write worker itself never queues, however it is configured', () => {
   // ever reach the database.
   const chosen = writePath({ url: remote, redis: 'redis://x:6379', enabled: true, queue: false });
 
-  assert.equal(chosen.path, 'in-process');
+  assert.equal(chosen.path, 'direct');
   assert.match(chosen.why, /drains/);
 });
 
@@ -60,12 +65,12 @@ test('a local file database never reaches for a broker', () => {
   // would make the suite depend on one.
   const chosen = writePath({ url: 'file:/tmp/x.db', redis: 'redis://x:6379', enabled: true });
 
-  assert.equal(chosen.path, 'in-process');
+  assert.equal(chosen.path, 'direct');
   assert.match(chosen.why, /file/);
 });
 
 test('every path explains itself', () => {
-  // The reason is the point. "in-process" alone does not distinguish a
+  // The reason is the point. "direct" alone does not distinguish a
   // deliberate local run from a production service missing its broker.
   for (const settings of [
     { url: remote, redis: 'redis://x:6379', enabled: true },

@@ -1,22 +1,15 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { connectTest } from '../src/testdb.js';
 import * as q from '../src/queries.js';
 import * as e from '../src/extracts.js';
 
-let dir;
 let db;
 let itemId;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-extracts-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 
   const feed = await q.insertFeed(db, {
     slug: 'latest-from-musicradar',
@@ -40,7 +33,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a post nobody has read yet has nothing stored, and is due a fetch', async () => {

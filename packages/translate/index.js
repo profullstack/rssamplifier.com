@@ -98,7 +98,7 @@ function positive(raw, fallback) {
  * the one case worth telling the reader about, because it is the only one that
  * will fix itself tomorrow.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{
  *   itemId: string,
  *   title: string,

@@ -69,7 +69,7 @@ export function ipHashOf(req) {
  * submit endpoint, and failing closed here would mean uploads stop working
  * entirely the moment the salt is missing.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} id
  * @param {string|null} ipHash
  * @returns {Promise<{ ok: true } | { ok: false, error: string, status: number }>}

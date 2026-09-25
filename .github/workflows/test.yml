@@ -27,6 +27,25 @@ jobs:
     # short enough that a hung test gets reported rather than left burning.
     timeout-minutes: 10
 
+    # The suite runs against a real Postgres: `connectTest()` in
+    # packages/db/src/testdb.js creates a throwaway database per test file on
+    # TEST_DATABASE_URL and drops it afterwards, the same image the local
+    # instructions in packages/db/migrations-pg/README.md use. The health check
+    # matters: the job's steps start when the container is up, not when Postgres
+    # inside it is accepting connections.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -46,10 +65,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Every workspace. The suite is hermetic — it builds SQLite databases in
-      # tmpdir and stubs the network — so it needs no Turso credentials and no
-      # secrets, which is what makes it safe to run on a pull request.
+      # Every workspace. The suite is hermetic — each test file gets its own
+      # database on the service container above and stubs the network — so it
+      # needs no production credentials and no secrets, which is what makes it
+      # safe to run on a pull request.
       - run: pnpm -r test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
       # The web build, because a broken page is not something the tests catch:
       # they cover packages and route handlers, and a JSX or import error in a

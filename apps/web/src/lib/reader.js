@@ -72,7 +72,7 @@ export async function readerView(post) {
  * Split out of `readerView` so the gate has a unit to wrap. The body is
  * unchanged and every early return keeps the meaning it had.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {{ itemId: string, url: string }} post
  * @returns {Promise<{
  *   frameable: boolean,
@@ -190,7 +190,7 @@ function isStream(contentType) {
 /**
  * Reading the cache must never be the reason a page fails.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} itemId
  * @returns {Promise<Extract|null>}
  */
@@ -206,7 +206,7 @@ async function read(client, itemId) {
  * Nor must writing it. A row we could not store costs the next reader a fetch;
  * an exception here would cost this one the whole page.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {Parameters<typeof extracts.save>[1]} result
  * @returns {Promise<void>}
  */

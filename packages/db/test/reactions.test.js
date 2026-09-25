@@ -1,25 +1,18 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { connectTest } from '../src/testdb.js';
 import * as a from '../src/accounts.js';
 import * as q from '../src/queries.js';
 import * as r from '../src/reactions.js';
 
-let dir;
 let db;
 let itemId;
 let alice;
 let bob;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-reactions-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 
   const feed = await q.insertFeed(db, {
     slug: 'reactions-blog',
@@ -40,7 +33,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a like and a vote live on one row without overwriting each other', async () => {

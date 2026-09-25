@@ -73,7 +73,7 @@ function poolSize() {
  * The decision is the part worth testing; the client it returns is not.
  *
  * @param {{ url: string, redis?: string, enabled: boolean, queue?: boolean }} settings
- * @returns {{ path: 'redis'|'in-process', why: string }}
+ * @returns {{ path: 'redis'|'direct', why: string }}
  */
 export function writePath({ url, redis, enabled, queue }) {
   if (queue === false) return { path: 'direct', why: 'this caller drains the queue' };

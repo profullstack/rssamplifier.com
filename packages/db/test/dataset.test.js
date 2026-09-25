@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect, newId, nowIso } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { newId, nowIso } from '../src/client.js';
+import { connectTest } from '../src/testdb.js';
 import * as accounts from '../src/accounts.js';
 import * as dataset from '../src/dataset.js';
 
@@ -20,7 +17,6 @@ import * as dataset from '../src/dataset.js';
  * question.
  */
 
-let dir;
 let db;
 let buyer;
 
@@ -29,9 +25,7 @@ const EARLY = '2026-08-29T04:30:00.000Z';
 const LATE = '2026-08-29T09:15:00.000Z';
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-dataset-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
   buyer = await accounts.findOrCreateUser(db, 'buyer@example.com');
 
   await seedFeed('open', 0, EARLY);
@@ -40,7 +34,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 /**

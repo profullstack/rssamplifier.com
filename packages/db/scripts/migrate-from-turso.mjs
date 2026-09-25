@@ -53,7 +53,23 @@ const ONLY = opt('--tables', '')?.split(',').filter(Boolean) ?? [];
 const src = createClient({
   url: process.env.TURSO_DATABASE_URL,
   authToken: process.env.TURSO_AUTH_TOKEN,
+  // A request that hangs would hang a worker for good; two minutes is far
+  // above any batch read that is actually progressing.
+  fetch: (input, init = {}) => fetch(input, { ...init, signal: AbortSignal.any([init.signal, AbortSignal.timeout(120_000)].filter(Boolean)) }),
 });
+
+/** A Turso read with retries: the platform drops the odd request under load. */
+async function read(statement, attempts = 5) {
+  for (let i = 1; ; i++) {
+    try {
+      return await src.execute(statement);
+    } catch (err) {
+      if (i >= attempts) throw err;
+      log(`read failed (${String(err?.message ?? err).slice(0, 80)}); retry ${i}/${attempts - 1}`);
+      await new Promise((r) => setTimeout(r, 2_000 * i));
+    }
+  }
+}
 // Same TLS handling as src/pg.js: `sslmode=` in the URL would make pg verify
 // the box's self-signed certificate, so it is read and removed.
 const dstUrl = new URL(process.env.DATABASE_URL);
@@ -152,9 +168,13 @@ async function loadTable(table) {
     // concurrent reads happily: the rowid range is split into WORKERS slices,
     // each with its own Postgres connection, and copied in parallel. Rows still
     // land in rowid order within a slice, which is all the cursors need.
-    const bounds = (await src.execute({ sql: `select min(rowid) as lo, max(rowid) as hi from "${table}" where rowid > ?`, args: [after] })).rows[0];
-    const lo = bounds?.lo === null || bounds?.lo === undefined ? null : Number(bounds.lo);
-    const hi = lo === null ? null : Number(bounds.hi);
+    // Two lookups, not `min(rowid), max(rowid)` in one: SQLite answers a lone
+    // min or max from the rowid index but scans the whole table for the pair,
+    // which on 15M rows over the network is a stall.
+    const first = (await read({ sql: `select rowid as r from "${table}" where rowid > ? order by rowid limit 1`, args: [after] })).rows[0];
+    const last = (await read({ sql: `select rowid as r from "${table}" order by rowid desc limit 1` })).rows[0];
+    const lo = first ? Number(first.r) : null;
+    const hi = lo === null ? null : Number(last.r);
     const started = Date.now();
     let total = 0;
     if (lo !== null) {
@@ -168,7 +188,7 @@ async function loadTable(table) {
           await conn.query("set session_replication_role = 'replica'");
           let cursor = from - 1;
           for (;;) {
-            const { rows } = await src.execute({ sql: select, args: [cursor, to, BATCH] });
+            const { rows } = await read({ sql: select, args: [cursor, to, BATCH] });
             if (!rows.length) break;
             const mapped = rows.map((r) => {
               const o = { ...r };

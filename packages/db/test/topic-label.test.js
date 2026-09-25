@@ -8,12 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { connectTest } from '../src/testdb.js';
 import * as q from '../src/queries.js';
 
 /** Add `n` feeds that all spell the same slug the same way. */
@@ -32,9 +28,7 @@ async function feedsSpelling(db, slug, keyword, n, tag) {
 }
 
 test('a punctuation-prefixed spelling from one feed cannot rename a topic', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'rssamp-topiclabel-'));
-  const db = connect({ url: `file:${join(dir, 'label.db')}` });
-  await migrate(db);
+  const db = await connectTest();
 
   // The real prod shape, scaled down: many feeds say "news", exactly one says
   // "! news", and both slug to `news`.
@@ -47,13 +41,11 @@ test('a punctuation-prefixed spelling from one feed cannot rename a topic', asyn
   assert.equal(topic.keyword, 'news', 'the majority spelling wins the label');
   assert.equal(topic.feedCount, 6, 'every spelling still counts toward the topic');
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('trailing punctuation loses to the bare word on a tie-break', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'rssamp-topictie-'));
-  const db = connect({ url: `file:${join(dir, 'tie.db')}` });
-  await migrate(db);
+  const db = await connectTest();
 
   // Equal feed counts, so the count cannot decide: shortest must.
   await feedsSpelling(db, 'ai', 'ai:', 2, 'colon');
@@ -62,5 +54,5 @@ test('trailing punctuation loses to the bare word on a tie-break', async () => {
   await q.refreshTopics(db);
   assert.equal((await q.topicBySlug(db, 'ai')).keyword, 'ai');
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });

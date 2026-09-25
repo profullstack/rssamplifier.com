@@ -90,7 +90,7 @@ export async function POST(req) {
 /**
  * Resolve a blog's slug to its id, then flag the follow.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} userId
  * @param {string} slug
  * @param {boolean} on
@@ -108,7 +108,7 @@ async function setForFeed(client, userId, slug, on) {
  * The same indirection as the blog above and for the same reason: the table is
  * keyed on an id the reader never sees, and the slug is what a page can send.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} userId
  * @param {string} slug
  * @param {boolean} on

@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect, newId, nowIso } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { newId, nowIso } from '../src/client.js';
+import { connectTest } from '../src/testdb.js';
 import * as q from '../src/queries.js';
 import {
   FeedRemovedError,
@@ -16,19 +13,15 @@ import {
   removeFeed,
 } from '../src/removals.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-removals-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
-  // Cascades are the whole mechanism; a file database has them off by default.
-  await db.execute('pragma foreign_keys = on');
+  // Cascades are the whole mechanism; Postgres enforces them unconditionally.
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 async function addItem(feedId, url) {

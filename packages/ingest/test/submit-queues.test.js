@@ -1,14 +1,10 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q } from '@rssamplifier/db';
+import { q } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { submitCatalogue, submitOne } from '../src/submit.js';
 
-let dir;
 let db;
 
 /**
@@ -21,14 +17,12 @@ let db;
 const realFetch = globalThis.fetch;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-submit-queues-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
   globalThis.fetch = realFetch;
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a pasted list is queued without a single feed being fetched', async () => {

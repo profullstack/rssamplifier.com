@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect, migrate, q, webrings } from '../index.js';
+import { q, webrings } from '../index.js';
+import { connectTest } from '../src/testdb.js';
 
 /**
  * Every topic is a ring, and a ring somebody makes on the site.
@@ -14,7 +12,6 @@ import { connect, migrate, q, webrings } from '../index.js';
  * order given and never re-numbered.
  */
 
-let dir;
 let db;
 /** @type {Record<string, { id: string, slug: string }>} */
 const feeds = {};
@@ -44,9 +41,7 @@ async function feed(slug, opts = {}) {
 }
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-ring-owners-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
   await feed('carol', { count: 3 });
   await feed('alice', { count: 9 });
   await feed('bob', { count: 6 });
@@ -57,7 +52,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a topic is a ring without a row: its feeds, in its order, all pending', async () => {

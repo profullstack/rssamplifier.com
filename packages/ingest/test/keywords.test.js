@@ -1,24 +1,18 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, discovery, q } from '@rssamplifier/db';
+import { discovery, q } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { discoverFromKeywords, drainDiscoveryKeywords } from '../src/keywords.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-keywords-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 /**
@@ -285,14 +279,9 @@ test('a discovered feed keeps the category the parser gave it', async () => {
   // therefore a blog — a PeerTube instance whose every item carries a
   // video/mp4 enclosure included. Curated sources masked it by overwriting the
   // category straight afterwards.
-  const { mkdtemp, rm } = await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
-  const { connect, migrate, q, discovery } = await import('@rssamplifier/db');
-
-  const dir = await mkdtemp(join(tmpdir(), 'rssamp-kind-'));
-  const db = connect({ url: `file:${join(dir, 'k.db')}` });
-  await migrate(db);
+  // Its own database: the seed below must not see the feeds the other tests
+  // put in the shared one.
+  const db = await connectTest();
 
   const runId = await discovery.insertRun(db, { provider: 'peertube', keywords: [] });
   await discovery.insertCandidates(db, runId, [
@@ -365,5 +354,5 @@ test('a discovered feed keeps the category the parser gave it', async () => {
   const stored = await q.feedBySlug(db, result.slug);
   assert.equal(String(stored.category), 'video', 'stored as what it is, not as a blog');
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });

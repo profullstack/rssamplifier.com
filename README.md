@@ -21,7 +21,7 @@ apps/poller/     Crawler daemon — re-fetches feeds on a backoff schedule
 apps/cli/        @profullstack/rssamplifier — the directory from a terminal
 packages/feed/   Feed discovery, RSS/Atom/JSON Feed parsing, OPML, SSRF guards
 packages/ingest/ Submit + crawl orchestration
-packages/db/     Turso/libSQL client, migrations and every query
+packages/db/     PostgreSQL client, schema and every query
 packages/notify/ Alerts — web push, email digests and webhooks
 packages/social/ X and Reddit: canonical identity, and X's provider adapters
 ```
@@ -33,7 +33,7 @@ simple and `node --test` runs the suites directly.
 
 ```bash
 pnpm install
-cp .env.example .env     # TURSO_DATABASE_URL=file:./local.db works with no account
+cp .env.example .env     # DATABASE_URL=postgres://... (see packages/db/migrations-pg/README.md for a local docker one)
 pnpm dev                 # web on :3000
 pnpm poll                # crawler, in a second terminal
 pnpm test                # 42 tests
@@ -51,7 +51,7 @@ pnpm --filter @rssamplifier/db migrate
 | --- | --- |
 | `/` | Directory index, newest first |
 | `/<slug>` | One blog: metadata plus its latest posts |
-| `/search?q=` | Full-text search (SQLite FTS5) |
+| `/search?q=` | Full-text search (Postgres tsvector) |
 | `/submit` | Submission form — URLs or an OPML upload |
 | `/discover` | Keyword search — name a subject, we go and find blogs about it |
 | `/discoveries/{id}` | Progress of one keyword run: what was added, and why the rest was not |

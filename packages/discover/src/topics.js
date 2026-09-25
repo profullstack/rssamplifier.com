@@ -47,7 +47,7 @@ export const MIN_FEEDS = 3;
  * configured and no unsearched topics are both normal states for a daemon that
  * runs this every day, and neither is worth an error in a log.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{
  *   limit?: number,
  *   minFeeds?: number,

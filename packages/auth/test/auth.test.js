@@ -1,27 +1,21 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, accounts, nowIso } from '@rssamplifier/db';
+import { accounts, nowIso } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { newToken, hashToken, safeEqual } from '../src/tokens.js';
 import { startSession, resolveSession, endSession, sessionCookieOptions } from '../src/session.js';
 import { looksLikeEmail, consumeSignInLink, requestSignInLink } from '../src/magic.js';
 import { relyingPartyId, expectedOrigins } from '../src/passkey.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-auth-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('tokens are unique and never stored in the clear', () => {

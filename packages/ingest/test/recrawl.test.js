@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, beforeEach, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, newId, q } from '@rssamplifier/db';
+import { newId, q } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { crawlFeed, nextIntervalMinutes, topicsFrom } from '../src/crawl.js';
 
@@ -24,7 +21,6 @@ import { crawlFeed, nextIntervalMinutes, topicsFrom } from '../src/crawl.js';
  * was designed to ask for, and the backlog was read as "the crawler is slow".
  */
 
-let dir;
 let db;
 
 const DAY = 86_400_000;
@@ -71,13 +67,12 @@ const UNDATED = {
 };
 
 beforeEach(async () => {
-  if (!dir) dir = await mkdtemp(join(tmpdir(), 'recrawl-'));
-  db = connect({ url: `file:${join(dir, `${newId()}.db`)}` });
-  await migrate(db);
+  db?.close();
+  db = await connectTest();
 });
 
 after(async () => {
-  if (dir) await rm(dir, { recursive: true, force: true });
+  db?.close();
 });
 
 /** @returns {Promise<object>} the feed row, as the crawl loop reads it */

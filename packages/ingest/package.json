@@ -1,7 +1,7 @@
 {
   "name": "@rssamplifier/ingest",
   "version": "0.1.0",
-  "description": "Feed ingestion: submit, crawl and persist to Turso",
+  "description": "Feed ingestion: submit, crawl and persist to Postgres",
   "type": "module",
   "main": "index.js",
   "exports": {

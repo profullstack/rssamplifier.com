@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, before, after, beforeEach } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q, translations, accounts } from '@rssamplifier/db';
+import { q, translations, accounts } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { DEFAULT_DAILY_PER_USER, DEFAULT_DAILY_TOTAL, ensureTranslation, limits } from '../index.js';
 
@@ -17,16 +14,13 @@ import { DEFAULT_DAILY_PER_USER, DEFAULT_DAILY_TOTAL, ensureTranslation, limits 
  * fail rather than pass quietly.
  */
 
-let dir;
 let db;
 let itemId;
 let userId;
 let otherId;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-ensure-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 
   const feed = await q.insertFeed(db, {
     slug: 'ensure-blog',
@@ -53,7 +47,7 @@ beforeEach(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 /**

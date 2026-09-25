@@ -77,7 +77,7 @@ export async function sendDiscoveryEmail(params) {
  * Same one-attempt rule as submissions: marked notified whether or not the
  * send worked, so a bouncing address is not retried every tick forever.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {number} [limit]
  * @returns {Promise<{ sent: number, failed: number }>}
  */
@@ -123,7 +123,7 @@ export async function notifyFinishedDiscoveries(db, limit = 5) {
  * address bounces gets the same message every minute forever; one attempt and a
  * logged failure is the friendlier trade.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {number} [limit]
  * @returns {Promise<{ sent: number, failed: number }>}
  */

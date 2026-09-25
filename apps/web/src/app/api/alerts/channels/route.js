@@ -58,7 +58,7 @@ export async function POST(req) {
 /**
  * Switch on email alerts to the address this account signs in with.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} userId
  * @param {string} email
  * @returns {Promise<Response>}
@@ -74,7 +74,7 @@ async function addEmail(client, userId, email) {
 /**
  * Point a webhook at this account's alerts.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} userId
  * @param {FormData} form
  * @returns {Promise<Response>}
@@ -106,7 +106,7 @@ async function addWebhook(client, userId, form) {
  * a channel that already exists is an update and must not count against the
  * ceiling — a browser re-subscribing on its eleventh attempt is still one phone.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} userId
  * @returns {Promise<boolean>}
  */

@@ -37,7 +37,7 @@ const KAGI = 'https://raw.githubusercontent.com/kagisearch/smallweb/main';
  *   everyHours: number,
  *   limit: number,
  *   run: (opts?: object) => Promise<string[]>,
- *   context?: (db: import('@libsql/client').Client) => Promise<object>,
+ *   context?: (db: import('@rssamplifier/db/src/pg.js').PgClient) => Promise<object>,
  * }} Source
  */
 

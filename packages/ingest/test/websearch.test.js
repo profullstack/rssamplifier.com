@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q, authors as a } from '@rssamplifier/db';
+import { q, authors as a } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { storeCredits } from '../src/enrich.js';
 import { linksFromSearch, searchDue, searchesFor, worthSearching } from '../src/websearch.js';
@@ -13,17 +10,14 @@ import { linksFromSearch, searchDue, searchesFor, worthSearching } from '../src/
 // refuses to do: search for somebody it is not sure is a person, search for
 // somebody already reachable, spend past the budget, or believe a result.
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-search-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('the gate refuses everyone a credit would be wasted on', () => {
@@ -129,9 +123,7 @@ test('the budget is read from the ledger, so a restart cannot reset it', async (
 });
 
 test('spending stops at the budget even when more people qualify', async () => {
-  const fresh = await mkdtemp(join(tmpdir(), 'rssamp-budget-'));
-  const db2 = connect({ url: `file:${join(fresh, 'b.db')}` });
-  await migrate(db2);
+  const db2 = await connectTest();
 
   for (const [slug, name] of [
     ['aa-blog', 'Anna Aardvark'],
@@ -173,13 +165,11 @@ test('spending stops at the budget even when more people qualify', async () => {
   // match the invoice.
   assert.equal(await a.searchSpendSince(db2, a.billingPeriodStart()), 3);
 
-  await rm(fresh, { recursive: true, force: true });
+  db2.close();
 });
 
 test('an exhausted account stops the batch instead of being asked again', async () => {
-  const fresh = await mkdtemp(join(tmpdir(), 'rssamp-402-'));
-  const db2 = connect({ url: `file:${join(fresh, 'c.db')}` });
-  await migrate(db2);
+  const db2 = await connectTest();
 
   const feed = await q.insertFeed(db2, {
     slug: 'dd-blog',
@@ -210,7 +200,7 @@ test('an exhausted account stops the batch instead of being asked again', async 
 
   assert.equal(called, 1, '402 will not change before the reset, so asking twice is waste');
 
-  await rm(fresh, { recursive: true, force: true });
+  db2.close();
 });
 
 test('nothing is bought without a key, a budget and the switch', async () => {

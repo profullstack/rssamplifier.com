@@ -10,7 +10,7 @@ import { nowIso } from './client.js';
  * re-crawl that finds a new link still reaches the file, and a correction the
  * person made still wins over it.
  *
- * @typedef {import('@libsql/client').Client} Client
+ * @typedef {import('./pg.js').PgClient} Client
  * @typedef {{
  *   author_id: string,
  *   overrides: Record<string, any>,
@@ -190,7 +190,7 @@ export async function keywordsForFeeds(db, feedIds, perFeed = 8) {
 export async function listOpenProfiles(db, opts = {}) {
   const limit = Math.min(Math.max(Number(opts.limit ?? 100) || 100, 1), 500);
   const minConfidence = Number(opts.minConfidence ?? 0.6);
-  const stamp = 'max(a.updated_at, coalesce(p.updated_at, a.updated_at))';
+  const stamp = 'greatest(a.updated_at, coalesce(p.updated_at, a.updated_at))';
   const where = ['a.confidence >= ?', 'coalesce(p.public, 1) = 1'];
   const args = [minConfidence];
   if (opts.since) {

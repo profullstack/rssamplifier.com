@@ -172,14 +172,10 @@ test('feeds sharing a host are separate candidates', async () => {
   // which is right when a candidate is a website and wrong when it is a feed.
   // All 258 channels in the YouTube list live on youtube.com, so a host key
   // queued one of them and reported success.
-  const { connect, migrate, discovery } = await import('@rssamplifier/db');
-  const { mkdtemp, rm } = await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
+  const { discovery } = await import('@rssamplifier/db');
+  const { connectTest } = await import('@rssamplifier/db/src/testdb.js');
 
-  const dir = await mkdtemp(join(tmpdir(), 'rssamp-disc-'));
-  const db = connect({ url: `file:${join(dir, 'd.db')}` });
-  await migrate(db);
+  const db = await connectTest();
 
   const { runSource } = await import('../src/run.js');
 
@@ -202,18 +198,14 @@ test('feeds sharing a host are separate candidates', async () => {
   assert.equal(Number(queued[0].curated), 1);
   assert.equal(String(queued[0].category), 'video');
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a source that cannot be reached records a failed run rather than throwing', async () => {
-  const { connect, migrate, discovery } = await import('@rssamplifier/db');
-  const { mkdtemp, rm } = await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
+  const { discovery } = await import('@rssamplifier/db');
+  const { connectTest } = await import('@rssamplifier/db/src/testdb.js');
 
-  const dir = await mkdtemp(join(tmpdir(), 'rssamp-disc2-'));
-  const db = connect({ url: `file:${join(dir, 'd.db')}` });
-  await migrate(db);
+  const db = await connectTest();
 
   const { runSource } = await import('../src/run.js');
   const fetchImpl = async () => ({ ok: false, status: 503, text: async () => '' });
@@ -225,7 +217,7 @@ test('a source that cannot be reached records a failed run rather than throwing'
   const runs = await discovery.recentRuns(db, 5);
   assert.equal(String(runs[0].status), 'failed', 'the outage is visible, not swallowed');
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 // ------------------------------------------------------------------- music

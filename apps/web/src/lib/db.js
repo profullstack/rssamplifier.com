@@ -1,15 +1,15 @@
 import { connect } from '@rssamplifier/db';
 
-/** @type {import('@libsql/client').Client | null} */
+/** @type {import('@rssamplifier/db/src/pg.js').PgClient | null} */
 let client = null;
 
 /**
- * Shared libSQL connection.
+ * Shared Postgres pool.
  *
- * Cached across requests: Turso is a network database, so opening a fresh
- * connection per request would add a round trip to every page load.
+ * Cached across requests: the database is over the network, so opening a fresh
+ * pool per request would add a connection handshake to every page load.
  *
- * @returns {import('@libsql/client').Client}
+ * @returns {import('@rssamplifier/db/src/pg.js').PgClient}
  */
 export function db() {
   if (!client) client = connect();

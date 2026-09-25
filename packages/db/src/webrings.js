@@ -14,7 +14,7 @@ import { topicLabelSql } from './topicLabel.js';
  * binds it as null without complaint, so a missing key passes every local
  * test and fails on the wire with no column named (PR #141).
  *
- * @typedef {import('@libsql/client').Client} Client
+ * @typedef {import('./pg.js').PgClient} Client
  * @typedef {{
  *   slug: string,
  *   title: string,
@@ -62,15 +62,15 @@ export const MEMBER_STATUS = ['active', 'inactive', 'pending'];
  *
  * `updated` is computed rather than stored: the verification pass writes a
  * row per member, and touching the ring on every one would double its
- * writes for a stamp that a `max()` over the members answers exactly.
+ * writes for a stamp that a `greatest()` over the members answers exactly.
  */
 const RING_SELECT = `
   select r.slug, r.title, r.description, r.kind, r.topic_slug, r.accepts, r.public,
          r.owner_id, r.created_at, r.updated_at,
          (select count(*) from ring_members m where m.ring_slug = r.slug) as member_count,
          (select count(*) from ring_members m where m.ring_slug = r.slug and m.status = 'active') as active_count,
-         max(r.updated_at,
-             coalesce((select max(max(m.joined_at, coalesce(m.checked_at, ''))) from ring_members m where m.ring_slug = r.slug), '')
+         greatest(r.updated_at,
+             coalesce((select max(greatest(m.joined_at, coalesce(m.checked_at, ''))) from ring_members m where m.ring_slug = r.slug), '')
          ) as updated
     from rings r`;
 
@@ -235,17 +235,19 @@ export async function topicRingCandidates(db, topicSlug, limit) {
   // Driven from the topic's own keyword rows, strongest first. The index
   // feed_keywords_slug_idx is (slug, count desc), so the range scan comes
   // out already in this order and the statement stops at the `limit`th
-  // feed that can link; `cross join` pins that join order, because left to
-  // itself the planner drove every variant of this from feeds by status,
-  // 580,000 rows probed and sorted, and took 80 seconds on the biggest
-  // topic against a 30-second request deadline (measured 2026-09-13).
+  // feed that can link. On SQLite this needed `indexed by` and a `cross
+  // join` to pin the plan, because left to itself the planner drove every
+  // variant of this from feeds by status, 580,000 rows probed and sorted,
+  // and took 80 seconds on the biggest topic against a 30-second request
+  // deadline (measured 2026-09-13). Postgres has neither hint; its planner
+  // picks the slug index from the statistics.
   //
   // So a ring's order is the topic's own: the sites most about it first.
   // Stable all the same: a position is written once and new members append.
   const { rows } = await db.execute({
     sql: `select f.id, f.slug, f.site_url, f.created_at
-            from feed_keywords k indexed by feed_keywords_slug_idx
-            cross join feeds f on f.id = k.feed_id
+            from feed_keywords k
+            join feeds f on f.id = k.feed_id
            where k.slug = ?
              and f.status = 'active'
              and f.site_url is not null and f.site_url <> ''
@@ -392,8 +394,8 @@ export async function topRingTopics(db, opts = {}) {
     if (RING_TOPIC_STOPLIST.has(slug)) continue;
     const counted = await db.execute({
       sql: `select count(*) as n
-              from feed_keywords k indexed by feed_keywords_slug_idx
-              cross join feeds f on f.id = k.feed_id
+              from feed_keywords k
+              join feeds f on f.id = k.feed_id
              where k.slug = ? and k.source = 'category'
                and f.status = 'active'
                and f.site_url is not null and f.site_url <> ''`,
@@ -456,7 +458,7 @@ export async function topicRingSize(db, topicSlug, opts = {}) {
                and f.site_url is not null and f.site_url <> ''
                and exists (select 1 from feed_keywords k where k.feed_id = f.id and k.slug = ?)
              ${cap ? 'limit ?' : ''}
-          )`,
+          ) as capped`,
     args: cap ? [topicSlug, cap] : [topicSlug],
   });
   return Number(rows[0]?.n ?? 0);
@@ -484,7 +486,7 @@ export async function membersDueForCheck(db, limit, opts = {}) {
             from ring_members m
             join feeds f on f.id = m.feed_id
             join rings r on r.slug = m.ring_slug
-           where (m.checked_at is null or ? is null or m.checked_at < ?)
+           where (m.checked_at is null or ?::text is null or m.checked_at < ?)
            order by m.checked_at is not null, m.checked_at asc, m.joined_at asc
            limit ?`,
     args: [before, before, Math.max(1, Number(limit) || 1)],
@@ -525,13 +527,13 @@ export async function recordCheck(db, ringSlug, feedId, result) {
                  checked_at = ?,
                  descriptor_url = coalesce(?, descriptor_url),
                  made_by = case
-                   when ? is not null and coalesce(made_by_source, 'descriptor') = 'descriptor' then ?
+                   when ?::text is not null and coalesce(made_by_source, 'descriptor') = 'descriptor' then ?
                    else made_by end,
                  disclosure = case
-                   when ? is not null and coalesce(made_by_source, 'descriptor') = 'descriptor' then ?
+                   when ?::text is not null and coalesce(made_by_source, 'descriptor') = 'descriptor' then ?
                    else disclosure end,
                  made_by_source = case
-                   when ? is not null and coalesce(made_by_source, 'descriptor') = 'descriptor' then 'descriptor'
+                   when ?::text is not null and coalesce(made_by_source, 'descriptor') = 'descriptor' then 'descriptor'
                    else made_by_source end
            where ring_slug = ? and feed_id = ?`,
     args: [
@@ -607,13 +609,13 @@ export async function setMemberMadeBy(db, ringSlug, feedId, word) {
 export async function topicRingPreview(db, topicSlug, opts = {}) {
   const limit = Math.max(1, Number(opts.limit ?? DEFAULT_RING_LIMIT) || DEFAULT_RING_LIMIT);
   // The same driving index and join order as topicRingCandidates; see there
-  // for why the planner must not be left to choose.
+  // for the history.
   const { rows } = await db.execute({
     sql: `select f.id as feed_id, f.slug as member_slug, f.site_url, f.created_at as joined_at,
                  f.title, f.feed_url, f.language, f.description, f.image_url, f.card_url,
                  f.item_count, f.category
-            from feed_keywords k indexed by feed_keywords_slug_idx
-            cross join feeds f on f.id = k.feed_id
+            from feed_keywords k
+            join feeds f on f.id = k.feed_id
            where k.slug = ?
              and f.status = 'active'
              and f.site_url is not null and f.site_url <> ''

@@ -11,7 +11,7 @@
  *   node scripts/import-catalogue.js <file.opml|file.txt> [--spread-minutes N] [--dry-run]
  *
  * A .txt file is read as one feed URL per line; anything else is parsed as OPML.
- * Credentials come from TURSO_DATABASE_URL / TURSO_AUTH_TOKEN, so run it with
+ * The database comes from DATABASE_URL (postgres://...), so run it with
  * `node --env-file=.env`.
  */
 

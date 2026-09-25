@@ -66,7 +66,7 @@ export function expectedOrigins(siteUrl) {
 /**
  * Store a challenge and hand back the handle that identifies it.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} challenge
  * @param {string|null} userId
  * @param {string} purpose
@@ -87,7 +87,7 @@ async function stashChallenge(db, challenge, userId, purpose) {
 /**
  * Begin registering a passkey for a signed-in account.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ id: string, email: string }} user
  * @param {string} siteUrl
  * @returns {Promise<{ options: object, challengeId: string }>}
@@ -125,7 +125,7 @@ export async function beginRegistration(db, user, siteUrl) {
 /**
  * Finish registering a passkey.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ userId: string, challengeId: string, response: object, name?: string|null, siteUrl: string }} params
  * @returns {Promise<{ ok: true, credentialId: string } | { ok: false, error: string }>}
  */
@@ -177,7 +177,7 @@ export async function finishRegistration(db, params) {
  * picks one instead of first telling us who they are. It also means this
  * endpoint reveals nothing about which accounts exist.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} siteUrl
  * @returns {Promise<{ options: object, challengeId: string }>}
  */
@@ -195,7 +195,7 @@ export async function beginLogin(db, siteUrl) {
 /**
  * Finish a passkey sign-in.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ challengeId: string, response: object, siteUrl: string }} params
  * @returns {Promise<{ ok: true, userId: string } | { ok: false, error: string }>}
  */
