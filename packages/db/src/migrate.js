@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 
 import { connect, nowIso } from './client.js';
 
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
+// The Postgres schema. `../migrations` is the SQLite history this was derived
+// from, kept for reference and for the data-migration tooling; it is not run.
+const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations-pg');
 
 /**
  * Split a .sql file into individual statements.

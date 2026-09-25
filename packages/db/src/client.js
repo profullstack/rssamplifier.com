@@ -1,69 +1,69 @@
 import { randomUUID } from 'node:crypto';
 
-import { createClient } from '@libsql/client';
-
+import { createPgClient } from './pg.js';
 import { createWriteFolder } from './writeFolder.js';
 import { queueWrites } from './writeQueue.js';
 
 /**
- * Open a Turso/libSQL connection.
+ * Open the database: PostgreSQL, through the libSQL-shaped client in ./pg.js.
  *
  * Env is read through a non-literal property access: Next inlines
  * `process.env.FOO` at build time, which would bake a build-time value into the
- * Docker image and ignore whatever Railway injects at runtime.
+ * Docker image and ignore whatever the host injects at runtime.
  *
- * A `file:` URL needs no auth token, which is what makes local development and
- * the test suite work without a Turso account.
+ * `DATABASE_URL` is a postgres:// URL. `sslmode=require` in it asks for TLS
+ * without verifying the certificate, which is what the self-signed cert on the
+ * box needs. The tests do not call this directly: `connectTest()` in
+ * ./testdb.js makes a throwaway database per test file and hands back one of
+ * these.
  *
- * `timeoutMs` overrides the per-request deadline for this connection alone.
- * The default is right for anything serving a page, and wrong for the one
- * background job that recomputes the category breakdown: that read takes ~59
- * seconds against half a million feeds, so on the default it can only ever
- * fail. See `warmStatsCache` in ./statsWarmer.js.
+ * `timeoutMs` is the per-statement deadline for this connection alone
+ * (Postgres `statement_timeout`). The default is right for anything serving a
+ * page, and wrong for the one background job that recomputes the category
+ * breakdown over half a million feeds; see `warmStatsCache` in ./statsWarmer.js.
  *
- * @param {{ url?: string, authToken?: string, redisUrl?: string, queue?: boolean, timeoutMs?: number }} [opts]
- * @returns {import('@libsql/client').Client}
+ * @param {{ url?: string, redisUrl?: string, queue?: boolean, timeoutMs?: number, max?: number }} [opts]
+ * @returns {import('./pg.js').PgClient}
  */
 export function connect(opts = {}) {
   const env = process.env;
-  const url = opts.url ?? env['TURSO_DATABASE_URL'];
-  const authToken = opts.authToken ?? env['TURSO_AUTH_TOKEN'];
+  const url = opts.url ?? env['DATABASE_URL'];
 
-  if (!url) throw new Error('TURSO_DATABASE_URL must be set');
+  if (!url) throw new Error('DATABASE_URL must be set (postgres://...)');
+  if (!/^postgres(ql)?:\/\//.test(url)) {
+    throw new Error(`DATABASE_URL must be a postgres:// URL, got ${url.split(':')[0]}:`);
+  }
 
-  const client = createClient(
-    url.startsWith('file:')
-      ? { url }
-      : { url, authToken, fetch: withTimeout(opts.timeoutMs ?? requestTimeoutMs()) },
-  );
+  const client = createPgClient({
+    url,
+    max: opts.max ?? poolSize(),
+    statementTimeoutMs: opts.timeoutMs ?? requestTimeoutMs(),
+  });
 
-  // Redis moves the write queue out of the process, which is the only way to
-  // get one writer per *cluster* rather than one per process — see writeQueue.js
-  // for why that gap mattered. Absent, the in-process queue still holds the line
-  // it always held.
-  //
-  // The fallback is not only for local development. It is what a Redis outage
-  // degrades to: a directory that writes one-at-a-time per process is the
-  // system as it shipped yesterday, where one that cannot write at all is down.
+  // The write queue existed for SQLite's single writer: Turso livelocked when
+  // several crawl workers opened transactions at once (see serializeWrites
+  // below and writeQueue.js). Postgres has row locks, so writes go straight to
+  // the pool. WRITE_QUEUE=1 puts the Redis path back for a deployment that
+  // wants one writer anyway; it is off unless asked for.
   const redis = opts.redisUrl ?? env['REDIS_URL'];
-  const enabled = ['1', 'true'].includes(String(env['WRITE_QUEUE'] ?? '1').toLowerCase());
+  const enabled = ['1', 'true'].includes(String(env['WRITE_QUEUE'] ?? '0').toLowerCase());
 
-  // `queue: false` is how the write worker itself connects. It is the process
-  // that *drains* the queue, so a queued client there would post every job
-  // straight back and nothing would ever reach the database. It still gets
-  // `serializeWrites`, which costs nothing at a worker concurrency of one and
-  // means the worker behaves identically if it is ever run alongside anything
-  // else in the same process.
-  //
-  // A file: URL is a local SQLite file — the tests and local development. It has
-  // no remote transaction to protect and no second process contending for it,
-  // and routing it through Redis would make the suite depend on a broker.
   const chosen = writePath({ url, redis, enabled, queue: opts.queue });
   announceWritePath(chosen);
 
   if (chosen.path === 'redis') return queueWrites(client, { url: String(redis) });
 
-  return serializeWrites(client);
+  return client;
+}
+
+/**
+ * Connections per process. The poller runs six crawl workers plus the
+ * housekeeping timers; the web app serves requests. Ten covers both without
+ * letting a dozen processes exhaust the cluster's 300.
+ */
+function poolSize() {
+  const raw = Number(process.env['DB_POOL_MAX']);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 10;
 }
 
 /**
@@ -76,10 +76,10 @@ export function connect(opts = {}) {
  * @returns {{ path: 'redis'|'in-process', why: string }}
  */
 export function writePath({ url, redis, enabled, queue }) {
-  if (queue === false) return { path: 'in-process', why: 'this caller drains the queue' };
-  if (String(url).startsWith('file:')) return { path: 'in-process', why: 'local file database' };
-  if (!enabled) return { path: 'in-process', why: 'WRITE_QUEUE is off' };
-  if (!redis) return { path: 'in-process', why: 'REDIS_URL is not set' };
+  if (queue === false) return { path: 'direct', why: 'this caller drains the queue' };
+  if (String(url).startsWith('file:')) return { path: 'direct', why: 'local file database' };
+  if (!enabled) return { path: 'direct', why: 'WRITE_QUEUE is off; Postgres takes concurrent writers' };
+  if (!redis) return { path: 'direct', why: 'REDIS_URL is not set' };
   return { path: 'redis', why: 'one writer per cluster' };
 }
 

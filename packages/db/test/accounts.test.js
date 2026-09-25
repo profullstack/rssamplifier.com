@@ -1,25 +1,19 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect, newId, nowIso } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { newId, nowIso } from '../src/client.js';
+import { connectTest } from '../src/testdb.js';
 import * as a from '../src/accounts.js';
 import * as q from '../src/queries.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-accounts-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('an address is one account however it is typed', async () => {
