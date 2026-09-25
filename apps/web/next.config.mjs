@@ -334,7 +334,18 @@ const nextConfig = {
       // takes a `?kind=` filter — /follow?kind=podcast has to arrive intact.
       { source: '/follow', destination: '/following', permanent: true },
 
-      { source: '/register', destination: '/signup', permanent: true },
+      // /register is also where an OAuth client looks for dynamic registration
+      // when it has found no metadata anywhere else, and it POSTs JSON to do
+      // it. A redirect to a page of HTML is a confusing answer to that, so a
+      // JSON content-type falls through to app/register/route.js, which says no
+      // in the language the caller is speaking. A person typing /register sends
+      // no content-type and lands on /signup as before.
+      {
+        source: '/register',
+        missing: [{ type: 'header', key: 'content-type', value: '.*json.*' }],
+        destination: '/signup',
+        permanent: true,
+      },
       { source: '/sign-up', destination: '/signup', permanent: true },
       { source: '/sign-in', destination: '/login', permanent: true },
 

@@ -11,7 +11,13 @@ import {
   era,
   negotiate,
 } from '../src/lib/mcp/protocol.js';
-import { handle, CAPABILITIES, SERVER_INFO } from '../src/lib/mcp/server.js';
+import {
+  handle,
+  cacheable,
+  CAPABILITIES,
+  RESOURCE_TTL_MS,
+  SERVER_INFO,
+} from '../src/lib/mcp/server.js';
 import { TOOLS, describe } from '../src/lib/mcp/tools.js';
 import { clip, plainText } from '../src/lib/mcp/text.js';
 
@@ -177,16 +183,48 @@ test('tools/list answers both eras with the same tools', async () => {
   assert.equal(fromModern.body.result.tools.length, TOOLS.length);
 });
 
-test('every list says it is complete, so a modern client accepts it', async () => {
-  // The current revision requires resultType on a list result. Claude Code
-  // rejected the tools and resources lists without it ("missing required
-  // resultType") and showed the server as connected with no tools.
+test('every list says it is complete and how long it keeps, so a modern client accepts it', async () => {
+  // The current revision requires all three fields on a list result, and a
+  // client rejects the whole answer over any one of them. This test used to
+  // check resultType alone, which is how ttlMs and cacheScope stayed missing
+  // through a fix for exactly this symptom: Claude Code showed the server as
+  // connected, "tools fetch failed", with every tool present in the body.
+  //
+  // resources/read is not in this loop: reading the one resource builds
+  // llms.txt from the directory, and this suite talks to no database. Its
+  // metadata comes from the same `cacheable` call, checked below.
   for (const method of ['tools/list', 'resources/list', 'resources/templates/list', 'prompts/list']) {
     const { message, ctx } = modern(method);
     const { status, body } = await handle(message, ctx);
+
     assert.equal(status, 200, method);
-    assert.equal(body.result.resultType, 'complete', method);
+    assertCacheable(body.result, method);
   }
+});
+
+test('the cache metadata is the shape a client will accept', () => {
+  // What every answer above is spread from, and what resources/read gets too.
+  assertCacheable(cacheable(RESOURCE_TTL_MS), 'cacheable');
+  assert.equal(cacheable(0).ttlMs, 0, 'zero is a legitimate ttl, not a missing one');
+});
+
+/**
+ * The three fields the 2026-07-28 client schema requires, held to its own types.
+ *
+ * @param {any} result
+ * @param {string} label
+ */
+function assertCacheable(result, label) {
+  assert.equal(result.resultType, 'complete', label);
+  assert.ok(Number.isInteger(result.ttlMs) && result.ttlMs >= 0, `${label}: ttlMs`);
+  // The client's enum, and nothing else passes it.
+  assert.ok(['public', 'private'].includes(result.cacheScope), `${label}: cacheScope`);
+}
+
+test('server/discover carries the same cache metadata as a list', async () => {
+  const { message, ctx } = modern('server/discover');
+  const { body } = await handle(message, ctx);
+  assertCacheable(body.result, 'server/discover');
 });
 
 test('calling a tool that does not exist is a tool error, not a transport error', async () => {
