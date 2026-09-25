@@ -290,6 +290,14 @@ async function upsertTable(client, table, cols, types, srcCols) {
     const gone = await client.query(
       `delete from "${table}" t where not exists (select 1 from "${tmp}" s where (${pkCols.map((c) => `s.${q(c)}`).join(', ')}) = (${pkCols.map((c) => `t.${q(c)}`).join(', ')}))`,
     );
+    // Identity columns took explicit values; the sequences must move past
+    // them or the app's first insert collides with a copied id.
+    for (const c of identity) {
+      await client.query(
+        `select setval(pg_get_serial_sequence($1, $2), greatest(coalesce((select max("${c}") from "${table}"), 0), 1))`,
+        [`public.${table}`, c],
+      );
+    }
     await client.query('commit');
     log(`${table}: upserted ${res.rowCount} of ${total} rows, removed ${gone.rowCount} stale, in ${Math.round((Date.now() - started) / 1000)}s (pk ${pkList})`);
   } catch (err) {
