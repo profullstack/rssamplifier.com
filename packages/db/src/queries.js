@@ -1267,7 +1267,7 @@ export async function itemsForTopic(db, slug, opts = {}) {
   const want = group ? Math.min(limit * 3, 600) : limit;
 
   const { rows } = await db.execute({
-    sql: `with picked as (
+    sql: `with picked as materialized (
             select k.feed_id from feed_keywords k
             join feeds f on f.id = k.feed_id and f.status <> 'dead'
             where k.slug = ?${filter.sql}
@@ -1283,16 +1283,24 @@ export async function itemsForTopic(db, slug, opts = {}) {
                  -- mixed feeds reads better as a column of pictures than as a
                  -- column with gaps in it.
                  f.image_url as feed_image, f.card_url as feed_card
-          from feed_items i
+          from picked p
+          -- One index range per picked feed on (feed_id, published_at) rather
+          -- than a walk of the global published_at index filtered to the picked
+          -- feeds: Postgres chose the walk for sparse topics and it did not
+          -- finish. The per-feed limit equals the outer one, so the page is the
+          -- same page.
+          join lateral (
+            select * from feed_items x
+            where x.feed_id = p.feed_id and x.published_at >= ?
+            order by x.published_at desc
+            limit ?
+          ) i on true
           join feeds f on f.id = i.feed_id
-          where i.feed_id in (select feed_id from picked)
-            and i.published_at >= ?
           order by i.published_at desc
           limit ?`,
-    // `filter.args` belongs to the `picked` subquery and `want` to the outer
-    // limit, so the kind filter and the grouping overread bind in the order
-    // their placeholders appear rather than one replacing the other.
-    args: [slug, ...filter.args, feedCap, since, want],
+    // `filter.args` belongs to the `picked` subquery; `since` and the first
+    // `want` to the per-feed range; the last `want` to the page.
+    args: [slug, ...filter.args, feedCap, since, want, want],
   });
 
   if (!group) return rows;
@@ -1323,7 +1331,7 @@ export async function mediaForTopic(db, slug, opts = {}) {
   const filter = kindFilter(normalizeKinds(kinds));
 
   const { rows } = await db.execute({
-    sql: `with picked as (
+    sql: `with picked as materialized (
             select k.feed_id from feed_keywords k
             join feeds f on f.id = k.feed_id and f.status <> 'dead'
             where k.slug = ?${filter.sql}
@@ -1334,13 +1342,17 @@ export async function mediaForTopic(db, slug, opts = {}) {
                  i.published_at,
                  i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds,
                  f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category
-          from feed_items i
+          from picked p
+          join lateral (
+            select * from feed_items x
+            where x.feed_id = p.feed_id and x.audio_url is not null
+            order by x.published_at desc nulls last, x.created_at desc
+            limit ?
+          ) i on true
           join feeds f on f.id = i.feed_id
-          where i.feed_id in (select feed_id from picked)
-            and i.audio_url is not null
           order by i.published_at desc nulls last, i.created_at desc
           limit ?`,
-    args: [slug, ...filter.args, feedCap, limit],
+    args: [slug, ...filter.args, feedCap, limit, limit],
   });
   return rows;
 }

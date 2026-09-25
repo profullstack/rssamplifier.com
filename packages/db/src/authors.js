@@ -962,7 +962,7 @@ export const RIVER_AUTHOR_FEEDS = 20;
  */
 export async function postsByAuthorId(db, authorId, limit = 60) {
   const { rows } = await db.execute({
-    sql: `with picked as (
+    sql: `with picked as materialized (
             select fa.feed_id from feed_authors fa
             join feeds f on f.id = fa.feed_id and f.status <> 'dead'
             where fa.author_id = ?
@@ -971,12 +971,17 @@ export async function postsByAuthorId(db, authorId, limit = 60) {
           select i.guid, i.title, i.url, i.summary, i.published_at, i.created_at,
                  i.image_url, i.audio_url, i.audio_type, i.audio_seconds, i.cluster_key,
                  f.slug as feed_slug, f.title as feed_title, f.category, f.feed_url
-          from feed_items i
+          from picked p
+          join lateral (
+            select * from feed_items x
+            where x.feed_id = p.feed_id
+            order by x.published_at desc nulls last, x.created_at desc
+            limit ?
+          ) i on true
           join feeds f on f.id = i.feed_id
-          where i.feed_id in (select feed_id from picked)
           order by i.published_at desc nulls last, i.created_at desc
           limit ?`,
-    args: [authorId, RIVER_AUTHOR_FEEDS, limit],
+    args: [authorId, RIVER_AUTHOR_FEEDS, limit, limit],
   });
 
   return rows;

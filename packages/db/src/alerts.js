@@ -669,8 +669,14 @@ export async function newItemsForTopic(db, slug, cursor, opts = {}) {
   const kinds = segmentKinds(segment);
   const filter = kinds ? ` and f.category in (${kinds.map(() => '?').join(', ')})` : '';
 
+  // Driven from the picked feeds, one index range each on (feed_id,
+  // created_at), rather than "items newer than the cursor, filtered to the
+  // picked feeds": Postgres estimated one row past the cursor, walked the
+  // global created_at index instead and re-ran the picked subquery per row,
+  // and the alerts tick timed out on every run after the Postgres cutover.
+  // The per-feed limit equals the outer one, so the result is unchanged.
   const { rows } = await db.execute({
-    sql: `with picked as (
+    sql: `with picked as materialized (
             select k.feed_id from feed_keywords k
             join feeds f on f.id = k.feed_id and f.status <> 'dead'
             where k.slug = ?${filter}
@@ -678,13 +684,17 @@ export async function newItemsForTopic(db, slug, cursor, opts = {}) {
             limit ?
           )
           select ${ALERT_COLS}
-          from feed_items i
+          from picked p
+          join lateral (
+            select * from feed_items x
+            where x.feed_id = p.feed_id and x.created_at > ?
+            order by x.created_at
+            limit ?
+          ) i on true
           join feeds f on f.id = i.feed_id
-          where i.feed_id in (select feed_id from picked)
-            and i.created_at > ?
           order by i.created_at
           limit ?`,
-    args: [slug, ...(kinds ?? []), feedCap, cursor, limit],
+    args: [slug, ...(kinds ?? []), feedCap, cursor, limit, limit],
   });
   return rows;
 }
@@ -739,21 +749,26 @@ export async function alertedAuthors(db, userId, limit = 50) {
 export async function newItemsForAuthor(db, authorId, cursor, opts = {}) {
   const { limit = 50, feedCap = ALERT_AUTHOR_FEEDS } = opts;
 
+  // Same shape as newItemsForTopic, for the same reason.
   const { rows } = await db.execute({
-    sql: `with picked as (
+    sql: `with picked as materialized (
             select fa.feed_id from feed_authors fa
             join feeds f on f.id = fa.feed_id and f.status <> 'dead'
             where fa.author_id = ?
             limit ?
           )
           select ${ALERT_COLS}
-          from feed_items i
+          from picked p
+          join lateral (
+            select * from feed_items x
+            where x.feed_id = p.feed_id and x.created_at > ?
+            order by x.created_at
+            limit ?
+          ) i on true
           join feeds f on f.id = i.feed_id
-          where i.feed_id in (select feed_id from picked)
-            and i.created_at > ?
           order by i.created_at
           limit ?`,
-    args: [authorId, feedCap, cursor, limit],
+    args: [authorId, feedCap, cursor, limit, limit],
   });
   return rows;
 }
