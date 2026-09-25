@@ -132,11 +132,16 @@ export function normalizeKinds(kinds) {
  * makes it safe, and the placeholders are what keep it safe if somebody later
  * calls this with a value that skipped the validation.
  *
+ * Exported for accounts.js, which narrows a reader's own river by the same
+ * vocabulary the directory is browsed by. One implementation, because the
+ * safety of this one is the placeholders and a second copy is a second chance
+ * to leave them out.
+ *
  * @param {string[]|null} kinds
  * @param {string} [column]
  * @returns {{ sql: string, args: string[] }}
  */
-function kindFilter(kinds, column = 'f.category') {
+export function kindFilter(kinds, column = 'f.category') {
   if (!kinds || kinds.length === 0) return { sql: '', args: [] };
   return { sql: ` and ${column} in (${kinds.map(() => '?').join(', ')})`, args: kinds };
 }
@@ -168,7 +173,7 @@ export async function feedByUrl(db, feedUrl) {
 }
 
 /**
- * Newest feeds first, excluding dead ones by default.
+ * A page of feeds, excluding dead ones by default.
  *
  * `kind` narrows the list to one category page's worth. The tie-break on id is
  * not cosmetic: the directory was bulk imported, so tens of thousands of rows
@@ -176,12 +181,29 @@ export async function feedByUrl(db, feedUrl) {
  * leaves those rows unsorted relative to each other shows a blog twice on one
  * page and never on the next.
  *
+ * `order` picks which question the list answers. 'added' is when we indexed the
+ * feed — the right answer for somebody who has just submitted one and wants to
+ * see it appear. 'published' is when the feed itself last published, which is
+ * the right answer for everybody else: ordered by arrival, the top of a
+ * category is whatever the importer happened to reach last, so a directory of
+ * 318,000 podcasts opens on shows that have been silent for six weeks and reads
+ * as abandoned. See listFeedsByPublished for why it is a second query.
+ *
  * @param {Client} db
- * @param {{ limit?: number, offset?: number, includeDead?: boolean, kind?: string|null }} [opts]
+ * @param {{
+ *   limit?: number,
+ *   offset?: number,
+ *   includeDead?: boolean,
+ *   kind?: string|null,
+ *   order?: 'added'|'published',
+ * }} [opts]
  * @returns {Promise<object[]>}
  */
 export async function listFeeds(db, opts = {}) {
-  const { limit = 60, offset = 0, includeDead = false, kind = null } = opts;
+  const { limit = 60, offset = 0, includeDead = false, kind = null, order = 'added' } = opts;
+
+  if (order === 'published') return listFeedsByPublished(db, { limit, offset, includeDead, kind });
+
   const where = [];
   const args = [];
 
@@ -198,6 +220,67 @@ export async function listFeeds(db, opts = {}) {
     args: [...args, limit, offset],
   });
   return rows;
+}
+
+/**
+ * Feeds by when they last published, newest first, with the ones we have never
+ * read appended in arrival order.
+ *
+ * Two queries rather than one `order by last_published_at desc nulls last`,
+ * because that ordering cannot be served by an index here and sorting a
+ * category of 318,000 rows on every request is not a page load. What can be
+ * served is `(category, last_published_at desc) where last_published_at is not
+ * null` — feeds_category_published_idx, the index the category river already
+ * needs — and matching its predicate exactly is what keeps this to a bounded
+ * index scan however deep the pager goes.
+ *
+ * The excluded rows are not dropped. A null `last_published_at` means nobody
+ * has read the feed since the column shipped, which is 42,000 feeds still
+ * waiting on a first crawl and includes everything submitted this week — a
+ * directory that hid those would be hiding the submissions it asks for. They
+ * have no publish date to sort by, so they follow the ones that do, and the
+ * pager walks through to them.
+ *
+ * The count of dated feeds is only paid for at the boundary: a page that fills
+ * from the index alone never asks where the boundary is.
+ *
+ * @param {Client} db
+ * @param {{ limit: number, offset: number, includeDead: boolean, kind: string|null }} opts
+ * @returns {Promise<object[]>}
+ */
+async function listFeedsByPublished(db, { limit, offset, includeDead, kind }) {
+  const live = includeDead ? '' : " and status <> 'dead'";
+  const cat = kind ? ' and category = ?' : '';
+  const catArgs = kind ? [kind] : [];
+
+  const dated = await db.execute({
+    sql: `select ${FEED_COLS} from feeds
+          where last_published_at is not null${live}${cat}
+          order by last_published_at desc, id desc limit ? offset ?`,
+    args: [...catArgs, limit, offset],
+  });
+
+  const rows = dated.rows;
+  if (rows.length >= limit) return rows;
+
+  // Short of a full page, so this page reaches the end of the dated feeds and
+  // the rest of it comes from the unread tail. Where that tail starts depends
+  // on how many dated feeds there are, which is the one thing worth a count.
+  const counted = await db.execute({
+    sql: `select count(*) as n from feeds
+          where last_published_at is not null${live}${cat}`,
+    args: catArgs,
+  });
+  const n = Number(counted.rows[0]?.n ?? 0);
+
+  const tail = await db.execute({
+    sql: `select ${FEED_COLS} from feeds
+          where last_published_at is null${live}${cat}
+          order by created_at desc, id desc limit ? offset ?`,
+    args: [...catArgs, limit - rows.length, Math.max(0, offset - n)],
+  });
+
+  return [...rows, ...tail.rows];
 }
 
 /**
@@ -1215,6 +1298,101 @@ const TOPIC_RIVER_FEEDS = 200;
  * unhurried would read as broken.
  */
 const TOPIC_RIVER_DAYS = 730;
+
+/**
+ * How many feeds a category river is drawn from.
+ *
+ * The same shape of cap as TOPIC_RIVER_FEEDS above, and for the same reason: a
+ * category is not a handful of feeds. What makes this one exact rather than a
+ * sample is the order it cuts in — feeds sorted by when they last published, so
+ * the ones dropped are the ones with nothing recent to contribute. Every item
+ * newer than the cut feed's own newest item is guaranteed to come from a feed
+ * that survived the cut, which is the whole of the first several pages.
+ *
+ * Feeds whose `last_published_at` is still null are left out. That column fills
+ * in on a feed's next crawl (see 0030), so a null is a feed nobody has read
+ * since the column existed rather than a feed with nothing to say.
+ */
+const CATEGORY_RIVER_FEEDS = 400;
+
+/**
+ * How far back a category river looks.
+ *
+ * Shorter than a topic's two years because the question is different: a topic
+ * river answers "who covers this", where a blog that posts twice a year still
+ * counts, and this answers "what has just come out". It is also what keeps the
+ * plan seeking into `feed_items_feed_pub_idx` per feed instead of reading every
+ * item those 400 feeds ever published and sorting the pile.
+ */
+const CATEGORY_RIVER_DAYS = 365;
+
+/**
+ * The newest entries published across a whole category, newest first.
+ *
+ * The category pages list *feeds* — who is in the directory — and that is a
+ * different question from what the directory has just published. Somebody
+ * opening /podcasts wants the second one: the newest episodes across every show
+ * at once, rather than the shows in the order we happened to index them.
+ *
+ * Deliberately not `join feeds … where category = ?` across the whole item
+ * table. That is the aggregate 0030 measured at 215 seconds: the planner walks
+ * the global published_at order discarding everything of the wrong kind, and
+ * the rarer the category the further it walks. Picking the feeds first turns it
+ * into a bounded set of per-feed index seeks, which is the trick itemsForTopic
+ * plays for the same reason.
+ *
+ * Rows carry `feed_slug`, `feed_title` and the feed's own artwork because a
+ * list of sixty episodes from sixty shows is unreadable without saying whose
+ * each one is.
+ *
+ * @param {Client} db
+ * @param {{
+ *   kinds?: string[]|string|null,
+ *   limit?: number,
+ *   offset?: number,
+ *   feedCap?: number,
+ *   days?: number,
+ * }} [opts] `kinds` narrows to those categories, null being the whole directory
+ * @returns {Promise<object[]>}
+ */
+export async function latestItems(db, opts = {}) {
+  const {
+    kinds = null,
+    limit = 60,
+    offset = 0,
+    feedCap = CATEGORY_RIVER_FEEDS,
+    days = CATEGORY_RIVER_DAYS,
+  } = opts;
+
+  const filter = kindFilter(normalizeKinds(kinds), 'category');
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+  const { rows } = await db.execute({
+    sql: `with picked as (
+            select id from feeds
+            where status <> 'dead' and last_published_at is not null${filter.sql}
+            order by last_published_at desc
+            limit ?
+          )
+          select i.id as item_id, i.guid, i.url, i.title, i.summary, i.author, i.image_url,
+                 i.published_at, i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds,
+                 i.cluster_key,
+                 f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category,
+                 -- The show's cover art, as the fallback for an episode that
+                 -- ships none of its own. See the same columns in itemsForTopic.
+                 f.image_url as feed_image, f.card_url as feed_card
+          from feed_items i
+          join feeds f on f.id = i.feed_id
+          where i.feed_id in (select id from picked)
+            and i.published_at is not null
+            and i.published_at >= ?
+          order by i.published_at desc, i.id desc
+          limit ? offset ?`,
+    args: [...filter.args, feedCap, since, limit, offset],
+  });
+
+  return rows;
+}
 
 /**
  * Recent posts from across a topic, newest first.

@@ -257,6 +257,21 @@ const nextConfig = {
           destination: '/api/fb/:page/feed/:format',
         },
 
+        // The playlist spellings, for the categories that publish their own
+        // entries at this address rather than the feeds that carry them — the
+        // ones marked `river` in CATEGORIES, which today is podcasts alone.
+        // /podcasts.m3u is the newest episode of every show in one file.
+        //
+        // Named before the rule below rather than folded into its format list,
+        // because every other category's `.m3u` must keep 404ing: a directory
+        // entry is a feed, and a playlist of feeds is an empty file with a
+        // confident name. apps/web/test/subscribe.test.js asserts this list is
+        // exactly the river categories.
+        {
+          source: '/:kind(podcasts).:format(m3u|pls)',
+          destination: '/api/directory/:kind/feed/:format',
+        },
+
         // One category of it. The segments are the category pages' own paths,
         // duplicated from CATEGORIES in apps/web/src/lib/categories.js — this
         // file is evaluated before the workspace resolves, so it cannot import
@@ -313,6 +328,11 @@ const nextConfig = {
       // The crawler status board is at /crawlstats. /crawlstatus is what people
       // type looking for it, including us.
       { source: '/crawlstatus', destination: '/crawlstats', permanent: true },
+
+      // The river lives at /following; /follow is what it gets called. Query
+      // preserved by default, which is the half that matters now the page
+      // takes a `?kind=` filter — /follow?kind=podcast has to arrive intact.
+      { source: '/follow', destination: '/following', permanent: true },
 
       { source: '/register', destination: '/signup', permanent: true },
       { source: '/sign-up', destination: '/signup', permanent: true },

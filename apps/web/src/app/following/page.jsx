@@ -9,12 +9,15 @@ import { FILTER_FROM } from '../../lib/listFilter.js';
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser, hasSessionCookie } from '../../lib/auth.js';
 import { postThumb } from '../../lib/thumbs.js';
+import { CATEGORIES } from '../../lib/categories.js';
 import {
   RIVER_LIMIT,
   RIVER_AUTHORS,
   RIVER_TOPICS,
   following as loadFollowing,
   followingFeedUrl,
+  kindsAvailable,
+  riverKinds,
   topicLabel,
 } from '../../lib/following.js';
 
@@ -67,7 +70,14 @@ export async function generateMetadata() {
  * about this" — but they have the same answer shape, and a reader who has asked
  * both wants one list back rather than two pages to check.
  *
- * @param {{ searchParams: Promise<{ feed?: string, rotated?: string }> }} props
+ * `?kind=` narrows the river to one category of the directory — podcasts,
+ * videos, blogs — without touching what is followed. That distinction is the
+ * whole design of it: the lists above the river are the inventory of follows
+ * and stay whole, because a filter that hid follows would look like an
+ * unfollow, and the river below is the reading, which is what somebody
+ * narrowing to "podcasts" actually means.
+ *
+ * @param {{ searchParams: Promise<{ feed?: string, rotated?: string, kind?: string }> }} props
  */
 export default async function FollowingPage({ searchParams }) {
   const params = await searchParams;
@@ -82,14 +92,17 @@ export default async function FollowingPage({ searchParams }) {
 
   const client = db();
   const userId = String(user.id);
+  const kinds = riverKinds(params.kind);
 
   const [{ feeds, topics, authors, items, topicsUsed, authorsUsed }, token] = await Promise.all([
-    loadFollowing(client, userId, { limit: RIVER_LIMIT }),
+    loadFollowing(client, userId, { limit: RIVER_LIMIT, kinds }),
     accounts.feedToken(client, userId),
   ]);
 
   const origin = siteUrl();
   const nothing = feeds.length === 0 && topics.length === 0 && authors.length === 0;
+  const filters = kindsAvailable({ feeds, topics, authors });
+  const filtered = kinds?.[0] ?? null;
 
   return (
     <>
@@ -220,6 +233,18 @@ export default async function FollowingPage({ searchParams }) {
         asking your reader to sign in: it grants read of these posts and nothing else — it cannot
         sign in, and it cannot change what you follow. Treat it as private anyway, because it says
         what you read.
+        {/* The filter travels with the address, so "just the podcasts" is
+            something to subscribe to rather than something to remember to do
+            each visit. Said out loud because the URL below changes under the
+            reader as they press the chips, and silently handing them a
+            different feed than the one they copied last time would be worse. */}
+        {filtered && (
+          <>
+            {' '}
+            While the river is filtered, these addresses carry the filter: they are your{' '}
+            {CATEGORIES[filtered].heading.toLowerCase()} alone.
+          </>
+        )}
       </p>
 
       {token ? (
@@ -227,13 +252,13 @@ export default async function FollowingPage({ searchParams }) {
           <p className="format-links">
             <span>Subscribe:</span>
             {['rss', 'atom', 'json'].map((ext) => (
-              <a key={ext} href={followingFeedUrl(origin, token, ext)}>
+              <a key={ext} href={followingFeedUrl(origin, token, ext, kinds)}>
                 {`.${ext}`}
               </a>
             ))}
           </p>
           <p className="hint">
-            <code>{followingFeedUrl(origin, token, 'rss')}</code>
+            <code>{followingFeedUrl(origin, token, 'rss', kinds)}</code>
           </p>
           <form action="/api/following/token" method="post" className="submit-actions">
             <input type="hidden" name="action" value="rotate" />
@@ -251,6 +276,34 @@ export default async function FollowingPage({ searchParams }) {
 
       <h2>Latest</h2>
 
+      {/* By kind, not by follow. Plain links in the same nav the topic pages
+          use for their sub-groups, so it works with JavaScript off and so each
+          filtered river is an address a reader can bookmark or hand to
+          somebody. Only the kinds this account actually follows are offered —
+          see kindsAvailable — and the bar is left out entirely when there is
+          only one, because a filter with a single setting filters nothing. */}
+      {filters.length > 1 && (
+        <nav className="topic-groups" aria-label="Filter the river by kind">
+          <a
+            href="/following"
+            aria-current={filtered ? undefined : 'page'}
+            className={filtered ? undefined : 'is-current'}
+          >
+            Everything
+          </a>
+          {filters.map((kind) => (
+            <a
+              key={kind}
+              href={`/following?kind=${kind}`}
+              aria-current={kind === filtered ? 'page' : undefined}
+              className={kind === filtered ? 'is-current' : undefined}
+            >
+              {CATEGORIES[kind].heading}
+            </a>
+          ))}
+        </nav>
+      )}
+
       {/* The river is the reason to come back to this page, and it is the one
           list here long enough that finding a post in it means scrolling. */}
       {items.length >= FILTER_FROM && (
@@ -259,9 +312,20 @@ export default async function FollowingPage({ searchParams }) {
 
       {items.length === 0 ? (
         <p className="empty">
-          {nothing
-            ? 'Nothing to show until you follow something.'
-            : 'Nothing published recently by anything you follow.'}
+          {nothing ? (
+            'Nothing to show until you follow something.'
+          ) : filtered ? (
+            // Names the filter as the reason. Without this a reader who
+            // narrowed to podcasts last week and came back to the bookmark
+            // would read an empty page as everything they follow having gone
+            // quiet at once.
+            <>
+              Nothing published recently under {CATEGORIES[filtered].heading.toLowerCase()}.{' '}
+              <a href="/following">Show everything</a>.
+            </>
+          ) : (
+            'Nothing published recently by anything you follow.'
+          )}
         </p>
       ) : (
         items.map((p) => {

@@ -8,7 +8,13 @@ import {
 
 import { db, siteUrl } from '../../../../../lib/db.js';
 import { fetchFeedAds } from '../../../../../lib/feedAds.js';
-import { RIVER_LIMIT, following, followingFeedUrl } from '../../../../../lib/following.js';
+import { CATEGORIES } from '../../../../../lib/categories.js';
+import {
+  RIVER_LIMIT,
+  following,
+  followingFeedUrl,
+  riverKinds,
+} from '../../../../../lib/following.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +48,12 @@ export async function GET(req, { params }) {
     return fail(format, 404, `unsupported format: ${format}`, 'Supported: rss, atom, json, xml');
   }
 
-  const token = new URL(req.url).searchParams.get('t') ?? '';
+  const query = new URL(req.url).searchParams;
+  const token = query.get('t') ?? '';
+  // The same filter the page offers as chips, so a reader who narrowed the
+  // river to podcasts and then took the feed away gets the podcasts. Anything
+  // unrecognised is the whole river, exactly as on the page.
+  const kinds = riverKinds(query.get('kind'));
   const client = db();
   const user = await accounts.userByFeedToken(client, token);
 
@@ -60,6 +71,7 @@ export async function GET(req, { params }) {
 
   const { feeds, topics, authors, items } = await following(client, String(user.id), {
     limit: RIVER_LIMIT,
+    kinds,
   });
 
   const origin = siteUrl();
@@ -84,14 +96,21 @@ export async function GET(req, { params }) {
   const body = buildSyndication(
     format,
     {
-      title: 'Following — RSS Amplifier',
-      description: `Recent posts from the ${count(topics.length, 'topic')}, ${count(
+      // A filtered river says so in its own title: a reader subscribed to both
+      // this and the whole thing must be able to tell them apart in a list of
+      // feeds, and "Following" twice over cannot.
+      title: kinds
+        ? `Following: ${CATEGORIES[kinds[0]].heading} — RSS Amplifier`
+        : 'Following — RSS Amplifier',
+      description: `Recent ${
+        kinds ? CATEGORIES[kinds[0]].item : 'posts'
+      } from the ${count(topics.length, 'topic')}, ${count(
         authors.length,
         'person',
         'people',
       )} and ${count(feeds.length, 'blog')} this RSS Amplifier account follows.`,
-      link: `${origin}/following`,
-      selfUrl: followingFeedUrl(origin, token, format),
+      link: `${origin}/following${kinds ? `?kind=${kinds[0]}` : ''}`,
+      selfUrl: followingFeedUrl(origin, token, format, kinds),
     },
     interleaveAds(rows, ads),
   );

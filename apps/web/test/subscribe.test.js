@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { SUBSCRIBE_FORMATS, feedAlternates, formatTitle } from '../src/lib/subscribe.js';
-import { CATEGORY_SEGMENTS } from '../src/lib/categories.js';
+import { CATEGORIES, CATEGORY_SEGMENTS } from '../src/lib/categories.js';
 
 const config = readFileSync(new URL('../next.config.mjs', import.meta.url), 'utf8');
 
@@ -58,10 +58,33 @@ test('every announced format is actually routed', () => {
 });
 
 test('the category rewrite lists exactly the category pages that exist', () => {
-  const rule = /\/:kind\(([a-z|]+)\)\.:format/.exec(config);
-  assert.ok(rule, 'no category syndication rewrite found in next.config.mjs');
+  // Two `:kind(...)` rules now: the playlist one, written first because it has
+  // to be matched first, and the documents one. Found by the formats each
+  // carries rather than by position, so reordering the file cannot silently
+  // make this assert about the wrong rule.
+  const rules = [...config.matchAll(/\/:kind\(([a-z|]+)\)\.:format\(([a-z0-9|]+)\)/g)];
+  const documents = rules.find(([, , formats]) => formats.includes('rss'));
+  assert.ok(documents, 'no category syndication rewrite found in next.config.mjs');
 
-  assert.deepEqual(rule[1].split('|').sort(), [...CATEGORY_SEGMENTS.keys()].sort());
+  assert.deepEqual(documents[1].split('|').sort(), [...CATEGORY_SEGMENTS.keys()].sort());
+});
+
+test('only the categories that publish their entries are routed as playlists', () => {
+  // An `.m3u` of a category that lists *feeds* would be an empty file: a
+  // directory entry has nothing to play. So the playlist rule must cover the
+  // river categories and no others, and directoryRiver refuses the rest by
+  // hand — both halves, because the rewrite is what decides whether the
+  // request reaches the handler at all.
+  const rules = [...config.matchAll(/\/:kind\(([a-z|]+)\)\.:format\(([a-z0-9|]+)\)/g)];
+  const playlists = rules.find(([, , formats]) => formats.includes('m3u'));
+  assert.ok(playlists, 'no category playlist rewrite found in next.config.mjs');
+
+  const rivers = Object.values(CATEGORIES)
+    .filter((category) => category.river)
+    .map((category) => category.path.replace(/^\//, ''));
+
+  assert.ok(rivers.length > 0, 'no category is marked river, so this rule should not exist');
+  assert.deepEqual(playlists[1].split('|').sort(), rivers.sort());
 });
 
 test('the catch-all feed rule is written after every fixed address', () => {

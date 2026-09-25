@@ -1,4 +1,5 @@
 import { newId, nowIso } from './client.js';
+import { kindFilter, normalizeKinds } from './queries.js';
 import { topicLabelSql } from './topicLabel.js';
 
 /**
@@ -389,6 +390,11 @@ export async function isFollowing(db, userId, feedId) {
 /**
  * The blogs someone follows, newest first.
  *
+ * `category` comes back with them because the following page is browsable by
+ * kind: the chips it offers are built from what this account actually follows,
+ * so a reader who follows no video feeds is not shown a filter that can only
+ * ever be empty.
+ *
  * @param {Client} db
  * @param {string} userId
  * @param {number} [limit]
@@ -397,7 +403,7 @@ export async function isFollowing(db, userId, feedId) {
 export async function followedFeeds(db, userId, limit = 200) {
   const { rows } = await db.execute({
     sql: `select f.id, f.slug, f.title, f.description, f.site_url, f.feed_url, f.item_count,
-                 f.status, fo.created_at as followed_at
+                 f.status, f.category, fo.created_at as followed_at
           from follows fo join feeds f on f.id = fo.feed_id
           where fo.user_id = ?
           order by fo.created_at desc
@@ -415,12 +421,20 @@ export async function followedFeeds(db, userId, limit = 200) {
  * a followed blog and a row that arrived by a followed topic have to be
  * renderable, playable and de-duplicable by the same code.
  *
+ * `kinds` narrows the river to followed feeds of those categories — the same
+ * vocabulary /podcasts and /videos are browsed by, and the same filter a topic
+ * river takes, so "my podcasts" means the same thing wherever it is asked.
+ * Null is every kind, which is what the page asks for unless told otherwise.
+ *
  * @param {Client} db
  * @param {string} userId
  * @param {number} [limit]
+ * @param {{ kinds?: string[]|string|null }} [opts]
  * @returns {Promise<object[]>}
  */
-export async function followedItems(db, userId, limit = 60) {
+export async function followedItems(db, userId, limit = 60, opts = {}) {
+  const filter = kindFilter(normalizeKinds(opts.kinds ?? null));
+
   const { rows } = await db.execute({
     sql: `select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
                  i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds, i.cluster_key,
@@ -430,10 +444,10 @@ export async function followedItems(db, userId, limit = 60) {
           from follows fo
           join feeds f on f.id = fo.feed_id
           join feed_items i on i.feed_id = f.id
-          where fo.user_id = ?
+          where fo.user_id = ?${filter.sql}
           order by i.published_at desc nulls last, i.created_at desc
           limit ?`,
-    args: [userId, limit],
+    args: [userId, ...filter.args, limit],
   });
   return rows;
 }
