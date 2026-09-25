@@ -48,6 +48,7 @@ const opt = (name, fallback) => {
 };
 const BATCH = Number(opt('--batch', 5000));
 const WORKERS = Number(opt('--workers', 4));
+const RANGE = opt('--range', '') ? opt('--range', '').split(':').map(Number) : null;
 const ONLY = opt('--tables', '')?.split(',').filter(Boolean) ?? [];
 
 const src = createClient({
@@ -171,8 +172,13 @@ async function loadTable(table) {
     // Two lookups, not `min(rowid), max(rowid)` in one: SQLite answers a lone
     // min or max from the rowid index but scans the whole table for the pair,
     // which on 15M rows over the network is a stall.
+    // --range lo:hi copies only SQLite rowids in (lo, hi]: the way to re-split
+    // a slice that was left running alone after the others finished.
+    if (RANGE) after = Math.max(after, RANGE[0]);
     const first = (await read({ sql: `select rowid as r from "${table}" where rowid > ? order by rowid limit 1`, args: [after] })).rows[0];
-    const last = (await read({ sql: `select rowid as r from "${table}" order by rowid desc limit 1` })).rows[0];
+    const last = RANGE
+      ? { r: RANGE[1] }
+      : (await read({ sql: `select rowid as r from "${table}" order by rowid desc limit 1` })).rows[0];
     const lo = first ? Number(first.r) : null;
     const hi = lo === null ? null : Number(last.r);
     const started = Date.now();
