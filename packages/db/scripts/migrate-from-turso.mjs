@@ -47,6 +47,7 @@ const opt = (name, fallback) => {
   return i === -1 ? fallback : args[i + 1];
 };
 const BATCH = Number(opt('--batch', 5000));
+const WORKERS = Number(opt('--workers', 4));
 const ONLY = opt('--tables', '')?.split(',').filter(Boolean) ?? [];
 
 const src = createClient({
@@ -58,7 +59,7 @@ const src = createClient({
 const dstUrl = new URL(process.env.DATABASE_URL);
 const wantTls = dstUrl.searchParams.has('sslmode') && dstUrl.searchParams.get('sslmode') !== 'disable';
 dstUrl.searchParams.delete('sslmode');
-const dst = new pg.Pool({ connectionString: dstUrl.toString(), max: 3, ssl: wantTls ? { rejectUnauthorized: false } : undefined });
+const dst = new pg.Pool({ connectionString: dstUrl.toString(), max: WORKERS + 2, ssl: wantTls ? { rejectUnauthorized: false } : undefined });
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
@@ -146,23 +147,47 @@ async function loadTable(table) {
       return;
     }
 
-    const select = `select rowid as __rowid, * from "${table}" where rowid > ? order by rowid limit ?`;
-    let cursor = after;
-    let total = 0;
+    // Wide tables (feed_items carries content_html) read out of Turso at well
+    // under a thousand rows a second on one connection, and Turso serves
+    // concurrent reads happily: the rowid range is split into WORKERS slices,
+    // each with its own Postgres connection, and copied in parallel. Rows still
+    // land in rowid order within a slice, which is all the cursors need.
+    const bounds = (await src.execute({ sql: `select min(rowid) as lo, max(rowid) as hi from "${table}" where rowid > ?`, args: [after] })).rows[0];
+    const lo = bounds?.lo === null || bounds?.lo === undefined ? null : Number(bounds.lo);
+    const hi = lo === null ? null : Number(bounds.hi);
     const started = Date.now();
-    for (;;) {
-      const { rows } = await src.execute({ sql: select, args: [cursor, BATCH] });
-      if (!rows.length) break;
-      const mapped = rows.map((r) => {
-        const o = { ...r };
-        if (hasRowid) o.rowid = r.__rowid;
-        return o;
-      });
-      await copyBatch(client, table, cols, types, mapped);
-      cursor = Number(rows[rows.length - 1].__rowid);
-      total += rows.length;
-      if (total % (BATCH * 20) === 0) log(`${table}: ${total} rows (rowid ${cursor}, ${Math.round(total / ((Date.now() - started) / 1000))}/s)`);
-      if (rows.length < BATCH) break;
+    let total = 0;
+    if (lo !== null) {
+      const span = hi - lo + 1;
+      const workers = Math.max(1, Math.min(WORKERS, Math.ceil(span / BATCH)));
+      const slice = Math.ceil(span / workers);
+      const select = `select rowid as __rowid, * from "${table}" where rowid > ? and rowid <= ? order by rowid limit ?`;
+      const runSlice = async (from, to) => {
+        const conn = await dst.connect();
+        try {
+          await conn.query("set session_replication_role = 'replica'");
+          let cursor = from - 1;
+          for (;;) {
+            const { rows } = await src.execute({ sql: select, args: [cursor, to, BATCH] });
+            if (!rows.length) break;
+            const mapped = rows.map((r) => {
+              const o = { ...r };
+              if (hasRowid) o.rowid = r.__rowid;
+              return o;
+            });
+            await copyBatch(conn, table, cols, types, mapped);
+            cursor = Number(rows[rows.length - 1].__rowid);
+            total += rows.length;
+            if (total % (BATCH * 20) < rows.length) log(`${table}: ${total} rows (${Math.round(total / ((Date.now() - started) / 1000))}/s)`);
+            if (rows.length < BATCH) break;
+          }
+        } finally {
+          conn.release();
+        }
+      };
+      const jobs = [];
+      for (let i = 0; i < workers; i++) jobs.push(runSlice(lo + i * slice, Math.min(hi, lo + (i + 1) * slice - 1)));
+      await Promise.all(jobs);
     }
     // Identity columns took explicit values; move their sequences past them.
     for (const c of pgCols.filter((p) => p.is_identity === 'YES')) {
