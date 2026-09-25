@@ -162,6 +162,31 @@ export async function handle(message, ctx) {
   }
 }
 
+/**
+ * The cache metadata every list-shaped result carries in the current revision.
+ *
+ * Not optional, and not decoration: the 2026-07-28 client schema requires
+ * `ttlMs` and `cacheScope` on every list result and on `resources/read`, and
+ * rejects the whole answer without them — which a user sees as "tools fetch
+ * failed" with every tool present and correct in the body. `resultType` a
+ * client defaults to `complete` on its own; these two it does not.
+ *
+ * Everything this server answers is the same for every caller, so the scope is
+ * always public. A legacy client reads the fields as unknown and ignores them.
+ *
+ * @param {number} ttlMs how long the answer stays true
+ * @returns {{ resultType: string, ttlMs: number, cacheScope: string }}
+ */
+export function cacheable(ttlMs) {
+  return { resultType: 'complete', ttlMs, cacheScope: 'public' };
+}
+
+/** Lists change when the code does, so an hour is a deploy away at worst. */
+const LIST_TTL_MS = 3_600_000;
+
+/** llms.txt is generated from the directory, and serves itself with max-age=600. */
+export const RESOURCE_TTL_MS = 600_000;
+
 /** Sentinel for "no such method", so that a legitimate result of `null` is not one. */
 const UNKNOWN_METHOD = Symbol('unknown-method');
 
@@ -178,12 +203,10 @@ async function dispatch(method, params, ctx, modern) {
     // otherwise learn from initialize plus three separate list calls.
     case 'server/discover':
       return {
-        resultType: 'complete',
+        ...cacheable(LIST_TTL_MS),
         supportedVersions: SUPPORTED_VERSIONS,
         capabilities: CAPABILITIES,
         instructions: INSTRUCTIONS,
-        ttlMs: 3_600_000,
-        cacheScope: 'public',
         _meta: { [META_SERVER_INFO]: SERVER_INFO },
       };
 
@@ -201,29 +224,31 @@ async function dispatch(method, params, ctx, modern) {
     case 'ping':
       return {};
 
-    // Every list is answered whole. The current revision requires a list
-    // result to say so — a client that speaks it rejects an answer without
-    // `resultType`, and the field is harmless to a legacy client.
+    // Every list is answered whole, and says so, with how long it keeps. See
+    // `cacheable` for why the cache fields are not optional.
     case 'tools/list':
-      return { resultType: 'complete', tools: TOOLS.map(describe) };
+      return { ...cacheable(LIST_TTL_MS), tools: TOOLS.map(describe) };
 
     case 'tools/call':
       return callTool(params, ctx);
 
     case 'resources/list':
-      return { resultType: 'complete', resources: resources() };
+      return { ...cacheable(LIST_TTL_MS), resources: resources() };
 
     case 'resources/templates/list':
-      return { resultType: 'complete', resourceTemplates: [] };
+      return { ...cacheable(LIST_TTL_MS), resourceTemplates: [] };
 
+    // A read is held to the same schema as a list, cache fields and all, so the
+    // metadata is added here rather than inside the reader: beside the four
+    // cases above is where a fifth one is noticed.
     case 'resources/read':
-      return readResource(params);
+      return { ...cacheable(RESOURCE_TTL_MS), ...(await readResource(params)) };
 
     // Not advertised in capabilities, because there are none. Answered anyway:
     // several clients call it unconditionally on connect, and an empty list is
     // a truer answer than "no such method".
     case 'prompts/list':
-      return { resultType: 'complete', prompts: [] };
+      return { ...cacheable(LIST_TTL_MS), prompts: [] };
 
     default:
       return UNKNOWN_METHOD;
