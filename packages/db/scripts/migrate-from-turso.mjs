@@ -59,7 +59,7 @@ const src = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
   // A request that hangs would hang a worker for good; two minutes is far
   // above any batch read that is actually progressing.
-  fetch: (input, init = {}) => fetch(input, { ...init, signal: AbortSignal.any([init.signal, AbortSignal.timeout(120_000)].filter(Boolean)) }),
+  fetch: (input, init = {}) => fetch(input, { ...init, signal: AbortSignal.any([init.signal, AbortSignal.timeout(600_000)].filter(Boolean)) }),
 });
 
 /** A Turso read with retries: the platform drops the odd request under load. */
@@ -253,10 +253,10 @@ async function upsertTable(client, table, cols, types, srcCols) {
   const hasRowid = ROWID_TABLES.has(table);
   const tmp = `tmp_${table}`;
   const started = Date.now();
-  await client.query(`create temp table "${tmp}" (like "${table}" including defaults excluding identity excluding generated excluding indexes excluding constraints) on commit drop`);
   await client.query('begin');
   try {
     await client.query("set local session_replication_role = 'replica'");
+    await client.query(`create temp table "${tmp}" (like "${table}" including defaults excluding identity excluding generated excluding indexes excluding constraints) on commit drop`);
     let total = 0;
     let cursor = -1;
     const select = `select rowid as __rowid, * from "${table}" where rowid > ? order by rowid limit ?`;
@@ -270,7 +270,14 @@ async function upsertTable(client, table, cols, types, srcCols) {
       if (rows.length < BATCH) break;
     }
     const q = (c) => `"${c}"`;
-    const nonPk = cols.filter((c) => !pkCols.includes(c));
+    // Identity columns (rowid, the bigint ids) take their value on insert via
+    // OVERRIDING SYSTEM VALUE but cannot appear in the update branch.
+    const { rows: ident } = await client.query(
+      `select column_name from information_schema.columns where table_schema = 'public' and table_name = $1 and is_identity = 'YES'`,
+      [table],
+    );
+    const identity = new Set(ident.map((r) => r.column_name));
+    const nonPk = cols.filter((c) => !pkCols.includes(c) && !identity.has(c));
     const set = nonPk.length ? `do update set ${nonPk.map((c) => `${q(c)} = excluded.${q(c)}`).join(', ')}` : 'do nothing';
     const res = await client.query(
       `insert into "${table}" (${cols.map(q).join(', ')}) overriding system value
@@ -289,11 +296,15 @@ async function verify() {
   let bad = 0;
   for (const table of ORDER) {
     if (SKIP.has(table)) continue;
-    const s = Number((await src.execute(`select count(*) as n from "${table}"`)).rows[0].n);
-    const d = Number((await dst.query(`select count(*) from "${table}"`)).rows[0].count);
+    // A count over 15M rows takes Turso minutes; the rowid tables are compared
+    // by their last rowid (exact for an append-only copy) unless --full.
+    const byRowid = ROWID_TABLES.has(table) && !flag('--full');
+    const expr = byRowid ? 'max(rowid)' : 'count(*)';
+    const s = Number((await read({ sql: `select ${expr} as n from "${table}"` })).rows[0].n);
+    const d = Number((await dst.query(`select ${expr} as n from "${table}"`)).rows[0].n);
     const ok = s === d ? 'ok' : 'DIFF';
     if (ok !== 'ok') bad++;
-    console.log(`${table.padEnd(24)} ${String(s).padStart(10)} ${String(d).padStart(10)} ${ok}`);
+    console.log(`${table.padEnd(24)} ${String(s).padStart(10)} ${String(d).padStart(10)} ${ok}${byRowid ? ' (max rowid)' : ''}`);
   }
   const { rows } = await dst.query(`
     select 'feed_items' as t, count(*) from feed_items i where not exists (select 1 from feeds f where f.id = i.feed_id)
