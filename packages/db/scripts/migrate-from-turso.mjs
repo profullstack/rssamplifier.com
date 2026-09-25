@@ -284,8 +284,14 @@ async function upsertTable(client, table, cols, types, srcCols) {
          select ${cols.map(q).join(', ')} from "${tmp}"
          on conflict (${pkCols.map(q).join(', ')}) ${set}`,
     );
+    // Mirror deletes too: rows the source purged (crawl_log, alert_sent age
+    // out; feeds get removed) must not linger, or verify never matches.
+    const pkList = pkCols.map(q).join(', ');
+    const gone = await client.query(
+      `delete from "${table}" t where not exists (select 1 from "${tmp}" s where (${pkCols.map((c) => `s.${q(c)}`).join(', ')}) = (${pkCols.map((c) => `t.${q(c)}`).join(', ')}))`,
+    );
     await client.query('commit');
-    log(`${table}: upserted ${res.rowCount} of ${total} rows in ${Math.round((Date.now() - started) / 1000)}s`);
+    log(`${table}: upserted ${res.rowCount} of ${total} rows, removed ${gone.rowCount} stale, in ${Math.round((Date.now() - started) / 1000)}s (pk ${pkList})`);
   } catch (err) {
     await client.query('rollback').catch(() => {});
     throw err;
