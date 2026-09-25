@@ -1,6 +1,6 @@
 import { q } from '@rssamplifier/db';
 
-import { CATEGORIES, CATEGORY_SEGMENTS } from './categories.js';
+import { CATEGORIES, CATEGORY_SEGMENTS, viewName } from './categories.js';
 import { db, siteUrl } from './db.js';
 import {
   riverFail,
@@ -24,23 +24,24 @@ import {
  * publish faster than any reader would thank us for, and the per-topic and
  * per-feed rivers already answer "tell me when *this* is published".
  *
- * @param {{ kind?: string|null, format: string, limit?: unknown }} args
+ * One category is the exception, and only because it is bounded. A category
+ * that leads with its entries on the page — `river` in the table, which today
+ * is podcasts — leads with them here too, because this address is the page in
+ * a form a reader app can poll, and a feed that disagreed with the page it is
+ * advertised on is worse than no feed. `?view=shows` asks for the other one,
+ * spelled exactly as the page spells it.
+ *
+ * @param {{ kind?: string|null, format: string, limit?: unknown, view?: unknown }} args
  * @returns {Promise<Response>}
  */
-export async function directoryRiver({ kind: rawKind = null, format: rawFormat, limit: rawLimit }) {
+export async function directoryRiver({
+  kind: rawKind = null,
+  format: rawFormat,
+  limit: rawLimit,
+  view: rawView = null,
+}) {
   const { format, spec } = riverFormat(rawFormat);
   if (!spec) return unsupportedFormat(format);
-
-  // A playlist of feeds is not a thing: a directory entry has nothing to play,
-  // and rendering an empty M3U would look like a bug rather than a refusal.
-  if (spec.media) {
-    return riverFail(
-      format,
-      404,
-      `the directory has no playlist: ${format}`,
-      `A directory entry is a feed, not a file. Try a topic — ${siteUrl()}/topics — or one feed's own ${format}.`,
-    );
-  }
 
   // Both spellings resolve: the plural the URL uses (`/podcasts.rss`, which is
   // the page's own path) and the singular the database stores. The rewrite
@@ -55,11 +56,65 @@ export async function directoryRiver({ kind: rawKind = null, format: rawFormat, 
     return riverFail(format, 404, `no such category: ${asked}`, `Browse ${siteUrl()}`);
   }
 
+  // A playlist of *feeds* is not a thing: a directory entry has nothing to
+  // play, and rendering an empty M3U would look like a bug rather than a
+  // refusal. A category that publishes its entries here is the exception —
+  // /podcasts.m3u is the newest episode of every show in one file, which is
+  // the most useful thing this address could possibly mean.
+  if (spec.media && !category?.river) {
+    return riverFail(
+      format,
+      404,
+      `the directory has no playlist: ${format}`,
+      `A directory entry is a feed, not a file. Try ${siteUrl()}/podcasts.${format}, a topic — ${siteUrl()}/topics — or one feed's own ${format}.`,
+    );
+  }
+
   const limit = riverLimit(rawLimit);
   const client = db();
-  const rows = await q.listFeeds(client, { limit, kind });
-
   const page = category ? `${siteUrl()}${category.path}` : siteUrl();
+  // A playlist is always of entries, whatever `?view=` says. It only got past
+  // the guard above because this category publishes them, and a playlist of
+  // feeds is the empty file that guard exists to prevent.
+  const entries = spec.media || viewName(rawView, category ?? {}) === 'latest';
+
+  if (entries && category && kind) {
+    const rows = await q.latestItems(client, { kinds: [kind], limit });
+
+    return riverResponse({
+      format,
+      spec,
+      channel: {
+        title: `New ${category.item} — RSS Amplifier`,
+        description: `The newest ${category.item} across every ${category.one} in the RSS Amplifier directory.`,
+        link: page,
+        selfUrl: `${page}.${format}`,
+      },
+      // A post's own guid, the identity every other river on the site uses, so
+      // a re-crawl that renumbers our rows cannot make a reader show the same
+      // episode twice.
+      items: rows.map((row) => ({
+        id: String(row.guid ?? row.url ?? ''),
+        // Whose it is, in the title: this is the one river here drawn from
+        // hundreds of publications at once, and a reader app showing a flat
+        // list of episode titles gives no clue which show each came from.
+        title: `${String(row.feed_title ?? '')}: ${String(row.title ?? 'Untitled')}`,
+        url: `${siteUrl()}/${row.feed_slug}/read?p=${encodeURIComponent(String(row.guid))}`,
+        summary: row.summary ? String(row.summary) : undefined,
+        image_url: row.image_url ? String(row.image_url) : (row.feed_image ?? undefined),
+        published_at: row.published_at ? String(row.published_at) : undefined,
+        author: row.author ? String(row.author) : undefined,
+        audio_url: row.audio_url ? String(row.audio_url) : undefined,
+        audio_type: row.audio_type ? String(row.audio_type) : undefined,
+        audio_bytes: row.audio_bytes ?? undefined,
+        audio_seconds: row.audio_seconds ?? undefined,
+      })),
+      filename: `new-${kind}-${category.item}`,
+      src: `directory-${kind}-entries`,
+    });
+  }
+
+  const rows = await q.listFeeds(client, { limit, kind });
 
   const channel = {
     title: category ? `New ${category.noun} — RSS Amplifier` : 'New in RSS Amplifier',

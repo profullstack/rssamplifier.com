@@ -18,5 +18,12 @@ export async function GET(req, { params }) {
   const { kind, format } = await params;
   const url = new URL(req.url);
 
-  return directoryRiver({ kind, format, limit: url.searchParams.get('limit') });
+  return directoryRiver({
+    kind,
+    format,
+    limit: url.searchParams.get('limit'),
+    // The caller's own query does survive the rewrite, which is what lets
+    // `/podcasts.rss?view=shows` ask for the other half of the page.
+    view: url.searchParams.get('view'),
+  });
 }

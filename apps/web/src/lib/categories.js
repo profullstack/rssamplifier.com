@@ -45,10 +45,16 @@ export const CATEGORIES = {
     noun: 'podcasts',
     one: 'podcast',
     title: 'Podcasts',
-    lede: 'Shows with audio in their feed and a publisher who filled in the podcast namespaces, newest first. Episodes play in the reader while you read the show notes.',
+    lede: 'Every show with audio in its feed and a publisher who filled in the podcast namespaces. The newest episodes across all of them first — press play on any of them here.',
     schemaType: 'PodcastSeries',
+    entrySchemaType: 'PodcastEpisode',
     item: 'episodes',
     entry: 'episode',
+    // The category leads with what has just been published rather than with
+    // the feeds that published it. Only podcasts for now: it is the category
+    // where "what is new" is unarguably the question being asked, and the one
+    // whose entries the site can play where they stand. See CategoryIndex.
+    river: true,
   },
   music: {
     path: '/music',
@@ -122,3 +128,52 @@ export const CATEGORIES = {
 export const CATEGORY_SEGMENTS = new Map(
   Object.entries(CATEGORIES).map(([kind, meta]) => [meta.path.replace(/^\//, ''), kind]),
 );
+
+/**
+ * Read `?view=` as one of the two ways to look at a category.
+ *
+ * 'latest' is what has just been published across the whole category; 'shows'
+ * is the directory of who is in it. Only categories that say `river` in the
+ * table above offer the first, and for those it is the default — somebody
+ * opening /podcasts came for episodes, not for a list of feeds in the order we
+ * happened to index them.
+ *
+ * Anything unrecognised falls back the way a bad `?page=` does, and for the
+ * same reason: this is a parameter in a URL people edit, share and guess at,
+ * and a directory listing has no business refusing to render over one.
+ *
+ * @param {unknown} raw
+ * @param {{ river?: boolean }} [category]
+ * @returns {'latest'|'shows'}
+ */
+export function viewName(raw, category = {}) {
+  if (!category.river) return 'shows';
+
+  // A repeated parameter arrives as an array. Taking the first spelling rather
+  // than letting `String(['a','b'])` coerce to "a,b" — which matches nothing
+  // and would silently fall back — so `?view=shows&view=shows` means what it
+  // plainly says.
+  const value = String((Array.isArray(raw) ? raw[0] : raw) ?? '').toLowerCase();
+  return value === 'shows' ? 'shows' : 'latest';
+}
+
+/**
+ * A link to one page of one view of a category.
+ *
+ * Page 1 of the default view is the bare path, never `?page=1` and never
+ * `?view=latest`: the same listing under two URLs is a duplicate-content signal
+ * to the crawlers this directory exists for.
+ *
+ * @param {string} path
+ * @param {'latest'|'shows'} view
+ * @param {number} page
+ * @returns {string}
+ */
+export function listHref(path, view, page) {
+  const params = new URLSearchParams();
+  if (view === 'shows') params.set('view', 'shows');
+  if (page > 1) params.set('page', String(page));
+
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}

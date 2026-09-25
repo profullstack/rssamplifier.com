@@ -1,4 +1,5 @@
 import { newId, nowIso } from './client.js';
+import { kindFilter, normalizeKinds } from './queries.js';
 
 /**
  * Reading and writing the people behind the feeds.
@@ -955,17 +956,24 @@ export const RIVER_AUTHOR_FEEDS = 20;
  * learn which feeds are theirs, which is one round trip per followed person
  * before a single post has been read.
  *
+ * `kinds` narrows to feeds of those categories, applied inside `picked` for the
+ * reason itemsForTopic gives: the cap counts the feeds that can still
+ * contribute rather than spending itself on the ones about to be filtered out.
+ *
  * @param {Client} db
  * @param {string} authorId
  * @param {number} [limit]
+ * @param {{ kinds?: string[]|string|null }} [opts]
  * @returns {Promise<object[]>}
  */
-export async function postsByAuthorId(db, authorId, limit = 60) {
+export async function postsByAuthorId(db, authorId, limit = 60, opts = {}) {
+  const filter = kindFilter(normalizeKinds(opts.kinds ?? null));
+
   const { rows } = await db.execute({
     sql: `with picked as materialized (
             select fa.feed_id from feed_authors fa
             join feeds f on f.id = fa.feed_id and f.status <> 'dead'
-            where fa.author_id = ?
+            where fa.author_id = ?${filter.sql}
             limit ?
           )
           select i.guid, i.title, i.url, i.summary, i.published_at, i.created_at,
@@ -981,7 +989,7 @@ export async function postsByAuthorId(db, authorId, limit = 60) {
           join feeds f on f.id = i.feed_id
           order by i.published_at desc nulls last, i.created_at desc
           limit ?`,
-    args: [authorId, RIVER_AUTHOR_FEEDS, limit, limit],
+    args: [authorId, ...filter.args, RIVER_AUTHOR_FEEDS, limit, limit],
   });
 
   return rows;
