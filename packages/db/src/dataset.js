@@ -46,7 +46,7 @@ import { newId, nowIso } from './client.js';
  * rowid is, so no two rows sharing a timestamp can straddle a page boundary
  * ambiguously.
  *
- * @typedef {import('@libsql/client').Client} Client
+ * @typedef {import('./pg.js').PgClient} Client
  */
 
 /**
@@ -558,13 +558,13 @@ export async function datasetAuthorPage(
   const { rows } = await db.execute({
     sql: `select a.id, a.slug, a.name, a.bio, a.avatar_url, a.site_url, a.confidence,
                  a.created_at, a.updated_at,
-                 (select json_group_array(json_object(
+                 coalesce((select json_agg(json_build_object(
                             'network', l.network,
                             'url', l.url,
                             'handle', l.handle,
                             'source', l.source,
                             'verified', l.verified))
-                    from author_links l where l.author_id = a.id) as links
+                    from author_links l where l.author_id = a.id)::text, '[]') as links
           from authors a
           where 1 = 1
             ${since ? 'and a.created_at >= ?' : ''}

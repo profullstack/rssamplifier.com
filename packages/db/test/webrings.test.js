@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect, migrate, q, webrings } from '../index.js';
+import { q, webrings } from '../index.js';
+import { connectTest } from '../src/testdb.js';
 
 /**
  * Rings and their members, against a file database.
@@ -15,7 +13,6 @@ import { connect, migrate, q, webrings } from '../index.js';
  * under them and every pasted "next" link would point somewhere new.
  */
 
-let dir;
 let db;
 /** @type {Record<string, { id: string, slug: string }>} */
 const feeds = {};
@@ -48,9 +45,7 @@ async function feed(slug, opts = {}) {
 }
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-webrings-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 
   // Ring order is the topic's own strength, strongest first. Insertion order
   // and the alphabet are both deliberately different from it, so the test
@@ -65,7 +60,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a topic ring is seeded strongest first, from the feeds that can link', async () => {
@@ -236,11 +231,11 @@ test('ring topics come from what publishers file under, never the commonest word
   // is a two-letter tag. Neither is a subject.
   for (const who of ['carol', 'alice', 'bob', 'other']) {
     await db.execute({
-      sql: 'insert or ignore into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?)',
+      sql: 'insert into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?) on conflict do nothing',
       args: [feeds[who].id, 'one', 'one', 1, 900, 'content'],
     });
     await db.execute({
-      sql: 'insert or ignore into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?)',
+      sql: 'insert into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?) on conflict do nothing',
       args: [feeds[who].id, 'de', 'de', 1, 50, 'category'],
     });
   }
@@ -248,7 +243,7 @@ test('ring topics come from what publishers file under, never the commonest word
 
   for (const who of ['carol', 'alice', 'bob']) {
     await db.execute({
-      sql: 'insert or ignore into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?)',
+      sql: 'insert into feed_keywords (feed_id, slug, keyword, words, count, source) values (?, ?, ?, ?, ?, ?) on conflict do nothing',
       args: [feeds[who].id, 'uncategorized', 'Uncategorized', 1, 40, 'category'],
     });
   }

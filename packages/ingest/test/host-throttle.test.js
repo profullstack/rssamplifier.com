@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, beforeEach, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q } from '@rssamplifier/db';
+import { q } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { crawlDue } from '../src/crawl.js';
 
@@ -26,17 +23,16 @@ import { crawlDue } from '../src/crawl.js';
  * spread out rather than as the same pile-up one interval later.
  */
 
-let dir;
 let db;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rsa-host-throttle-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  // A fresh database per test, as the SQLite version made a fresh file.
+  db?.close();
+  db = await connectTest();
 });
 
 after(async () => {
-  if (dir) await rm(dir, { recursive: true, force: true });
+  db?.close();
 });
 
 /**

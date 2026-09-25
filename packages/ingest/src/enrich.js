@@ -38,7 +38,7 @@ import { authors as a } from '@rssamplifier/db';
  * blog; a name with a Mastodon account and a homepage is a person you can
  * actually talk to.
  *
- * @typedef {import('@libsql/client').Client} Client
+ * @typedef {import('@rssamplifier/db/src/pg.js').PgClient} Client
  */
 
 /**

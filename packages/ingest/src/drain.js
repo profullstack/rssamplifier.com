@@ -24,7 +24,7 @@ const SLICE = 2000;
  * already in the directory is skipped — but the entries table is what makes the
  * resume cheap.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ slice?: number, offsetMinutes?: number, ratePerMinute?: number }} [opts]
  * @returns {Promise<{ ran: boolean, submissionId?: string, queued?: number, skipped?: number, invalid?: number, remaining?: number, finished?: boolean }>}
  */

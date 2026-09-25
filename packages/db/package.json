@@ -5,7 +5,9 @@
   "type": "module",
   "main": "index.js",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./src/pg.js": "./src/pg.js",
+    "./src/testdb.js": "./src/testdb.js"
   },
   "files": [
     "index.js",
@@ -20,6 +22,8 @@
     "@libsql/client": "^0.15.9",
     "@rssamplifier/feed": "workspace:*",
     "bullmq": "^6.1.2",
-    "ioredis": "^6.0.0"
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.0",
+    "pg-copy-streams": "^6.0.6"
   }
 }

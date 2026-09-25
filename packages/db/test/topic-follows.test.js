@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { connectTest } from '../src/testdb.js';
 import * as a from '../src/accounts.js';
 import * as q from '../src/queries.js';
 
@@ -17,17 +13,14 @@ import * as q from '../src/queries.js';
  * the same layer.
  */
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-topic-follows-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a topic and one category of it are two separate follows', async () => {

@@ -1,49 +1,51 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect } from '../src/client.js';
+import { connectTest } from '../src/testdb.js';
 import { migrate } from '../src/migrate.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-migrate-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
+  // connectTest() has already run migrate() once; every test here starts from
+  // a settled ledger.
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a migration file that half-applied can still be completed', async () => {
-  // Reproduces the outage: 0019 added feed_items.cluster_key, then failed
-  // building an index. Nothing was recorded, so the next boot re-ran the ALTER
-  // and died on "duplicate column name" before reaching the failed statement.
-  await migrate(db);
-
+  // Reproduces the outage: under SQLite, 0019 added feed_items.cluster_key and
+  // then failed building an index. Nothing was recorded, so the next boot re-ran
+  // the ALTER and died on "duplicate column name" before reaching the failed
+  // statement. Postgres has the same exposure: each statement is its own
+  // autocommit, so a file that dies halfway leaves its earlier `create`s in
+  // place with no ledger row, and the next boot must step over them to reach
+  // the one that failed. Every statement in 0001_schema.sql is `if not exists`,
+  // so the re-run below succeeds statement by statement; a bare `create` would
+  // report "already exists" instead, which migrate() tolerates the same way.
   const { rows } = await db.execute('select name from _migrations');
   const recorded = rows.map((r) => String(r.name));
-  assert.ok(recorded.includes('0019_item_clusters.sql'), 'the run completed');
+  assert.ok(recorded.includes('0001_schema.sql'), 'the run completed');
 
-  // Put the ledger back to the half-applied state: the column is there, the
+  // Put the ledger back to the half-applied state: every object is there, the
   // file is not recorded. Booting again must recover rather than crash.
-  await db.execute("delete from _migrations where name = '0019_item_clusters.sql'");
+  await db.execute("delete from _migrations where name = '0001_schema.sql'");
 
   const second = await migrate(db);
   assert.ok(
-    second.applied.includes('0019_item_clusters.sql'),
+    second.applied.includes('0001_schema.sql'),
     'the half-applied file is re-run and this time recorded',
   );
 
-  // And everything after it, which had been unreachable, now lands too.
+  // And the ledger is whole again, so the next boot has nothing to do.
   const after = await db.execute('select name from _migrations');
-  assert.ok(
-    after.rows.map((r) => String(r.name)).includes('0020_api_keys.sql'),
-    'a later migration is no longer blocked by the stuck one',
+  assert.deepEqual(
+    after.rows.map((r) => String(r.name)),
+    ['0001_schema.sql'],
+    'recorded exactly once',
   );
 });
 

@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, discovery, q } from '@rssamplifier/db';
+import { discovery, q } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { discoverFromOwnTopics } from '../src/topics.js';
 
 /** A database with a topics table already populated. */
 async function withTopics(rows) {
-  const dir = await mkdtemp(join(tmpdir(), 'rssamp-topics-'));
-  const db = connect({ url: `file:${join(dir, 't.db')}` });
-  await migrate(db);
+  const db = await connectTest();
 
   for (const [slug, keyword, feedCount] of rows) {
     await db.execute({
@@ -21,11 +16,11 @@ async function withTopics(rows) {
     });
   }
 
-  return { db, dir };
+  return { db };
 }
 
 test('the topics searched are subjects, not the words every feed uses', async () => {
-  const { db, dir } = await withTopics([
+  const { db } = await withTopics([
     // What popularity alone selects for, and what the first live run actually
     // searched: the words every blog on earth uses.
     ['one', 'one', 10300],
@@ -43,13 +38,13 @@ test('the topics searched are subjects, not the words every feed uses', async ()
   const keywords = await discovery.unsearchedTopics(db, { limit: 5 });
   assert.deepEqual(keywords, ['home lab', 'open source']);
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('half-decoded markup never becomes a search term', async () => {
   // These are real rows from the live directory: "rsquo" was the seventh most
   // common topic of all, because every "I&rsquo;ve" contributed one.
-  const { db, dir } = await withTopics([
+  const { db } = await withTopics([
     ['rsquo-ve', 'rsquo ve', 318],
     ['xa-xa-xa', '#xa #xa #xa', 280],
     ['apos-ve', 'apos ve', 201],
@@ -60,11 +55,11 @@ test('half-decoded markup never becomes a search term', async () => {
 
   assert.deepEqual(await discovery.unsearchedTopics(db, { limit: 10 }), ['ai agents']);
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a keyword anybody has already searched is never searched again', async () => {
-  const { db, dir } = await withTopics([
+  const { db } = await withTopics([
     ['home-lab', 'home lab', 40],
     ['open-source', 'open source', 25],
   ]);
@@ -75,11 +70,11 @@ test('a keyword anybody has already searched is never searched again', async () 
 
   assert.deepEqual(await discovery.unsearchedTopics(db), ['open source']);
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('without a search key nothing is spent and nothing is queued', async () => {
-  const { db, dir } = await withTopics([['home-lab', 'home lab', 40]]);
+  const { db } = await withTopics([['home-lab', 'home lab', 40]]);
 
   let called = false;
   const result = await discoverFromOwnTopics(db, {
@@ -93,11 +88,11 @@ test('without a search key nothing is spent and nothing is queued', async () => 
   assert.equal(result.reason, 'no-api-key');
   assert.equal(called, false, 'a metered call must not be made without a key');
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a directory with nothing new to search says so rather than searching noise', async () => {
-  const { db, dir } = await withTopics([['tiny', 'tiny thing', 1]]);
+  const { db } = await withTopics([['tiny', 'tiny thing', 1]]);
 
   const result = await discoverFromOwnTopics(db, {
     env: { VALUESERP_API_KEY: 'k' },
@@ -107,11 +102,11 @@ test('a directory with nothing new to search says so rather than searching noise
   assert.equal(result.ran, false);
   assert.equal(result.reason, 'nothing-new');
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a pass queues its keywords and stops, leaving the searching to the poller', async () => {
-  const { db, dir } = await withTopics([
+  const { db } = await withTopics([
     ['home-lab', 'home lab', 40],
     ['open-source', 'open source', 25],
     // Single word: excluded however popular, because a single word cannot be
@@ -143,15 +138,13 @@ test('a pass queues its keywords and stops, leaving the searching to the poller'
   assert.equal(passed.opts.searchBudgetMs, 0);
   assert.equal(passed.opts.inlineLimit, 0);
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('topics come from the directory the crawler actually built', async () => {
   // End to end against the real rollup rather than hand-inserted topics: two
   // feeds sharing a keyword is what makes it a topic worth searching.
-  const dir = await mkdtemp(join(tmpdir(), 'rssamp-topics-e2e-'));
-  const db = connect({ url: `file:${join(dir, 'e.db')}` });
-  await migrate(db);
+  const db = await connectTest();
 
   const a = await q.insertFeed(db, { slug: 'a', feed_url: 'https://a.example/f', title: 'A' });
   const b = await q.insertFeed(db, { slug: 'b', feed_url: 'https://b.example/f', title: 'B' });
@@ -165,5 +158,5 @@ test('topics come from the directory the crawler actually built', async () => {
 
   assert.deepEqual(await discovery.unsearchedTopics(db, { minFeeds: 2 }), ['home lab']);
 
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });

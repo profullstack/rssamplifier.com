@@ -1,21 +1,16 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect, migrate, q, accounts, authors, profiles } from '../index.js';
+import { q, accounts, authors, profiles } from '../index.js';
+import { connectTest } from '../src/testdb.js';
 
-let dir;
 let db;
 let ada;
 let podcast;
 let blog;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-profiles-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 
   podcast = await q.insertFeed(db, {
     slug: 'analytical-engine',
@@ -61,7 +56,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('no row means no profile: the generated file stands', async () => {

@@ -195,7 +195,7 @@ export async function GET(req) {
  * One lane, shaped for both callers: entries for a list, and the subset the
  * dock can actually play, already resolved to a source.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} userId
  * @param {'read'|'listen'|'watch'} lane
  * @param {boolean} [done]

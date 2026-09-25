@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect, nowIso } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { nowIso } from '../src/client.js';
+import { connectTest } from '../src/testdb.js';
 import * as q from '../src/queries.js';
 
 /**
@@ -15,13 +12,10 @@ import * as q from '../src/queries.js';
  * cut of the same shape, and rebuilding it per test would be four migrations to
  * ask four questions.
  */
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-groups-'));
-  db = connect({ url: `file:${join(dir, 'groups.db')}` });
-  await migrate(db);
+  db = await connectTest();
 
   for (const [slug, kind] of [
     ['a-blog', 'blog'],
@@ -58,7 +52,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a topic reports how many feeds it has of each category, in one query', async () => {
@@ -122,9 +116,7 @@ test('the playlist takes the filter and still carries only what has a file', asy
 });
 
 test('a dead feed leaves its category count behind', async () => {
-  const other = await mkdtemp(join(tmpdir(), 'rssamp-groups-dead-'));
-  const db2 = connect({ url: `file:${join(other, 'dead.db')}` });
-  await migrate(db2);
+  const db2 = await connectTest();
 
   const { id } = await q.insertFeed(db2, {
     slug: 'gone',
@@ -145,5 +137,5 @@ test('a dead feed leaves its category count behind', async () => {
     'a dead feed must not make a sub-group look populated',
   );
 
-  await rm(other, { recursive: true, force: true });
+  db2.close();
 });

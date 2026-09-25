@@ -1,9 +1,9 @@
 // Read-only: time the statements the ring seed runs, against the database in
-// the environment, with their query plans. `node --env-file=<env> scripts/time-ring-queries.mjs one news`
-import { createClient } from '@libsql/client';
+// the environment (DATABASE_URL), with their query plans.
+//   node --env-file=<env> scripts/time-ring-queries.mjs one news
+import { connect } from '../index.js';
 
-const env = process.env;
-const db = createClient({ url: env['TURSO_DATABASE_URL'], authToken: env['TURSO_AUTH_TOKEN'] });
+const db = connect();
 const slugs = process.argv.slice(2).length ? process.argv.slice(2) : ['one'];
 
 const statements = (slug) => ({
@@ -19,12 +19,15 @@ const statements = (slug) => ({
     sql: `select f.id from feeds f where f.status = 'active' and f.site_url is not null and f.site_url <> '' and exists (select 1 from feed_keywords k where k.feed_id = f.id and k.slug = ?) order by f.created_at asc, f.id asc limit ?`,
     args: [slug, 100],
   },
+  // These two carried an `indexed by feed_keywords_slug_idx` hint on SQLite;
+  // Postgres has no such hint and its planner takes the index on its own (the
+  // plan printed below is how to check that it did).
   candidates_indexed: {
-    sql: `select f.id from feed_keywords k indexed by feed_keywords_slug_idx cross join feeds f on f.id = k.feed_id where k.slug = ? and f.status = 'active' and f.site_url is not null and f.site_url <> '' order by k.count desc limit ?`,
+    sql: `select f.id from feed_keywords k cross join feeds f on f.id = k.feed_id where k.slug = ? and f.status = 'active' and f.site_url is not null and f.site_url <> '' order by k.count desc limit ?`,
     args: [slug, 100],
   },
   category_count_indexed: {
-    sql: `select count(*) as n from feed_keywords k indexed by feed_keywords_slug_idx cross join feeds f on f.id = k.feed_id where k.slug = ? and k.source = 'category' and f.status = 'active' and f.site_url is not null and f.site_url <> ''`,
+    sql: `select count(*) as n from feed_keywords k cross join feeds f on f.id = k.feed_id where k.slug = ? and k.source = 'category' and f.status = 'active' and f.site_url is not null and f.site_url <> ''`,
     args: [slug],
   },
   title_from_rollup: { sql: `select keyword from topics where slug = ?`, args: [slug] },
@@ -46,7 +49,7 @@ for (const slug of slugs) {
   console.log(`\n== ${slug}: ${rows.rows[0].n} keyword rows`);
   for (const [name, st] of Object.entries(statements(slug))) {
     if (name === 'candidates_exists' || name === 'candidates_join') continue;
-    const plan = await db.execute({ sql: `explain query plan ${st.sql}`, args: st.args });
+    const plan = await db.execute({ sql: `explain ${st.sql}`, args: st.args });
     const started = Date.now();
     let result = 'ok';
     try {
@@ -56,6 +59,8 @@ for (const slug of slugs) {
       result = `FAILED ${String(e.message).slice(0, 80)}`;
     }
     console.log(`${name}: ${Date.now() - started} ms, ${result}`);
-    for (const p of plan.rows) console.log('   plan:', p.detail);
+    for (const p of plan.rows) console.log('   plan:', p['QUERY PLAN']);
   }
 }
+
+db.close();

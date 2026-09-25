@@ -16,7 +16,7 @@ import { dueSources, sourceById } from './sources.js';
  * for a year is the most wasteful thing discovery can do, and a curated list
  * is mostly feeds we already have.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} sourceId
  * @param {{ fetchImpl?: typeof fetch, limit?: number, signal?: AbortSignal }} [opts]
  * @returns {Promise<{ source: string, runId: string|null, found: number, queued: number, error: string|null }>}
@@ -98,7 +98,7 @@ export async function runSource(db, sourceId, opts = {}) {
  * daemon that reads four lists the moment it boots — and again after any
  * restart — is a daemon that gets blocked.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ now?: Date, fetchImpl?: typeof fetch, max?: number }} [opts]
  * @returns {Promise<Array<{ source: string, runId: string|null, found: number, queued: number, error: string|null }>>}
  */
@@ -119,7 +119,7 @@ export async function runDueSources(db, opts = {}) {
 /**
  * When each source last ran.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @returns {Promise<Array<{ id: string, label: string, category: string|null, curated: boolean, lastRunAt: string|null }>>}
  */
 export async function sourceSchedule(db) {
@@ -143,7 +143,7 @@ export async function sourceSchedule(db) {
  * four hundred candidates and produces two feeds is four hundred requests to
  * somebody else's servers for two rows.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @returns {Promise<Record<string, number>>}
  */
 export async function sourceYield(db) {

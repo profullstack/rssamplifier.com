@@ -374,7 +374,7 @@ export async function POST(req) {
  * out later, and they would sit in the table until it got round to it. What is
  * dropped is still counted, by the caller, so the totals add up to what arrived.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} submissionId
  * @param {Array<{ url?: string, title?: string, siteUrl?: string|null }>} catalogue
  * @returns {Promise<number>} rows written

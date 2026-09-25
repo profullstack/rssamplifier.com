@@ -1,24 +1,17 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { connectTest } from '../src/testdb.js';
 import * as a from '../src/accounts.js';
 import * as q from '../src/queries.js';
 import * as t from '../src/translations.js';
 
-let dir;
 let db;
 let itemId;
 let userId;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-translations-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 
   const feed = await q.insertFeed(db, {
     slug: 'proxmox-forum',
@@ -45,7 +38,7 @@ before(async () => {
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a post with no translation reads back as null', async () => {

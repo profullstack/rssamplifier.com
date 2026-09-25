@@ -102,7 +102,7 @@ export function nextIntervalMinutes(newItems, currentMinutes = MIN_INTERVAL) {
  * widen them again next month. The stored items are everything we have ever
  * seen it publish.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} feedId
  * @param {{ title?: string, description?: string, categories?: string[] }} feed
  * @returns {Promise<number>} topics stored
@@ -173,7 +173,7 @@ export function topicsFrom(feed = {}, storedItems = []) {
  * resolveFeed would also spend nine speculative requests per crawl guessing at
  * feed paths that were already ruled out when it was submitted.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ id: string, feed_url: string, error_count?: number, fetch_interval_minutes?: number, source_kind?: string, item_count?: number }} feed
  * @param {{ resolve?: typeof resolveFeed, scrape?: typeof scrapeFeed }} [opts]
  *   injected by the tests, the way `enrichFeedAuthors` takes its fetcher: the
@@ -635,7 +635,7 @@ function hostOf(feed) {
  * called synchronously with a plain object and is never awaited — a slow or
  * throwing listener must not hold up or break the crawl.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {number} [batchSize]
  * @param {number} [concurrency] hosts crawled at once
  * @param {((event: { at: string, event: 'feed', status: 'ok'|'error', subject: string, slug: string|null, amount: number|null, detail: string|null, ms: number }) => void)|null} [onEvent]
@@ -753,7 +753,7 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
  *     them and nothing was even sent, so a per-feed line would put hundreds of
  *     healthy feeds on the failure panel. One line for the host says it.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {Array<{ id: string }>} rest feeds left unread on this host
  * @param {number} minutes how long before the first is tried again
  * @param {((event: object) => void)|null} onEvent

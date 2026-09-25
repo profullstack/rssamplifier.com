@@ -250,7 +250,7 @@ function hostOf(value) {
  * carrying on would spend the rest of the batch's wall-clock re-reading the
  * same refusal.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{
  *   apiKey: string,
  *   monthlyBudget: number,

@@ -1,26 +1,20 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q } from '@rssamplifier/db';
+import { q } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { importFeeds, importOpml } from '../src/import.js';
 import { submitCatalogue } from '../src/submit.js';
 import { nextIntervalMinutes, groupByHost } from '../src/crawl.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-import-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('importFeeds stores catalogue rows without fetching them', async () => {

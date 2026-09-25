@@ -83,7 +83,7 @@ const TOPICS_PER_PASS = 8;
 /**
  * Deliver everything owed, to everyone owed it.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{
  *   users?: number,
  *   perSource?: number,
@@ -134,7 +134,7 @@ export async function deliverAlerts(db, opts = {}) {
 /**
  * One account's turn.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ id: string, email: string }} user
  * @param {object} opts
  * @returns {Promise<{ items: number, sent: number, failed: number }>}
@@ -172,7 +172,7 @@ async function deliverForUser(db, user, opts) {
 /**
  * Read everything new from everything this account has alerting.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} userId
  * @param {string} cursor
  * @param {object} opts
@@ -273,7 +273,7 @@ export function authorVia(follow) {
  * and the watermark stopping at its last row is what guarantees the rest is
  * picked up next pass instead of being stepped over.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} userId
  * @param {Array<{ via: object, rows: object[], capped: boolean }>} sources
  * @param {string} cursor
@@ -340,7 +340,7 @@ export async function selectBatch(db, userId, sources, cursor, itemsPerMessage) 
  * own channel, which is what lets a channel retire itself after enough failures
  * without taking the account's alerts down with it.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {{ id: string, email: string }} user
  * @param {object[]} items
  * @param {object} opts

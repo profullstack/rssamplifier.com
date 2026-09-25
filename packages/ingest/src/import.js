@@ -23,7 +23,7 @@ const SPREAD_MINUTES = 240;
  * makes the due-count useless as a health signal; spreading it turns the import
  * into a steady drip the poller can actually keep up with.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {Array<{ url: string, title?: string, siteUrl?: string }>} entries
  * @param {{ spreadMinutes?: number, submissionId?: string|null, onProgress?: (p: { inserted: number, seen: number, total: number }) => void }} [opts]
  * @returns {Promise<{ inserted: number, skipped: number, invalid: number, total: number }>}
@@ -91,7 +91,7 @@ export async function importFeeds(db, entries, opts = {}) {
 /**
  * Import an OPML subscription list in bulk.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} xml
  * @param {object} [opts] forwarded to importFeeds
  * @returns {Promise<{ inserted: number, skipped: number, invalid: number, total: number }>}

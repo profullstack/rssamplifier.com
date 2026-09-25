@@ -136,7 +136,7 @@ function published(row) {
  * page lists what you follow above the river, and the feed's own description
  * counts them.
  *
- * @param {import('@libsql/client').Client} client
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} client
  * @param {string} userId
  * @param {{ limit?: number, riverTopics?: number, riverAuthors?: number }} [opts]
  * @returns {Promise<{

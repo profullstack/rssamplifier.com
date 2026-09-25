@@ -60,7 +60,7 @@ export function writeFailure(job, err) {
 /**
  * Lines held before the oldest start being dropped.
  *
- * A cap rather than an unbounded queue: if Turso is unreachable the crawl keeps
+ * A cap rather than an unbounded queue: if the database is unreachable the crawl keeps
  * running and keeps producing lines, and a log buffer is not worth an
  * out-of-memory kill. Dropping the oldest keeps the tail — which is the part a
  * live view is showing — and the count of what was dropped goes out with the

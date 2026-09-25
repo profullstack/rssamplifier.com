@@ -41,8 +41,8 @@ import { shouldRunRsshub, startRsshub } from './rsshub.js';
 
 const env = process.env;
 
-if (!env['TURSO_DATABASE_URL']) {
-  console.error('TURSO_DATABASE_URL must be set');
+if (!env['DATABASE_URL']) {
+  console.error('DATABASE_URL must be set (postgres://...)');
   process.exit(1);
 }
 
@@ -1071,9 +1071,9 @@ async function statsTick() {
 }
 
 /**
- * The one process that actually writes to Turso.
+ * The one process that actually writes to the database, when WRITE_QUEUE=1.
  *
- * SQLite permits a single writer, and until now the closest we could get was
+ * SQLite permitted a single writer, and until now the closest we could get was
  * one writer *per process* — `serializeWrites` queues inside whichever process
  * it is loaded in, so the poller and the web service still contended with each
  * other. The queue now lives in Redis and exactly one consumer drains it, which

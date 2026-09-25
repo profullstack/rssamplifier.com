@@ -1,27 +1,20 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-import { connect } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { connectTest } from '../src/testdb.js';
 import * as q from '../src/queries.js';
 
-let dir;
 let db;
 
 /** An hour ago, a day ago, and so on — the backlog is always older than `now`. */
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-express-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a hand-submitted feed is crawled before a backlog that is older than it', async () => {

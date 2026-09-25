@@ -19,7 +19,7 @@ export { SESSION_COOKIE, sessionCookieOptions };
  * The caller sets the cookie, because only it knows whether it is answering a
  * form post or a fetch — this layer has no opinion about responses.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} userId
  * @param {{ userAgent?: string|null, ipHash?: string|null }} [meta]
  * @returns {Promise<{ token: string, expiresAt: string }>}
@@ -44,7 +44,7 @@ export async function startSession(db, userId, meta = {}) {
 /**
  * The account behind a cookie value, or null.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string|undefined|null} token
  * @returns {Promise<object|null>}
  */
@@ -59,7 +59,7 @@ export async function resolveSession(db, token) {
  * Only the presented session is dropped, not every session the account has:
  * signing out of a laptop should not sign out the phone.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string|undefined|null} token
  */
 export async function endSession(db, token) {

@@ -8,7 +8,7 @@
 
 import { newId, nowIso } from './client.js';
 
-/** @typedef {import('@libsql/client').Client} Client */
+/** @typedef {import('./pg.js').PgClient} Client */
 
 /** Statements per libSQL batch, matching the bulk import. */
 const CHUNK = 500;
@@ -550,14 +550,14 @@ export async function eventsForRun(db, runId, opts = {}) {
   if (opts.tail) {
     const { rows } = await db.execute({
       sql: eventsSql('desc'),
-      args: [runId, since, limit],
+      args: [runId, since, since, runId, since, since, limit],
     });
     return rows.reverse();
   }
 
   const { rows } = await db.execute({
     sql: eventsSql('asc'),
-    args: [runId, since, limit],
+    args: [runId, since, since, runId, since, since, limit],
   });
 
   return rows;
@@ -583,8 +583,8 @@ function eventsSql(direction) {
                    k.result_count as amount,
                    k.searched_at  as at
             from discovery_keywords k
-            where k.run_id = ?1 and k.searched_at is not null
-              and (?2 is null or k.searched_at > ?2)
+            where k.run_id = ? and k.searched_at is not null
+              and (?::text is null or k.searched_at > ?)
 
             union all
 
@@ -596,11 +596,11 @@ function eventsSql(direction) {
                    c.score,
                    c.checked_at
             from discovery_candidates c
-            where c.run_id = ?1 and c.checked_at is not null
-              and (?2 is null or c.checked_at > ?2)
-          )
+            where c.run_id = ? and c.checked_at is not null
+              and (?::text is null or c.checked_at > ?)
+          ) as e
           order by at ${direction === 'desc' ? 'desc' : 'asc'}
-          limit ?3`;
+          limit ?`;
 }
 
 /**

@@ -80,7 +80,7 @@ test('a failed write loses its lines and reports the gap once', async () => {
 
   const recorder = createRecorder({
     append: async (rows) => {
-      if (fail) throw new Error('turso unreachable');
+      if (fail) throw new Error('database unreachable');
       seen.push(rows);
     },
     onError: (err) => errors.push(String(err.message)),

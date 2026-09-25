@@ -1,24 +1,18 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q } from '@rssamplifier/db';
+import { q } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { enrichDue } from '../src/enrich.js';
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-enrich-pool-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 /**

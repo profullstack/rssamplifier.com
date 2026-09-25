@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q, authors as a } from '@rssamplifier/db';
+import { q, authors as a } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { enrichFeedAuthors } from '../src/enrich.js';
 
@@ -16,17 +13,14 @@ import { enrichFeedAuthors } from '../src/enrich.js';
 // case is a real one: felginep.github.io publishes a blog with no rel="me", no
 // h-card and exactly one outbound link, to the Jekyll theme its author used.
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-platforms-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 async function seedFeed(feed) {

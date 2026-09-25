@@ -55,7 +55,7 @@ const PREFETCH_DEPTH = 6;
  * slugify the same way — so without this, two blogs called "Notes" in the same
  * upload would silently become one.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {Array<{ url: string, title?: string, siteUrl?: string|null }>} entries
  * @param {{
  *   submissionId?: string|null,
@@ -157,7 +157,7 @@ export async function queueFeeds(db, entries, opts = {}) {
  * resolved too: an OPML with three feeds called "Weeknotes" gets weeknotes,
  * weeknotes-2 and weeknotes-3 rather than one row and two silent losses.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {Array<{ url: string, title: string }>} entries
  * @returns {Promise<string[]>}
  */

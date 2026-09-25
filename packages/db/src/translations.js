@@ -7,7 +7,7 @@ import { nowIso } from './client.js';
  * knows how to look one up, put one back, and answer "which languages is this
  * directory actually full of".
  *
- * @typedef {import('@libsql/client').Client} Client
+ * @typedef {import('./pg.js').PgClient} Client
  */
 
 /**
@@ -190,7 +190,7 @@ export async function recordUsage(db, userId, day) {
   await db.execute({
     sql: `insert into translation_usage (user_id, day, count)
           values (?, ?, 1)
-          on conflict (user_id, day) do update set count = count + 1`,
+          on conflict (user_id, day) do update set count = translation_usage.count + 1`,
     args: [userId, day],
   });
 

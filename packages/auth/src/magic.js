@@ -44,7 +44,7 @@ export function looksLikeEmail(email) {
  * and there is no reason to hand that out — the caller shows the same "check
  * your email" either way.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} email
  * @param {string} siteUrl
  * @returns {Promise<{ ok: boolean, error?: string }>}
@@ -87,7 +87,7 @@ export async function requestSignInLink(db, email, siteUrl) {
 /**
  * Spend a link and return the account it belongs to.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} token
  * @returns {Promise<{ ok: true, userId: string, email: string, created: boolean } | { ok: false, error: string }>}
  */

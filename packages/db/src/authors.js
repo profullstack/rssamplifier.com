@@ -11,7 +11,7 @@ import { newId, nowIso } from './client.js';
  * and the upserts are written to lean on them rather than to check first,
  * which would race against the other workers in the same pass.
  *
- * @typedef {import('@libsql/client').Client} Client
+ * @typedef {import('./pg.js').PgClient} Client
  */
 
 /**
@@ -21,8 +21,8 @@ import { newId, nowIso } from './client.js';
  * gone, and spending the enrichment budget on it means not spending it on the
  * thousands that answer — the same reasoning `dueFeeds` uses for crawling.
  *
- * Nulls sort first in SQLite, which is the order this wants: never-checked
- * before checked-a-year-ago.
+ * Nulls first, which is the order this wants: never-checked before
+ * checked-a-year-ago.
  *
  * @param {Client} db
  * @param {number} [limit]
@@ -35,7 +35,7 @@ export async function dueForAuthors(db, limit = 25, recheckBefore = '') {
             from feeds
            where status = 'active'
              and (authors_checked_at is null or authors_checked_at < ?)
-           order by authors_checked_at asc
+           order by authors_checked_at asc nulls first
            limit ?`,
     args: [recheckBefore || nowIso(), limit],
   });
@@ -164,7 +164,7 @@ export async function upsertAuthor(db, author) {
               avatar_url = coalesce(nullif(?, ''), avatar_url),
               site_url = coalesce(nullif(?, ''), site_url),
               email = coalesce(nullif(?, ''), email),
-              confidence = max(confidence, ?),
+              confidence = greatest(confidence, ?),
               updated_at = ?
             where id = ?`,
       args: [
@@ -190,10 +190,12 @@ export async function upsertAuthor(db, author) {
             (id, slug, identity_key, name, norm_name, bio, avatar_url, site_url,
              email, confidence, created_at, updated_at)
           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          on conflict (identity_key) do nothing
-          -- Same race as creditStatements: the slug was chosen by an earlier
-          -- read, and another writer can take it in between. See there.
-          on conflict (slug) do nothing`,
+          -- Postgres takes one conflict clause, not one per index. Without a
+          -- target it covers every unique constraint on the table: the
+          -- identity_key race below, and the slug race from creditStatements
+          -- (the slug was chosen by an earlier read, and another writer can
+          -- take it in between; see there).
+          on conflict do nothing`,
     args: [
       id,
       author.slug,
@@ -235,8 +237,8 @@ export async function addAuthorLinks(db, authorId, links) {
             on conflict (author_id, url) do update set
               -- A link seen again with better provenance keeps the better one:
               -- rel="me" is a claim the author made, a footer icon is not.
-              source = case when excluded.source = 'rel-me' then excluded.source else source end,
-              verified = max(verified, excluded.verified)`,
+              source = case when excluded.source = 'rel-me' then excluded.source else author_links.source end,
+              verified = greatest(author_links.verified, excluded.verified)`,
       args: [
         newId(),
         authorId,
@@ -296,8 +298,8 @@ export async function addFeedLinks(db, feedId, links) {
               (id, feed_id, network, url, handle, source, verified, created_at)
             values (?, ?, ?, ?, ?, ?, ?, ?)
             on conflict (feed_id, url) do update set
-              source = case when excluded.source = 'rel-me' then excluded.source else source end,
-              verified = max(verified, excluded.verified)`,
+              source = case when excluded.source = 'rel-me' then excluded.source else feed_links.source end,
+              verified = greatest(feed_links.verified, excluded.verified)`,
       args: [
         newId(),
         feedId,
@@ -352,8 +354,8 @@ export async function linkFeedAuthor(db, feedId, authorId, meta = {}) {
     sql: `insert into feed_authors (feed_id, author_id, role, confidence, evidence, created_at)
           values (?, ?, ?, ?, ?, ?)
           on conflict (feed_id, author_id) do update set
-            role = case when excluded.role = 'owner' then 'owner' else role end,
-            confidence = max(confidence, excluded.confidence),
+            role = case when excluded.role = 'owner' then 'owner' else feed_authors.role end,
+            confidence = greatest(feed_authors.confidence, excluded.confidence),
             evidence = excluded.evidence`,
     args: [
       feedId,
@@ -722,59 +724,91 @@ export function creditStatements({ feedId, identityKey, slug, person, authorLink
   const now = nowIso();
   const statements = [];
 
-  // One statement for both the create and the update path. `do update` rather
-  // than `do nothing`, so a person we already know gains whatever this crawl
+  // The update path and the create path, as two statements. Under SQLite this
+  // was one insert carrying two conflict clauses; Postgres takes one conflict
+  // target per insert, and this write has two ways to collide.
+  //
+  // First the update, so a person we already know gains whatever this crawl
   // learned about them; the slug is deliberately absent from the SET list,
   // because a slug is a permanent address and re-deriving it from a changed
-  // display name would break every link to that author's page.
+  // display name would break every link to that author's page. The offered
+  // values ride in a VALUES row so the guard can read them by name, exactly as
+  // the conflict clause read `excluded`.
+  const offered = {
+    name: person.name,
+    normName: person.normName ?? '',
+    bio: person.bio || null,
+    avatarUrl: person.avatarUrl || null,
+    siteUrl: person.siteUrl || null,
+    email: person.email || null,
+    confidence: Number(person.confidence ?? 0),
+  };
+  statements.push({
+    sql: `update authors set
+            name = case when v.name <> '' then v.name else authors.name end,
+            norm_name = case when v.norm_name <> '' then v.norm_name else authors.norm_name end,
+            bio = coalesce(nullif(v.bio, ''), authors.bio),
+            avatar_url = coalesce(nullif(v.avatar_url, ''), authors.avatar_url),
+            site_url = coalesce(nullif(v.site_url, ''), authors.site_url),
+            email = coalesce(nullif(v.email, ''), authors.email),
+            confidence = greatest(authors.confidence, v.confidence),
+            updated_at = v.updated_at
+          from (values (?::text, ?::text, ?::text, ?::text, ?::text, ?::text, ?::double precision, ?::text))
+            as v (name, norm_name, bio, avatar_url, site_url, email, confidence, updated_at)
+          where authors.identity_key = ?
+            and ((v.name <> '' and authors.name <> v.name)
+             or (authors.bio is null and v.bio is not null)
+             or (authors.avatar_url is null and v.avatar_url is not null)
+             or (authors.site_url is null and v.site_url is not null)
+             or (authors.email is null and v.email is not null)
+             or authors.confidence < v.confidence)`,
+    args: [
+      offered.name,
+      offered.normName,
+      offered.bio,
+      offered.avatarUrl,
+      offered.siteUrl,
+      offered.email,
+      offered.confidence,
+      now,
+      identityKey,
+    ],
+  });
+
+  // Then the create. `on conflict do nothing` with no target absorbs both
+  // constraints: the same identity_key again (already handled above) and a
+  // different person who happens to have claimed the same slug.
+  //
+  // claimAuthorSlug reads the slugs already taken and then this insert runs
+  // later, so two crawls naming the same author can both pick jane-doe before
+  // either has committed. The second violated the unique constraint on
+  // authors.slug and, because this statement rides in the crawl's own
+  // transaction, took the entire crawl down with it -- the feed was recorded as
+  // uncrawlable and walked up the backoff ladder toward dead, for a byline. Two
+  // Substack feeds were failing every crawl this way for hours.
+  //
+  // Doing nothing is the right answer rather than merely the safe one. The
+  // loser of the race is not lost: its slug is taken by the time the feed is
+  // crawled again, so claimAuthorSlug picks the next free one and the credit
+  // lands then. A missing byline for one cycle is a far smaller thing than a
+  // feed marked dead.
   statements.push({
     sql: `insert into authors
             (id, slug, identity_key, name, norm_name, bio, avatar_url, site_url,
              email, confidence, created_at, updated_at)
           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          on conflict (identity_key) do update set
-            name = case when excluded.name <> '' then excluded.name else authors.name end,
-            norm_name = case when excluded.norm_name <> '' then excluded.norm_name else authors.norm_name end,
-            bio = coalesce(nullif(excluded.bio, ''), authors.bio),
-            avatar_url = coalesce(nullif(excluded.avatar_url, ''), authors.avatar_url),
-            site_url = coalesce(nullif(excluded.site_url, ''), authors.site_url),
-            email = coalesce(nullif(excluded.email, ''), authors.email),
-            confidence = max(authors.confidence, excluded.confidence),
-            updated_at = excluded.updated_at
-          where (excluded.name <> '' and authors.name <> excluded.name)
-             or (authors.bio is null and excluded.bio is not null)
-             or (authors.avatar_url is null and excluded.avatar_url is not null)
-             or (authors.site_url is null and excluded.site_url is not null)
-             or (authors.email is null and excluded.email is not null)
-             or authors.confidence < excluded.confidence
-          -- A different person who happens to have claimed the same slug.
-          --
-          -- claimAuthorSlug reads the slugs already taken and then this insert
-          -- runs later, so two crawls naming the same author can both pick
-          -- jane-doe before either has committed. The second violated the unique
-          -- constraint on authors.slug and, because this statement rides in the
-          -- crawl's own transaction, took the entire crawl down with it -- the
-          -- feed was recorded as uncrawlable and walked up the backoff ladder
-          -- toward dead, for a byline. Two Substack feeds were failing every
-          -- crawl this way for hours.
-          --
-          -- Doing nothing is the right answer rather than merely the safe one.
-          -- The loser of the race is not lost: its slug is taken by the time the
-          -- feed is crawled again, so claimAuthorSlug picks the next free one
-          -- and the credit lands then. A missing byline for one cycle is a far
-          -- smaller thing than a feed marked dead.
-          on conflict (slug) do nothing`,
+          on conflict do nothing`,
     args: [
       newId(),
       slug,
       identityKey,
-      person.name,
-      person.normName ?? '',
-      person.bio || null,
-      person.avatarUrl || null,
-      person.siteUrl || null,
-      person.email || null,
-      Number(person.confidence ?? 0),
+      offered.name,
+      offered.normName,
+      offered.bio,
+      offered.avatarUrl,
+      offered.siteUrl,
+      offered.email,
+      offered.confidence,
       now,
       now,
     ],
@@ -785,11 +819,11 @@ export function creditStatements({ feedId, identityKey, slug, person, authorLink
           select ?, id, ?, ?, ?, ? from authors where identity_key = ?
           on conflict (feed_id, author_id) do update set
             role = case when excluded.role = 'owner' then 'owner' else feed_authors.role end,
-            confidence = max(feed_authors.confidence, excluded.confidence),
+            confidence = greatest(feed_authors.confidence, excluded.confidence),
             evidence = excluded.evidence
           where (feed_authors.role <> 'owner' and excluded.role = 'owner')
              or feed_authors.confidence < excluded.confidence
-             or feed_authors.evidence is not excluded.evidence`,
+             or feed_authors.evidence is distinct from excluded.evidence`,
     args: [
       feedId,
       person.role ?? 'author',
@@ -807,7 +841,7 @@ export function creditStatements({ feedId, identityKey, slug, person, authorLink
             select ?, id, ?, ?, ?, ?, ?, ? from authors where identity_key = ?
             on conflict (author_id, url) do update set
               source = case when excluded.source = 'rel-me' then excluded.source else author_links.source end,
-              verified = max(author_links.verified, excluded.verified)
+              verified = greatest(author_links.verified, excluded.verified)
             where (author_links.source <> 'rel-me' and excluded.source = 'rel-me')
                or author_links.verified < excluded.verified`,
       args: [
@@ -843,7 +877,7 @@ export function feedLinkStatements(feedId, links) {
             values (?, ?, ?, ?, ?, ?, ?, ?)
             on conflict (feed_id, url) do update set
               source = case when excluded.source = 'rel-me' then excluded.source else feed_links.source end,
-              verified = max(feed_links.verified, excluded.verified)
+              verified = greatest(feed_links.verified, excluded.verified)
             where (feed_links.source <> 'rel-me' and excluded.source = 'rel-me')
                or feed_links.verified < excluded.verified`,
       args: [
@@ -982,7 +1016,7 @@ export async function authorsWithoutContact(db, limit = 10, minConfidence = 0.8)
              and not exists (select 1 from author_links l where l.author_id = a.id)
              and not exists (select 1 from author_searches s where s.author_id = a.id)
              -- A single word is not a searchable name: it returns the world.
-             and instr(trim(a.name), ' ') > 0
+             and position(' ' in trim(a.name)) > 0
            group by a.id
            order by feed_count desc, a.confidence desc
            limit ?`,

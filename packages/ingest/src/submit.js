@@ -49,7 +49,7 @@ export const EXPRESS_MAX = 100;
 /**
  * Claim a free slug, consulting the database for collisions.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} title
  * @param {string} feedUrl
  * @returns {Promise<string>}
@@ -75,7 +75,7 @@ export async function claimSlug(db, title, feedUrl) {
  * rather than an error, because people paste the same thing twice and that is
  * not a failure.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} input
  * @returns {Promise<{ ok: true, slug: string, existing: boolean } | { ok: false, url: string, error: string }>}
  */
@@ -184,7 +184,7 @@ export async function submitOne(db, input) {
  * `@OpenAI`, `x.com/OpenAI` and `https://twitter.com/openai/` are one source
  * here where they would be three feed rows anywhere else.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {ReturnType<typeof socialSourceFrom>} source
  * @returns {Promise<{ ok: true, slug: string, existing: boolean } | { ok: false, url: string, error: string }>}
  */
@@ -233,7 +233,7 @@ async function submitSocial(db, source) {
  * parallel fetches from a single paste is indistinguishable from an attack on
  * the submitted hosts.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string[]} urls
  * @returns {Promise<{ accepted: Array<{slug: string, existing: boolean}>, rejected: Array<{url: string, error: string}> }>}
  */
@@ -277,7 +277,7 @@ export async function submitMany(db, urls) {
  * a caller answer early: by the time `onQueued` fires there is a real queue to
  * show, and the fetching left to do is exactly the part worth watching.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {Array<{ url: string, title?: string, siteUrl?: string|null }>} entries
  * @param {{ inlineLimit?: number, submissionId?: string|null, priority?: number, onQueued?: (queued: number) => void }} [opts]
  * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}
@@ -324,7 +324,7 @@ export async function submitCatalogue(db, entries, opts = {}) {
 /**
  * Accept an OPML document of any size.
  *
- * @param {import('@libsql/client').Client} db
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} xml
  * @param {object} [opts] forwarded to submitCatalogue
  * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}

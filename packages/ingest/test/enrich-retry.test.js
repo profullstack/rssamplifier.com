@@ -1,27 +1,21 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { connect, migrate, q, authors as a } from '@rssamplifier/db';
+import { q, authors as a } from '@rssamplifier/db';
+import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
 import { enrichDue } from '../src/enrich.js';
 
 // A failure is not a miss, and treating them the same is how a publisher on a
 // flaky host loses their enrichment for three months over one timeout.
 
-let dir;
 let db;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'rssamp-retry-'));
-  db = connect({ url: `file:${join(dir, 'test.db')}` });
-  await migrate(db);
+  db = await connectTest();
 });
 
 after(async () => {
-  await rm(dir, { recursive: true, force: true });
+  db.close();
 });
 
 test('a feed whose site fell over is tried again in days, not in a season', async () => {
