@@ -20,7 +20,10 @@
  *
  * Modes:
  *   default          truncate nothing; skip a table that already has rows
- *   --truncate       empty each table first, then load it whole
+ *   --truncate       empty each table first (TRUNCATE ONLY: a table that
+ *                    other tables reference is refused, use --upsert)
+ *   --upsert         refresh in place by primary key: the way to bring a
+ *                    parent table (feeds, users, authors) up to date at cutover
  *   --since-rowid    append only rows whose SQLite rowid is above the largest
  *                    rowid already in Postgres (feed_items, item_extracts,
  *                    feeds carry a rowid column; for other tables this is the
@@ -156,8 +159,14 @@ async function loadTable(table) {
     const existing = Number((await client.query(`select count(*) from "${table}"`)).rows[0].count);
     let after = -1;
     if (flag('--truncate')) {
-      await client.query(`truncate "${table}" cascade`);
-    } else if (flag('--since-rowid') && hasRowid) {
+      // `only`, never `cascade`: a cascade on a parent table (feeds, users)
+      // silently empties every table referencing it. A parent is refreshed
+      // with --upsert instead; this errors out on one rather than wiping.
+      await client.query(`truncate only "${table}"`);
+    } else if (flag('--upsert')) {
+      await upsertTable(client, table, cols, types, srcCols);
+      return;
+    } else if ((flag('--since-rowid') || RANGE) && hasRowid) {
       after = Number((await client.query(`select coalesce(max(rowid), -1) from "${table}"`)).rows[0].coalesce);
     } else if (existing > 0) {
       log(`${table}: ${existing} rows already there, skipped (use --truncate or --since-rowid)`);
@@ -174,7 +183,7 @@ async function loadTable(table) {
     // which on 15M rows over the network is a stall.
     // --range lo:hi copies only SQLite rowids in (lo, hi]: the way to re-split
     // a slice that was left running alone after the others finished.
-    if (RANGE) after = Math.max(after, RANGE[0]);
+    if (RANGE) after = RANGE[0];
     const first = (await read({ sql: `select rowid as r from "${table}" where rowid > ? order by rowid limit 1`, args: [after] })).rows[0];
     const last = RANGE
       ? { r: RANGE[1] }
@@ -225,6 +234,54 @@ async function loadTable(table) {
     log(`${table}: done, ${total} rows in ${Math.round((Date.now() - started) / 1000)}s`);
   } finally {
     client.release();
+  }
+}
+
+/**
+ * Refresh a table in place: COPY the whole SQLite table into a temp table,
+ * then insert-or-update by primary key. Rows deleted in SQLite stay behind
+ * (nothing here deletes), and children are never touched.
+ */
+async function upsertTable(client, table, cols, types, srcCols) {
+  const { rows: pk } = await client.query(
+    `select a.attname from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+      where i.indrelid = $1::regclass and i.indisprimary order by array_position(i.indkey, a.attnum)`,
+    [`public."${table}"`],
+  );
+  if (!pk.length) throw new Error(`${table}: no primary key, cannot upsert`);
+  const pkCols = pk.map((r) => r.attname);
+  const hasRowid = ROWID_TABLES.has(table);
+  const tmp = `tmp_${table}`;
+  const started = Date.now();
+  await client.query(`create temp table "${tmp}" (like "${table}" including defaults excluding identity excluding generated excluding indexes excluding constraints) on commit drop`);
+  await client.query('begin');
+  try {
+    await client.query("set local session_replication_role = 'replica'");
+    let total = 0;
+    let cursor = -1;
+    const select = `select rowid as __rowid, * from "${table}" where rowid > ? order by rowid limit ?`;
+    for (;;) {
+      const { rows } = await read({ sql: select, args: [cursor, BATCH] });
+      if (!rows.length) break;
+      const mapped = rows.map((r) => { const o = { ...r }; if (hasRowid) o.rowid = r.__rowid; return o; });
+      await copyBatch(client, tmp, cols, types, mapped);
+      cursor = Number(rows[rows.length - 1].__rowid);
+      total += rows.length;
+      if (rows.length < BATCH) break;
+    }
+    const q = (c) => `"${c}"`;
+    const nonPk = cols.filter((c) => !pkCols.includes(c));
+    const set = nonPk.length ? `do update set ${nonPk.map((c) => `${q(c)} = excluded.${q(c)}`).join(', ')}` : 'do nothing';
+    const res = await client.query(
+      `insert into "${table}" (${cols.map(q).join(', ')}) overriding system value
+         select ${cols.map(q).join(', ')} from "${tmp}"
+         on conflict (${pkCols.map(q).join(', ')}) ${set}`,
+    );
+    await client.query('commit');
+    log(`${table}: upserted ${res.rowCount} of ${total} rows in ${Math.round((Date.now() - started) / 1000)}s`);
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    throw err;
   }
 }
 
