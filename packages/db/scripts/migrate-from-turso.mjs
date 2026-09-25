@@ -20,7 +20,10 @@
  *
  * Modes:
  *   default          truncate nothing; skip a table that already has rows
- *   --truncate       empty each table first, then load it whole
+ *   --truncate       empty each table first (TRUNCATE ONLY: a table that
+ *                    other tables reference is refused, use --upsert)
+ *   --upsert         refresh in place by primary key: the way to bring a
+ *                    parent table (feeds, users, authors) up to date at cutover
  *   --since-rowid    append only rows whose SQLite rowid is above the largest
  *                    rowid already in Postgres (feed_items, item_extracts,
  *                    feeds carry a rowid column; for other tables this is the
@@ -48,6 +51,7 @@ const opt = (name, fallback) => {
 };
 const BATCH = Number(opt('--batch', 5000));
 const WORKERS = Number(opt('--workers', 4));
+const RANGE = opt('--range', '') ? opt('--range', '').split(':').map(Number) : null;
 const ONLY = opt('--tables', '')?.split(',').filter(Boolean) ?? [];
 
 const src = createClient({
@@ -55,7 +59,7 @@ const src = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
   // A request that hangs would hang a worker for good; two minutes is far
   // above any batch read that is actually progressing.
-  fetch: (input, init = {}) => fetch(input, { ...init, signal: AbortSignal.any([init.signal, AbortSignal.timeout(120_000)].filter(Boolean)) }),
+  fetch: (input, init = {}) => fetch(input, { ...init, signal: AbortSignal.any([init.signal, AbortSignal.timeout(600_000)].filter(Boolean)) }),
 });
 
 /** A Turso read with retries: the platform drops the odd request under load. */
@@ -155,8 +159,14 @@ async function loadTable(table) {
     const existing = Number((await client.query(`select count(*) from "${table}"`)).rows[0].count);
     let after = -1;
     if (flag('--truncate')) {
-      await client.query(`truncate "${table}" cascade`);
-    } else if (flag('--since-rowid') && hasRowid) {
+      // `only`, never `cascade`: a cascade on a parent table (feeds, users)
+      // silently empties every table referencing it. A parent is refreshed
+      // with --upsert instead; this errors out on one rather than wiping.
+      await client.query(`truncate only "${table}"`);
+    } else if (flag('--upsert')) {
+      await upsertTable(client, table, cols, types, srcCols);
+      return;
+    } else if ((flag('--since-rowid') || RANGE) && hasRowid) {
       after = Number((await client.query(`select coalesce(max(rowid), -1) from "${table}"`)).rows[0].coalesce);
     } else if (existing > 0) {
       log(`${table}: ${existing} rows already there, skipped (use --truncate or --since-rowid)`);
@@ -171,8 +181,13 @@ async function loadTable(table) {
     // Two lookups, not `min(rowid), max(rowid)` in one: SQLite answers a lone
     // min or max from the rowid index but scans the whole table for the pair,
     // which on 15M rows over the network is a stall.
+    // --range lo:hi copies only SQLite rowids in (lo, hi]: the way to re-split
+    // a slice that was left running alone after the others finished.
+    if (RANGE) after = RANGE[0];
     const first = (await read({ sql: `select rowid as r from "${table}" where rowid > ? order by rowid limit 1`, args: [after] })).rows[0];
-    const last = (await read({ sql: `select rowid as r from "${table}" order by rowid desc limit 1` })).rows[0];
+    const last = RANGE
+      ? { r: RANGE[1] }
+      : (await read({ sql: `select rowid as r from "${table}" order by rowid desc limit 1` })).rows[0];
     const lo = first ? Number(first.r) : null;
     const hi = lo === null ? null : Number(last.r);
     const started = Date.now();
@@ -222,15 +237,88 @@ async function loadTable(table) {
   }
 }
 
+/**
+ * Refresh a table in place: COPY the whole SQLite table into a temp table,
+ * then insert-or-update by primary key. Rows deleted in SQLite stay behind
+ * (nothing here deletes), and children are never touched.
+ */
+async function upsertTable(client, table, cols, types, srcCols) {
+  const { rows: pk } = await client.query(
+    `select a.attname from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+      where i.indrelid = $1::regclass and i.indisprimary order by array_position(i.indkey, a.attnum)`,
+    [`public."${table}"`],
+  );
+  if (!pk.length) throw new Error(`${table}: no primary key, cannot upsert`);
+  const pkCols = pk.map((r) => r.attname);
+  const hasRowid = ROWID_TABLES.has(table);
+  const tmp = `tmp_${table}`;
+  const started = Date.now();
+  await client.query('begin');
+  try {
+    await client.query("set local session_replication_role = 'replica'");
+    await client.query(`create temp table "${tmp}" (like "${table}" including defaults excluding identity excluding generated excluding indexes excluding constraints) on commit drop`);
+    let total = 0;
+    let cursor = -1;
+    const select = `select rowid as __rowid, * from "${table}" where rowid > ? order by rowid limit ?`;
+    for (;;) {
+      const { rows } = await read({ sql: select, args: [cursor, BATCH] });
+      if (!rows.length) break;
+      const mapped = rows.map((r) => { const o = { ...r }; if (hasRowid) o.rowid = r.__rowid; return o; });
+      await copyBatch(client, tmp, cols, types, mapped);
+      cursor = Number(rows[rows.length - 1].__rowid);
+      total += rows.length;
+      if (rows.length < BATCH) break;
+    }
+    const q = (c) => `"${c}"`;
+    // Identity columns (rowid, the bigint ids) take their value on insert via
+    // OVERRIDING SYSTEM VALUE but cannot appear in the update branch.
+    const { rows: ident } = await client.query(
+      `select column_name from information_schema.columns where table_schema = 'public' and table_name = $1 and is_identity = 'YES'`,
+      [table],
+    );
+    const identity = new Set(ident.map((r) => r.column_name));
+    const nonPk = cols.filter((c) => !pkCols.includes(c) && !identity.has(c));
+    const set = nonPk.length ? `do update set ${nonPk.map((c) => `${q(c)} = excluded.${q(c)}`).join(', ')}` : 'do nothing';
+    const res = await client.query(
+      `insert into "${table}" (${cols.map(q).join(', ')}) overriding system value
+         select ${cols.map(q).join(', ')} from "${tmp}"
+         on conflict (${pkCols.map(q).join(', ')}) ${set}`,
+    );
+    // Mirror deletes too: rows the source purged (crawl_log, alert_sent age
+    // out; feeds get removed) must not linger, or verify never matches.
+    const pkList = pkCols.map(q).join(', ');
+    const gone = await client.query(
+      `delete from "${table}" t where not exists (select 1 from "${tmp}" s where (${pkCols.map((c) => `s.${q(c)}`).join(', ')}) = (${pkCols.map((c) => `t.${q(c)}`).join(', ')}))`,
+    );
+    // Identity columns took explicit values; the sequences must move past
+    // them or the app's first insert collides with a copied id.
+    for (const c of identity) {
+      await client.query(
+        `select setval(pg_get_serial_sequence($1, $2), greatest(coalesce((select max("${c}") from "${table}"), 0), 1))`,
+        [`public.${table}`, c],
+      );
+    }
+    await client.query('commit');
+    log(`${table}: upserted ${res.rowCount} of ${total} rows, removed ${gone.rowCount} stale, in ${Math.round((Date.now() - started) / 1000)}s (pk ${pkList})`);
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    throw err;
+  }
+}
+
 async function verify() {
   let bad = 0;
   for (const table of ORDER) {
     if (SKIP.has(table)) continue;
-    const s = Number((await src.execute(`select count(*) as n from "${table}"`)).rows[0].n);
-    const d = Number((await dst.query(`select count(*) from "${table}"`)).rows[0].count);
+    // A count over 15M rows takes Turso minutes; the rowid tables are compared
+    // by their last rowid (exact for an append-only copy) unless --full.
+    const byRowid = ROWID_TABLES.has(table) && !flag('--full');
+    const expr = byRowid ? 'max(rowid)' : 'count(*)';
+    const s = Number((await read({ sql: `select ${expr} as n from "${table}"` })).rows[0].n);
+    const d = Number((await dst.query(`select ${expr} as n from "${table}"`)).rows[0].n);
     const ok = s === d ? 'ok' : 'DIFF';
     if (ok !== 'ok') bad++;
-    console.log(`${table.padEnd(24)} ${String(s).padStart(10)} ${String(d).padStart(10)} ${ok}`);
+    console.log(`${table.padEnd(24)} ${String(s).padStart(10)} ${String(d).padStart(10)} ${ok}${byRowid ? ' (max rowid)' : ''}`);
   }
   const { rows } = await dst.query(`
     select 'feed_items' as t, count(*) from feed_items i where not exists (select 1 from feeds f where f.id = i.feed_id)

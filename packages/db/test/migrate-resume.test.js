@@ -40,13 +40,12 @@ test('a migration file that half-applied can still be completed', async () => {
     'the half-applied file is re-run and this time recorded',
   );
 
-  // And the ledger is whole again, so the next boot has nothing to do.
+  // And the ledger is whole again, so the next boot has nothing to do. Later
+  // migrations keep their own rows; the schema file is back exactly once.
   const after = await db.execute('select name from _migrations');
-  assert.deepEqual(
-    after.rows.map((r) => String(r.name)),
-    ['0001_schema.sql'],
-    'recorded exactly once',
-  );
+  const names = after.rows.map((r) => String(r.name));
+  assert.equal(names.filter((n) => n === '0001_schema.sql').length, 1, 'recorded exactly once');
+  assert.deepEqual((await migrate(db)).applied, [], 'nothing left to apply');
 });
 
 test('a real error still stops the run', async () => {
