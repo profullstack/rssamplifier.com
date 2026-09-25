@@ -179,13 +179,18 @@ async function run(target, st) {
  * @param {{ url: string, max?: number, statementTimeoutMs?: number, applicationName?: string }} opts
  */
 export function createPgClient(opts) {
-  const url = opts.url;
+  // pg lets `sslmode=` in the connection string override the `ssl` option, and
+  // its `require` verifies the certificate. The box's cert is self-signed (the
+  // app never verified Turso's either), so the parameter is read here and taken
+  // out of the URL: TLS on, verification off.
+  const wantTls = /sslmode=(require|prefer|verify-ca|verify-full)/.test(opts.url);
+  const parsed = new URL(opts.url);
+  parsed.searchParams.delete('sslmode');
+  const url = parsed.toString();
   const pool = new Pool({
     connectionString: url,
     max: opts.max ?? 10,
-    // The app never verified Turso's certificate either; the self-signed cert
-    // on the box is expected, and `sslmode=require` in the URL asks for TLS.
-    ssl: /sslmode=require/.test(url) ? { rejectUnauthorized: false } : undefined,
+    ssl: wantTls ? { rejectUnauthorized: false } : undefined,
     application_name: opts.applicationName ?? 'rssamplifier',
     statement_timeout: opts.statementTimeoutMs,
     allowExitOnIdle: true,
