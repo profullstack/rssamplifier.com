@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import next from 'next';
 
 import { admit, inflight } from './src/lib/loadShed.js';
-import { forkWorkers, workerCount } from './src/lib/workers.js';
+import { forkWorkers, recycleRssMb, workerCount, workerHeapMb } from './src/lib/workers.js';
 
 /**
  * The HTTP server, on several cores, with a ceiling on concurrent work.
@@ -50,9 +50,15 @@ if (
     onExit: ({ pid, code, signal }) => {
       console.warn(`[web] worker ${pid} exited (code ${code}, signal ${signal}), replacing it`);
     },
+    onRecycle: ({ pid, rssMb, limitMb }) => {
+      console.warn(`[web] worker ${pid} is ${rssMb} MB resident (limit ${limitMb}), recycling it`);
+    },
   })
 ) {
-  console.log(`[web] primary ${process.pid} running ${workerCount()} workers`);
+  console.log(
+    `[web] primary ${process.pid} running ${workerCount()} workers, ` +
+      `heap ceiling ${workerHeapMb()} MB each, recycled past ${recycleRssMb()} MB resident`,
+  );
 } else {
   await serve();
 }

@@ -6,6 +6,8 @@ import {
   cpuBudget,
   heapBudgetMb,
   memoryBudget,
+  recycleRssMb,
+  rssMbOf,
   share,
   workerCount,
   workerHeapMb,
@@ -31,7 +33,7 @@ import {
  * asserted not to raise the total.
  */
 
-const KNOBS = ['WEB_WORKERS', 'WEB_HEAP_BUDGET_MB'];
+const KNOBS = ['WEB_WORKERS', 'WEB_HEAP_BUDGET_MB', 'WEB_WORKER_RSS_MB'];
 
 test.beforeEach(() => {
   for (const name of KNOBS) delete process.env[name];
@@ -138,4 +140,27 @@ test('a share divides a service-wide allowance and never rounds to zero', () => 
   assert.equal(share(128, 1), 128);
   assert.equal(share(4, 16), 1, 'a worker allowed nothing would refuse everything');
   assert.equal(share(1, 16), 1);
+});
+
+test('a worker is recycled past 768 MB resident unless WEB_WORKER_RSS_MB says otherwise', () => {
+  // dev2 workers crept from ~400 MB at a day old to ~970 MB at six, and the
+  // heap ceiling did not change that; this is what bounds it.
+  assert.equal(recycleRssMb(), 768);
+
+  process.env.WEB_WORKER_RSS_MB = '900';
+  assert.equal(recycleRssMb(), 900);
+
+  for (const junk of ['0', '-1', 'lots', '1.5']) {
+    process.env.WEB_WORKER_RSS_MB = junk;
+    assert.equal(recycleRssMb(), 768, `${JSON.stringify(junk)} would recycle every worker every minute`);
+  }
+});
+
+test('a resident size can be read for a live process and not for nothing', () => {
+  assert.equal(rssMbOf(undefined), null);
+  if (process.platform !== 'linux') return;
+
+  const mb = rssMbOf(process.pid);
+  assert.ok(mb !== null && mb > 0, 'this test runner has some memory resident');
+  assert.equal(rssMbOf(2 ** 22 + 12345), null, 'a pid that does not exist');
 });
