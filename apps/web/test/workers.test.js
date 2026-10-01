@@ -2,7 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 
-import { cpuBudget, memoryBudget, share, workerCount, workerHeapMb } from '../src/lib/workers.js';
+import {
+  cpuBudget,
+  heapBudgetMb,
+  memoryBudget,
+  share,
+  workerCount,
+  workerHeapMb,
+} from '../src/lib/workers.js';
 
 /**
  * The worker pool's arithmetic.
@@ -14,14 +21,24 @@ import { cpuBudget, memoryBudget, share, workerCount, workerHeapMb } from '../sr
  * mistake announces itself — the site comes up and is simply worse — so the
  * budgets are asserted against the cgroup values wherever there is a cgroup to
  * read, and the shares are asserted for the cases that round badly.
+ *
+ * Since 2026-10-01 there is a second thing to get right: on a host with no
+ * cgroup limit at all (dev2), "the container's budget" is the whole shared
+ * machine, and taking all of it forked sixteen workers with 3.5 GB of heap each
+ * and swapped the box until earlyoom killed the shared Postgres. So the
+ * defaults are asserted to stay small however big the machine is — four
+ * workers, about a gigabyte each — and the dial that raises the count is
+ * asserted not to raise the total.
  */
 
+const KNOBS = ['WEB_WORKERS', 'WEB_HEAP_BUDGET_MB'];
+
 test.beforeEach(() => {
-  delete process.env.WEB_WORKERS;
+  for (const name of KNOBS) delete process.env[name];
 });
 
 test.after(() => {
-  delete process.env.WEB_WORKERS;
+  for (const name of KNOBS) delete process.env[name];
 });
 
 test('the CPU budget is a whole number of usable CPUs', () => {
@@ -50,13 +67,58 @@ test('the count is capped however many CPUs the machine offers', () => {
   assert.ok(workerCount() <= 16, 'a worker costs a whole Next server; the return falls off');
 });
 
-test('junk in WEB_WORKERS falls back to the CPU budget, never to zero', () => {
+test('without WEB_WORKERS the count is four, or fewer when the quota is smaller', () => {
+  // The dev2 case: no quota, so cpuBudget() is the whole 32-CPU host. Every
+  // core is what it used to take, and sixteen workers is what swapped the box.
+  assert.equal(workerCount(), Math.max(1, Math.min(cpuBudget(), 4)));
+  assert.ok(workerCount() <= 4, 'a shared host is not ours to fill');
+});
+
+test('WEB_WORKERS can still go above the default, for a flood', () => {
+  process.env.WEB_WORKERS = '12';
+  assert.equal(workerCount(), 12);
+});
+
+test('junk in WEB_WORKERS falls back to the default, never to zero', () => {
   for (const junk of ['', 'lots', '0', '-4', '2.5', 'NaN']) {
     process.env.WEB_WORKERS = junk;
     const count = workerCount();
     assert.ok(count >= 1, `${JSON.stringify(junk)} does not leave the site with no servers`);
-    assert.equal(count, Math.max(1, Math.min(cpuBudget(), 16)));
+    assert.equal(count, Math.max(1, Math.min(cpuBudget(), 4)));
   }
+});
+
+test('the heap budget is 4 GB by default, and never more than the container allows', () => {
+  const allowedMb = Math.floor((memoryBudget() * 0.6) / (1024 * 1024));
+  assert.equal(heapBudgetMb(), Math.min(4096, allowedMb));
+
+  process.env.WEB_HEAP_BUDGET_MB = '6144';
+  assert.equal(heapBudgetMb(), Math.min(6144, allowedMb));
+
+  process.env.WEB_HEAP_BUDGET_MB = String(Number.MAX_SAFE_INTEGER);
+  assert.equal(heapBudgetMb(), allowedMb, 'a budget bigger than the container is the container');
+
+  for (const junk of ['', 'big', '0', '-1', '1.5']) {
+    process.env.WEB_HEAP_BUDGET_MB = junk;
+    assert.equal(heapBudgetMb(), Math.min(4096, allowedMb), `${JSON.stringify(junk)} falls back`);
+  }
+});
+
+test('four default workers get about a gigabyte each, whatever the host has', (t) => {
+  // Skipped on a machine too small to give the default budget in full — the
+  // container-limit test above covers that arithmetic.
+  if (heapBudgetMb() < 4096) return t.skip('container smaller than the default budget');
+
+  assert.equal(workerHeapMb(4), 1024);
+  assert.ok(workerHeapMb(4) * 4 <= 4096, 'the total is the budget, not the host');
+});
+
+test('more workers cut the same budget smaller instead of adding to it', (t) => {
+  if (heapBudgetMb() < 4096) return t.skip('container smaller than the default budget');
+
+  assert.equal(workerHeapMb(1), 4096, 'one server gets what four would have shared');
+  assert.equal(workerHeapMb(8), 512);
+  assert.equal(workerHeapMb(16), 512, 'the floor is the one place the total can grow');
 });
 
 test('a worker heap is a share of the container, not of the host', () => {

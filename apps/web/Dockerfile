@@ -28,21 +28,25 @@ WORKDIR /repo/apps/web
 EXPOSE 3000
 ENV HOSTNAME=0.0.0.0
 
-# V8 caps the heap at ~4 GB by default regardless of what the container has.
-# The web service gets 24 GB on Railway; letting the heap use half of it turns
-# a surge that would have been fatal into one that is merely slow. This is a
-# ceiling, not a reservation — it costs nothing until it is needed.
+# The heap ceiling for a single server: the primary process, and the one
+# process a WEB_WORKERS=1 deployment runs. It equals the container's whole heap
+# budget (WEB_HEAP_BUDGET_MB's default in src/lib/workers.js), so one server
+# gets what four would have shared.
 #
-# This is the ceiling for a single server, which is what the primary process and
-# a WEB_WORKERS=1 deployment are. When the primary forks workers it computes
-# each one's share of the container's memory and passes it on their command
-# line, where it wins over this — see src/lib/workers.js. Sizing it per worker
-# here instead would mean this number had to be re-derived by hand every time
-# the container changed shape.
-ENV NODE_OPTIONS=--max-old-space-size=12288
+# When the primary forks workers it gives each its share of that budget on
+# their command line, where it wins over this. The primary itself only holds
+# the socket and stays around 40 MB whatever this says.
+#
+# It was 12288 until 2026-10-01, sized for Railway's 24 GB container. On a
+# shared host that number is a promise to take 12 GB from the neighbours, and a
+# ceiling that high is also a licence for V8 to put off collecting — see
+# src/lib/workers.js for what that did on dev2. Raise WEB_HEAP_BUDGET_MB and
+# this together, or the single-process fallback ends up with a different
+# ceiling from the clustered one.
+ENV NODE_OPTIONS=--max-old-space-size=4096
 
-# server.mjs is `next start`, plus a ceiling on concurrent requests, plus one
-# copy of the server per CPU the container is allowed. Reasoning, and the two
+# server.mjs is `next start`, plus a ceiling on concurrent requests, plus four
+# copies of the server (WEB_WORKERS changes the count). Reasoning, and the two
 # different outages behind the two parts, in src/lib/loadShed.js (memory) and
 # src/lib/workers.js (CPU).
 CMD ["node", "server.mjs"]
