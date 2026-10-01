@@ -144,6 +144,28 @@ const MIN_HEAP_MB = 512;
 const MAX_HEAP_MB = 12_288;
 
 /**
+ * Recycle a worker past this resident size when `WEB_WORKER_RSS_MB` is not set.
+ *
+ * The heap ceiling bounds the heap; it does not bound a worker's age creep.
+ * Replaying two hours of real traffic (184,000 distinct paths from 112,000
+ * addresses) against two four-worker pools side by side, one with the old
+ * 2.4 GB-per-worker ceiling and one with 1 GB, every busy worker sat at
+ * 370-430 MB resident after 30 minutes in both: same number, so the ceiling is
+ * not what decides it. The heap left after a full collection was ~115 MB; the
+ * rest is garbage not yet collected and memory the allocator keeps. On dev2 the
+ * creep took a worker from ~400 MB at a day old to ~970 MB at six, which puts
+ * 768 MB at about four days. So this recycles a worker every few days, not
+ * every few minutes, and caps four workers at ~3 GB.
+ */
+const DEFAULT_RECYCLE_RSS_MB = 768;
+
+/** How often the primary looks at its workers' resident size. */
+const RECYCLE_CHECK_MS = 60_000;
+
+/** How long a retiring worker gets to finish its requests before it is killed. */
+const RETIRE_GRACE_MS = 30_000;
+
+/**
  * An integer environment variable, or the fallback.
  *
  * Read through a non-literal property access for the reason `lib/db.js` gives,
@@ -289,6 +311,35 @@ export function workerHeapMb(count = workerCount()) {
 }
 
 /**
+ * The resident size, in megabytes, past which a worker is replaced.
+ *
+ * `WEB_WORKER_RSS_MB`, or `DEFAULT_RECYCLE_RSS_MB`. A storm that pushes every
+ * worker past it recycles them one a minute, each finishing its requests first.
+ *
+ * @returns {number}
+ */
+export function recycleRssMb() {
+  return envInt('WEB_WORKER_RSS_MB') ?? DEFAULT_RECYCLE_RSS_MB;
+}
+
+/**
+ * A process's resident set size in megabytes, from /proc, or null.
+ *
+ * The primary reads its workers from outside rather than asking them over IPC:
+ * a worker that is in trouble is exactly the one that may not answer. Null off
+ * Linux, which turns recycling off rather than breaking anything.
+ *
+ * @param {number | undefined} pid
+ * @returns {number | null}
+ */
+export function rssMbOf(pid) {
+  if (!pid) return null;
+  const status = readOrNull(`/proc/${pid}/status`);
+  const match = status?.match(/^VmRSS:\s+(\d+)\s+kB/m);
+  return match ? Math.round(Number(match[1]) / 1024) : null;
+}
+
+/**
  * One worker's share of a limit that is meant to hold for the service.
  *
  * The in-flight ceiling is the case this exists for. It bounds the memory of
@@ -320,7 +371,17 @@ export function share(total, count = workerCount()) {
  * which is a worse failure than a restart: the platform's own restart policy
  * cannot see inside the container, so nothing else is watching these.
  *
- * @param {{ onExit?: (info: { pid: number | undefined, code: number, signal: string | null }) => void }} [hooks]
+ * A worker grown past `recycleRssMb()` is retired: a replacement is forked
+ * first, and only once it is listening is the old one disconnected, so the
+ * pool never drops below its size. Disconnecting stops the old worker taking
+ * new connections and lets it finish the ones it has; if it has not exited
+ * after a grace period it is terminated. One at a time, so a pool-wide problem
+ * cannot turn into a pool-wide restart.
+ *
+ * @param {{
+ *   onExit?: (info: { pid: number | undefined, code: number, signal: string | null }) => void,
+ *   onRecycle?: (info: { pid: number | undefined, rssMb: number, limitMb: number }) => void,
+ * }} [hooks]
  * @returns {boolean} true when this process is a primary that has forked workers
  */
 export function forkWorkers(hooks = {}) {
@@ -333,10 +394,60 @@ export function forkWorkers(hooks = {}) {
 
   for (let i = 0; i < count; i += 1) cluster.fork();
 
+  /** Replacements forked by a recycle that are not listening yet. */
+  const spares = new Set();
+  /** A recycle is under way; one at a time. */
+  let retiring = false;
+
   cluster.on('exit', (worker, code, signal) => {
+    // A worker we retired already has its replacement, and a spare that died
+    // before it took over leaves the worker it was replacing still serving.
+    if (worker.exitedAfterDisconnect) return;
+    if (spares.delete(worker)) {
+      retiring = false;
+      return;
+    }
     hooks.onExit?.({ pid: worker.process.pid, code, signal });
     cluster.fork();
   });
+
+  const limitMb = recycleRssMb();
+
+  const check = setInterval(() => {
+    if (retiring) return;
+    const workers = Object.values(cluster.workers ?? {}).filter(
+      (w) => w && !w.isDead() && !w.exitedAfterDisconnect,
+    );
+    for (const old of workers) {
+      const rssMb = rssMbOf(old.process.pid);
+      if (rssMb === null || rssMb <= limitMb) continue;
+
+      retiring = true;
+      hooks.onRecycle?.({ pid: old.process.pid, rssMb, limitMb });
+
+      const replacement = cluster.fork();
+      spares.add(replacement);
+      replacement.once('listening', () => {
+        spares.delete(replacement);
+        if (old.isDead()) {
+          // It died on its own meanwhile and the exit handler replaced it, so
+          // this one is surplus.
+          retiring = false;
+          replacement.disconnect();
+          return;
+        }
+        const kill = setTimeout(() => old.process.kill('SIGTERM'), RETIRE_GRACE_MS);
+        kill.unref();
+        old.once('exit', () => {
+          clearTimeout(kill);
+          retiring = false;
+        });
+        old.disconnect();
+      });
+      return;
+    }
+  }, RECYCLE_CHECK_MS);
+  check.unref();
 
   return true;
 }
