@@ -53,8 +53,8 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0
       '@profullstack/openprofile':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.1.2
+        version: 0.1.2
       '@profullstack/partners':
         specifier: ^0.2.0
         version: 0.2.0
@@ -710,8 +710,8 @@ packages:
     resolution: {integrity: sha512-17jiBCRiZVDcIyWnWKYr5E2eVog/1iHgXaruGbmlw7j7Ob4zd6oOqGjh8BP8wm13iFwikczYObQwSrGadBdnGw==}
     engines: {node: '>=20.11'}
 
-  '@profullstack/openprofile@0.1.0':
-    resolution: {integrity: sha512-3Gj5fQJW8wYAJ8iiYNIC0r/bnvbf+9piRhjJ8cktfgE2UFlfcv6A1nfABTK3wcoEGTbAs1x8SLVoIc0RjBQvJw==}
+  '@profullstack/openprofile@0.1.2':
+    resolution: {integrity: sha512-pUPCvfkCkVZcxFuE3Szt5JzMmkjy7Ojows+M1Ln+dTtLEFKVR1y8LdjxbeeNpqvhGzlHQ2CROtlXfb5VgB6+Rw==}
     engines: {node: '>=22'}
 
   '@profullstack/partners@0.2.0':
@@ -2567,7 +2567,7 @@ snapshots:
 
   '@profullstack/notifications@0.1.0': {}
 
-  '@profullstack/openprofile@0.1.0': {}
+  '@profullstack/openprofile@0.1.2': {}
 
   '@profullstack/partners@0.2.0':
     dependencies:
