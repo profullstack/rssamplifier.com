@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "bun src/index.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
