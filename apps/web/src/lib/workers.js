@@ -42,6 +42,38 @@
  * applies to memory: `os.totalmem()` is the host's 393 GB and the container's
  * limit is 24 GB. Both budgets come from the cgroup, and only fall back to the
  * `os` numbers when there is no cgroup to read (a developer's laptop).
+ *
+ * ## Why "every core" stopped being the default (2026-10-01)
+ *
+ * On Railway the cgroup was the budget and it was a sensible one: 24 CPUs and
+ * 24 GB that belonged to this service alone. On dev2 there is no cgroup limit
+ * at all. The container sees the host — 32 CPUs and 91 GB — and that host is
+ * shared with every other site on the box, including the Postgres this one
+ * reads from. Reading "no limit" as "all of it" forked sixteen workers and
+ * handed each a 3.5 GB heap ceiling, 56 GB of promises on a machine whose other
+ * tenants were already using most of it.
+ *
+ * Nothing leaked. A worker's RSS climbed with its age and then levelled off —
+ * about 290 MB at nine hours, 400 MB at a day, 970 MB at six days — which is V8
+ * doing what it is told: with a ceiling that high it has no reason to collect
+ * hard, so it doesn't, and garbage that would have been reclaimed at 1 GB sits
+ * in the heap instead. Sixteen of those came to 11.7 GB, the host's swap filled,
+ * and earlyoom started killing processes to make room — including the shared
+ * Postgres, which took down far more than this site.
+ *
+ * So the defaults are now sized for a tenant, not an owner. The count is capped
+ * at `DEFAULT_WORKERS` unless `WEB_WORKERS` says otherwise, and the heap is a
+ * fixed total (`WEB_HEAP_BUDGET_MB`) divided between the workers, so the
+ * container's memory no longer depends on how many workers there are or on what
+ * the host happens to have. Turning `WEB_WORKERS` up during a flood buys CPU
+ * without buying memory: the same budget is cut into smaller pieces.
+ *
+ * That gives back some of the 2026-09-07 headroom on purpose. Four workers
+ * measured 50 req/s locally against 28 for one; the fleet that day asked for
+ * 140. Four was never going to win that fight on capacity alone and neither was
+ * sixteen against a fleet twice the size — the section above is still the
+ * argument. What four does is keep a flood from becoming the whole box's
+ * problem. `WEB_WORKERS` is still there for the day it needs to be higher.
  */
 
 import cluster from 'node:cluster';
@@ -49,29 +81,63 @@ import { readFileSync } from 'node:fs';
 import os from 'node:os';
 
 /**
- * The most workers to run whatever the machine offers.
+ * The most workers to run, even when `WEB_WORKERS` asks for more.
  *
  * Each worker is a whole Next server with its own module state, its own render
  * caches and its own heap, so the cost of one is real and the return falls off
- * once there are enough of them to keep the CPU quota busy. Sixteen is above
- * what this container can run in parallel anyway and keeps the arithmetic on
- * heap (below) somewhere sane.
+ * once there are enough of them to keep the CPU quota busy. Sixteen was the
+ * Railway container's whole quota and keeps the arithmetic on heap (below)
+ * somewhere sane.
  */
 const MAX_WORKERS = 16;
 
 /**
+ * How many workers to run when nobody has said.
+ *
+ * Four keeps most of what clustering won — 50 req/s against one process's 28
+ * on the same build — at a quarter of sixteen's memory, and four is a share of
+ * a shared box rather than all of it. A container with a CPU quota smaller than
+ * this gets one worker per CPU, as before.
+ */
+const DEFAULT_WORKERS = 4;
+
+/**
+ * The heap ceiling for the whole container, in megabytes, when nobody has said.
+ *
+ * Divided between the workers, so four of them get about 1 GB each and one gets
+ * all of it. A gigabyte is roomy for one worker: its in-flight share is 32
+ * requests (`loadShed.js`), and the 2026-09-03 incident put a request's working
+ * set at about 7 MB — 4 GB filled by six hundred of them — so a full worker is
+ * holding a few hundred megabytes of work in progress, and the rest is Next and
+ * its caches. A ceiling that close to the real need is also what makes V8
+ * collect promptly instead of letting a worker drift toward a gigabyte over a
+ * week, which is the whole of the dev2 problem described above.
+ *
+ * `WEB_HEAP_BUDGET_MB` overrides it.
+ */
+const DEFAULT_HEAP_BUDGET_MB = 4096;
+
+/**
  * The share of the container's memory the workers may size their heaps to.
  *
- * A `--max-old-space-size` is a ceiling and not a reservation, so the sum of
- * the workers' ceilings is allowed to exceed what the container has — every
- * worker reaching its ceiling at the same moment is not a state this survives
- * either way. What the fraction buys is the rest: the build's own files in page
- * cache, the copies of Next that are not heap, and the headroom that makes the
- * difference between a slow minute and the platform killing the container.
+ * Only binds when the container has a real limit smaller than the budget — on
+ * Railway's 24 GB it never did, and on a container given, say, 4 GB it stops
+ * the budget promising the workers more than exists. A `--max-old-space-size`
+ * is a ceiling and not a reservation; what the fraction buys is the rest: the
+ * build's own files in page cache, the parts of Next that are not heap, and the
+ * headroom that makes the difference between a slow minute and the kernel
+ * killing the container.
  */
 const HEAP_FRACTION = 0.6;
 
-/** Never hand a worker less heap than this. */
+/**
+ * Never hand a worker less heap than this.
+ *
+ * The one place the total can be exceeded: sixteen workers on the default
+ * budget would get 256 MB each, too little to render a big topic page, so they
+ * get this instead and the total comes to 8 GB. Asking for sixteen is asking
+ * for that.
+ */
 const MIN_HEAP_MB = 512;
 
 /** Never hand a worker more than V8 would have taken on its own. */
@@ -166,7 +232,15 @@ export function memoryBudget() {
  *
  * `WEB_WORKERS` overrides, and `WEB_WORKERS=1` is the way back to the single
  * process this replaced — worth having, because a bug that only appears with
- * more than one of something is diagnosed by turning the something off.
+ * more than one of something is diagnosed by turning the something off. It is
+ * also the dial for a flood: it may go above `DEFAULT_WORKERS` (up to
+ * `MAX_WORKERS`) but never above `MAX_WORKERS`, and raising it does not raise
+ * the container's memory — see `workerHeapMb`.
+ *
+ * Without it the count is the smaller of the CPU quota and `DEFAULT_WORKERS`.
+ * The quota still matters for a container given fewer CPUs than that; it no
+ * longer decides the count on a host with no quota, where it reports the whole
+ * machine — the dev2 case in the header.
  *
  * @returns {number}
  */
@@ -174,24 +248,43 @@ export function workerCount() {
   const forced = envInt('WEB_WORKERS');
   if (forced) return Math.min(forced, MAX_WORKERS);
 
-  return Math.max(1, Math.min(cpuBudget(), MAX_WORKERS));
+  return Math.max(1, Math.min(cpuBudget(), DEFAULT_WORKERS));
+}
+
+/**
+ * The heap ceiling for the whole container, in megabytes.
+ *
+ * `WEB_HEAP_BUDGET_MB` when it is set to something sensible, otherwise
+ * `DEFAULT_HEAP_BUDGET_MB` — and never more than `HEAP_FRACTION` of what the
+ * container is actually allowed, so a small memory limit still wins over a big
+ * budget.
+ *
+ * @returns {number}
+ */
+export function heapBudgetMb() {
+  const asked = envInt('WEB_HEAP_BUDGET_MB') ?? DEFAULT_HEAP_BUDGET_MB;
+  const allowed = Math.floor((memoryBudget() * HEAP_FRACTION) / (1024 * 1024));
+  return Math.min(asked, allowed);
 }
 
 /**
  * The heap ceiling for one worker, in megabytes.
  *
- * The Dockerfile's `NODE_OPTIONS` sets a ceiling sized for one process holding
- * the whole container. Inheriting that into every worker would tell each of
- * sixteen processes it may take half the container, so the primary computes a
- * share instead and passes it on the workers' command line, where it wins over
- * the inherited option. With one worker the share is the whole allowance and
- * nothing changes from the single-process arrangement.
+ * The container's heap budget divided by the number of workers. The primary
+ * passes it on the workers' command line, where it wins over the Dockerfile's
+ * `NODE_OPTIONS` that every worker also inherits. With one worker the share is
+ * the whole budget, which is what the Dockerfile's figure is for the single
+ * process that `WEB_WORKERS=1` runs.
  *
- * @param {number} [count] workers to divide the allowance between
+ * Until 2026-10-01 this was a share of the container's *memory*, which was the
+ * right answer on Railway's 24 GB and the wrong one on a host with no limit:
+ * dev2 reported 91 GB and every worker was told it could have 3.5 of them.
+ *
+ * @param {number} [count] workers to divide the budget between
  * @returns {number}
  */
 export function workerHeapMb(count = workerCount()) {
-  const share = (memoryBudget() * HEAP_FRACTION) / count / (1024 * 1024);
+  const share = heapBudgetMb() / count;
   return Math.max(MIN_HEAP_MB, Math.min(MAX_HEAP_MB, Math.floor(share)));
 }
 

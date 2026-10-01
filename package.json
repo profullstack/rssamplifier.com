@@ -1,6 +1,6 @@
 {
   "name": "rssamplifier.com",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Agent-first public RSS directory. Submit a URL, a list or an OPML file; every blog gets its own page.",

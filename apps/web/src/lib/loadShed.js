@@ -63,11 +63,13 @@ import { share } from './workers.js';
  * work — tens of megabytes at the top end — rather than at whatever the
  * arrival rate happens to be.
  *
- * Since 2026-09-07 the container runs one server per CPU rather than one in
- * total (`workers.js`), and this number is divided between them. It stayed as
- * a container-wide figure on purpose: it was sized against a container's heap,
+ * Since 2026-09-07 the container runs several servers rather than one
+ * (`workers.js`), and this number is divided between them. It stayed as a
+ * container-wide figure on purpose: it was sized against a container's heap,
  * and giving each of sixteen workers the whole of it would raise the real
- * ceiling to 2,048 and hand back the outage it was written to prevent.
+ * ceiling to 2,048 and hand back the outage it was written to prevent. With the
+ * default four workers (since 2026-10-01) each gets 32, against a heap ceiling
+ * of about 1 GB — the arithmetic is in `workers.js` at `DEFAULT_HEAP_BUDGET_MB`.
  */
 const DEFAULT_LIMIT = 128;
 

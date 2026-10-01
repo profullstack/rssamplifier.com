@@ -6,14 +6,15 @@ import { admit, inflight } from './src/lib/loadShed.js';
 import { forkWorkers, workerCount } from './src/lib/workers.js';
 
 /**
- * The HTTP server, on every core, with a ceiling on concurrent work.
+ * The HTTP server, on several cores, with a ceiling on concurrent work.
  *
  * This replaces `next start`, and does two things `next start` cannot. It
  * refuses a request when too many are already in flight — reasoning, and the
- * outage that motivated it, in src/lib/loadShed.js. And it runs one copy of the
- * server per CPU the container is allowed, because JavaScript renders a page on
- * one thread and a single copy leaves the rest of the machine idle while the
- * site is down — reasoning, and *that* outage, in src/lib/workers.js.
+ * outage that motivated it, in src/lib/loadShed.js. And it runs several copies
+ * of the server (four by default, `WEB_WORKERS` to change it), because
+ * JavaScript renders a page on one thread and a single copy leaves the rest of
+ * the machine idle while the site is down — reasoning, *that* outage, and why
+ * it is four and not one per CPU, in src/lib/workers.js.
  *
  * Everything else is what `next start` does — the platform's PORT and HOSTNAME,
  * Next's own request handler, no options of our own.
@@ -24,7 +25,7 @@ import { forkWorkers, workerCount } from './src/lib/workers.js';
  *
  * Every worker listens on the same port; `node:cluster` gives the primary the
  * socket and hands connections round-robin. Nothing below needs to know whether
- * it is the only server or one of sixteen, with one exception worth naming: all
+ * it is the only server or one of several, with one exception worth naming: all
  * of the module state behind these requests — the throttle's counters, the
  * traffic tally, the verified-key cache — is now per worker rather than per
  * container. For the counters that bound *memory* that is the correct place for
@@ -34,7 +35,7 @@ import { forkWorkers, workerCount } from './src/lib/workers.js';
  * intact, but a caller opening fresh connections is metered by each worker
  * separately. That is deliberate. The traffic this was written for arrives one
  * request per address and defeats a per-caller limit outright, and tightening
- * those limits by a factor of sixteen during an outage would refuse readers to
+ * those limits by the worker count during an outage would refuse readers to
  * no purpose. See src/lib/workers.js on why capacity is not a defence.
  */
 
@@ -42,7 +43,7 @@ const port = Number(process.env.PORT) || 3000;
 const hostname = process.env.HOSTNAME || '0.0.0.0';
 
 // The primary forks and then has nothing to do. It must not go on to stand up
-// Next and bind the port itself: that would put a seventeenth server on the
+// Next and bind the port itself: that would put one server too many on the
 // socket with none of the workers' heap settings.
 if (
   forkWorkers({
