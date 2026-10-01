@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev -p 3000",
-    "build": "next build",
+    "dev": "bun --bun next dev -p 3000",
+    "build": "bun --bun next build",
     "test": "node --test test/*.test.js",
-    "start": "node server.mjs"
+    "start": "bun server.mjs"
   },
   "dependencies": {
     "@logicsrc/openaccess": "^0.3.0",

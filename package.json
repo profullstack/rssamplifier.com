@@ -5,19 +5,20 @@
   "type": "module",
   "description": "Agent-first public RSS directory. Submit a URL, a list or an OPML file; every blog gets its own page.",
   "scripts": {
-    "test": "pnpm -r test",
-    "dev": "pnpm --filter @rssamplifier/web dev",
-    "build": "pnpm --filter @rssamplifier/web build",
-    "poll": "pnpm --filter @rssamplifier/poller start",
-    "import:catalogue": "node --env-file=.env scripts/import-catalogue.js"
+    "test": "bun run --filter '*' test",
+    "dev": "bun run --filter @rssamplifier/web dev",
+    "build": "bun run --filter @rssamplifier/web build",
+    "poll": "bun run --filter @rssamplifier/poller start",
+    "import:catalogue": "bun --env-file=.env scripts/import-catalogue.js"
   },
   "devDependencies": {
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/feed": "workspace:*",
     "@rssamplifier/ingest": "workspace:*"
   },
-  "engines": {
-    "node": ">=22"
-  },
-  "packageManager": "pnpm@11.18.0"
+  "packageManager": "bun@1.4.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }

@@ -99,7 +99,11 @@ export function startRsshub(opts = {}) {
     if (stopping) return;
 
     startedAt = now();
-    child = doSpawn(process.execPath, [entry], {
+    // RSSHub is Node's, not ours: its image is node:24 and it ships Node 24 ABI
+    // addons, so it always runs on `node` even though the poller itself runs on
+    // Bun (where process.execPath is bun). The poller image keeps node:24.
+    const runtime = typeof process.versions.bun === 'string' ? 'node' : process.execPath;
+    child = doSpawn(runtime, [entry], {
       env: {
         ...process.env,
         NODE_ENV: 'production',

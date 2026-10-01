@@ -49,31 +49,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Before setup-node, which is not the obvious order: `cache: pnpm` needs
-      # the pnpm binary to exist so it can ask where the store lives. The
-      # version comes from `packageManager` in package.json, so it stays in step
-      # with local development without being written down twice.
-      - uses: pnpm/action-setup@v4
+      # Bun is the package manager and the app runtime (version from
+      # packageManager in package.json). Node stays: every package's tests run on
+      # `node --test`, and RSSHub inside the poller is Node 24.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
 
       - uses: actions/setup-node@v4
         with:
-          # Matching apps/*/Dockerfile, which is node:22-alpine. `engines` says
-          # >=22, but CI should run what production runs rather than the newest
-          # thing that satisfies the range.
           node-version: 22
-          cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      - run: bun install --frozen-lockfile
 
       # Every workspace. The suite is hermetic — each test file gets its own
       # database on the service container above and stubs the network — so it
       # needs no production credentials and no secrets, which is what makes it
       # safe to run on a pull request.
-      - run: pnpm -r test
+      - run: bun run test
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
       # The web build, because a broken page is not something the tests catch:
       # they cover packages and route handlers, and a JSX or import error in a
       # page only surfaces when Next compiles it.
-      - run: pnpm build
+      - run: bun run build
