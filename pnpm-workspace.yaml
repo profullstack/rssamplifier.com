@@ -19,6 +19,6 @@ minimumReleaseAgeExclude:
   - '@profullstack/partners@0.2.0'
   - '@profullstack/submit-feed@0.1.1'
   - '@logicsrc/openaccess@0.3.0'
-  - '@profullstack/openprofile@0.1.0'
+  - '@profullstack/openprofile@0.1.0 || 0.1.2'
   - '@profullstack/keys'
   - '@profullstack/notifications@0.1.0'

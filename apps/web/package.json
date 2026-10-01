@@ -1,6 +1,6 @@
 {
   "name": "@rssamplifier/web",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "@logicsrc/openaccess": "^0.3.0",
     "@profullstack/leaderboard": "^0.3.0",
     "@profullstack/notifications": "^0.1.0",
-    "@profullstack/openprofile": "^0.1.0",
+    "@profullstack/openprofile": "^0.1.2",
     "@profullstack/partners": "^0.2.0",
     "@profullstack/player": "^0.3.1",
     "@profullstack/rssamplifier": "workspace:*",
