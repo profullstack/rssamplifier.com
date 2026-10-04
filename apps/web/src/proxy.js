@@ -45,6 +45,26 @@ import { TIERS, tierFor } from './lib/tiers.js';
  */
 export async function proxy(request) {
   /*
+   * A webring hop is never rationed. The request is a 302 from a link on
+   * somebody else's page, so refusing it is a broken link on their site
+   * rather than a slower answer on ours; it costs one read that lib/rings.js
+   * caches per worker and no write; and a busy ring is many readers on many
+   * addresses each clicking once, which is exactly the traffic a per-address
+   * limit sized against crawlers would start refusing at the moment the ring
+   * worked. Counted like everything else, so the ledger still shows it.
+   *
+   * It is answered before the gate and the challenge too, not only before the
+   * throttle. The gate charged hops: a reader it took for a crawler clicked
+   * `>>` on a member's footer and got an x402 offer in JSON instead of the
+   * next site, which is the same broken link. A hop renders nothing worth
+   * selling; there is nothing behind it but a Location header.
+   */
+  if (RING_HOP.test(request.nextUrl.pathname)) {
+    countRequest(request, tierFor(request).name, false);
+    return NextResponse.next();
+  }
+
+  /*
    * The gate answers with a 402, the sales page or a freshly minted pass, or
    * with nothing at all — which is every person, every search crawler, every
    * training crawler on an open path or carrying a pass. Only an answer stops
@@ -95,19 +115,6 @@ export async function proxy(request) {
     return dare;
   }
 
-  /*
-   * A webring hop is never rationed. The request is a 302 from a link on
-   * somebody else's page, so refusing it is a broken link on their site
-   * rather than a slower answer on ours; it costs one read that lib/rings.js
-   * caches per worker and no write; and a busy ring is many readers on many
-   * addresses each clicking once, which is exactly the traffic a per-address
-   * limit sized against crawlers would start refusing at the moment the ring
-   * worked. Counted like everything else, so the ledger still shows it.
-   */
-  if (RING_HOP.test(request.nextUrl.pathname)) {
-    countRequest(request, tierFor(request).name, false);
-    return NextResponse.next();
-  }
 
   const tier = (await hasValidPass(request)) ? TIERS.pass : tierFor(request);
 

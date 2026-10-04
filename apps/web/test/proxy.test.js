@@ -194,6 +194,12 @@ test('a webring hop goes through unrationed, and only a hop', () => {
   const exemption = source.indexOf('RING_HOP.test(request.nextUrl.pathname)');
   const throttle = source.indexOf('attempt(callerIdentity(request)');
   assert.ok(exemption > -1 && throttle > -1 && exemption < throttle, 'the hop is answered before attempt()');
+  // And before the paywall gate and the challenge: a charged hop is a broken
+  // link on a member's site, same as a throttled one.
+  const gate = source.indexOf('await gate(request)');
+  const dare = source.indexOf('await challenge(request)');
+  assert.ok(gate > -1 && exemption < gate, 'the hop is answered before the gate');
+  assert.ok(dare > -1 && exemption < dare, 'the hop is answered before the challenge');
 
   const pattern = matcherFromSource();
   assert.ok(new RegExp(`^${pattern}$`).test('/ring/physics/next'), 'a hop still reaches the counter');
