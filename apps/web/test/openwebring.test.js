@@ -394,12 +394,12 @@ test('the join snippet is three plain anchors and nothing else', () => {
   const snippet = joinSnippet({ base: BASE, ring: RING, siteUrl: 'https://alpha.example/' });
   const lines = snippet.split('\n');
   assert.equal(lines.length, 3);
-  assert.equal(lines[0], `<a href="${BASE}/ring/physics/previous?from=https%3A%2F%2Falpha.example%2F">previous site</a>`);
-  assert.equal(lines[1], `<a href="${BASE}/ring/physics">Physics webring</a>`);
-  assert.equal(lines[2], `<a href="${BASE}/ring/physics/next?from=https%3A%2F%2Falpha.example%2F">next site</a>`);
+  assert.equal(lines[0], `<a href="${BASE}/ring/physics/previous?from=https%3A%2F%2Falpha.example%2F">&lt;&lt;</a>`);
+  assert.equal(lines[1], `<a href="${BASE}/ring/physics">Physics</a>`);
+  assert.equal(lines[2], `<a href="${BASE}/ring/physics/next?from=https%3A%2F%2Falpha.example%2F">&gt;&gt;</a>`);
   assert.ok(!/script|img|rel=/.test(snippet));
   assert.ok(linksToRing(snippet, BASE, 'physics'), 'and the verification accepts its own snippet');
-  assert.match(joinSnippet({ base: BASE, ring: { slug: 'x', title: 'A & B <c>' } }), /A &amp; B &lt;c&gt; webring/);
+  assert.match(joinSnippet({ base: BASE, ring: { slug: 'x', title: 'A & B <c>' } }), />A &amp; B &lt;c&gt;</);
 });
 
 test('who may state who makes a site', () => {
