@@ -329,7 +329,8 @@ export function renderOpml({ ring, members }) {
  * The three anchors a member pastes, with their own address in `from`.
  *
  * Exactly three plain links and nothing else: no script, no image, no rel
- * the spec did not register. The middle one is what the verification looks
+ * the spec did not register. They read `<< Ring >>`: the arrows are the
+ * hops, so no words are needed. The middle one is what the verification looks
  * for, and either hop counts too.
  *
  * @param {{ base: string, ring: { slug: string, title: string }, siteUrl?: string }} input
@@ -339,9 +340,9 @@ export function joinSnippet({ base, ring, siteUrl = 'https://example.com/' }) {
   const page = ringUrl(base, ring.slug);
   const from = encodeURIComponent(siteUrl);
   return [
-    `<a href="${page}/previous?from=${from}">previous site</a>`,
-    `<a href="${page}">${escapeHtml(ring.title)} webring</a>`,
-    `<a href="${page}/next?from=${from}">next site</a>`,
+    `<a href="${page}/previous?from=${from}">&lt;&lt;</a>`,
+    `<a href="${page}">${escapeHtml(ring.title)}</a>`,
+    `<a href="${page}/next?from=${from}">&gt;&gt;</a>`,
   ].join('\n');
 }
 
