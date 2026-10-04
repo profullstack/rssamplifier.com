@@ -298,6 +298,26 @@ export default function RootLayout({ children }) {
               <a href="/authors">Authors</a>
             </p>
             <RingLeaders />
+            {/* This site's own membership in the Profullstack ring it hosts:
+                the same three anchors every member pastes, with our address
+                in `from`, so the ring checker finds them like anyone else's. */}
+            <nav className="webring" aria-label="Profullstack webring">
+              <p>
+                <a
+                  href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Frssamplifier.com%2F"
+                  rel="prev"
+                >
+                  {'<<'}
+                </a>{' '}
+                <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>{' '}
+                <a
+                  href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Frssamplifier.com%2F"
+                  rel="next"
+                >
+                  {'>>'}
+                </a>
+              </p>
+            </nav>
             {/* The two platform namespaces, on a line of their own rather than
                 appended to the browse row above. That row is the directory's
                 own categories — what a feed *is* — and these are two places
