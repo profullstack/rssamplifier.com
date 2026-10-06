@@ -278,3 +278,53 @@ test('submitting a subreddit files it under Reddit rather than among the blogs',
   // upstream do work (§37). The poller collects it on its next tick.
   assert.equal(row.status, 'pending');
 });
+
+test('a subreddit is collected through the mirror even with X switched off, and keeps its guids', async () => {
+  await submitOne(db, 'https://www.reddit.com/r/asktechnology/new.rss');
+  const feed = await social.feedBySocialRef(db, 'r:sub:asktechnology');
+  let fetched = 0;
+
+  const result = await crawlFeed(db, feed, {
+    // No xRuntime: the poller only builds one when X is enabled.
+    x: async (row) => ({
+      ok: true,
+      feedUrl: row.feed_url,
+      feed: {
+        title: 'r/AskTechnology',
+        description: '',
+        siteUrl: 'https://www.reddit.com/r/AskTechnology/',
+        language: null,
+        imageUrl: null,
+        categories: [],
+        kind: 'blog',
+        items: [
+          {
+            guid: 't3_1wuoyvc',
+            url: 'https://www.reddit.com/r/AskTechnology/comments/1wuoyvc/x/',
+            title: 'What are the best Otter.ai alternatives for files I already have?',
+            summary: '',
+            contentHtml: '<p>hi</p>',
+            author: 'u/RosyBodyNimbus',
+            publishedAt: new Date().toISOString(),
+            imageUrl: null,
+            categories: [],
+            audio: null,
+          },
+        ],
+      },
+    }),
+    resolve: async () => {
+      fetched += 1;
+      throw new Error('reddit.com must not be fetched for a collected subreddit');
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.newItems, 1);
+  assert.equal(fetched, 0);
+  const items = await q.itemsForFeed(db, String(feed.id), 10);
+  assert.deepEqual(
+    items.map((row) => row.guid),
+    ['t3_1wuoyvc'],
+  );
+});

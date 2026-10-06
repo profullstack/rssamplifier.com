@@ -487,6 +487,13 @@ export default async function FeedPage({ params, base }) {
                 {formatDate(p.published_at)}
                 {p.author ? ` · ${p.author}` : ''}
               </time>
+              {/* A Reddit post's replies, read on our host rather than behind
+                  Reddit's app wall. The guid is Reddit's own `t3_` fullname. */}
+              {redditThread(feed, p) && (
+                <p className="meta">
+                  <a href={redditThread(feed, p)}>Comments</a>
+                </p>
+              )}
 
               {/* Queue it from the archive, rather than having to open every
                   episode to line one up. The play control is here for the same
@@ -569,4 +576,17 @@ function hostOf(url) {
   } catch {
     return url;
   }
+}
+
+/**
+ * Where a stored Reddit post's thread lives on this site, or null.
+ *
+ * @param {{ social_network?: string|null }} feed
+ * @param {{ guid?: unknown, url?: unknown }} post
+ */
+function redditThread(feed, post) {
+  if (feed?.social_network !== 'reddit') return null;
+  const id = /^t3_([a-z0-9]{4,12})$/.exec(String(post?.guid ?? ''))?.[1];
+  const sub = /reddit\.com\/r\/([A-Za-z0-9_]{3,21})\//.exec(String(post?.url ?? ''))?.[1];
+  return id && sub ? `/r/${sub}/comments/${id}` : null;
 }

@@ -135,6 +135,19 @@ const nextConfig = {
           has: [{ type: 'header', key: 'content-type', value: '.*application/json.*' }],
           destination: '/api/mcp',
         },
+
+        // A Reddit thread as JSON, the suffix Reddit itself answers to. Here
+        // rather than with the other /r/ rules because the thread page is a
+        // catch-all: in afterFiles it would answer first, with `1wuoyvc.json`
+        // as the id, and 404.
+        {
+          source: '/r/:subreddit/comments/:id/:slug.json',
+          destination: '/api/r/:subreddit/comments/:id',
+        },
+        {
+          source: '/r/:subreddit/comments/:id.json',
+          destination: '/api/r/:subreddit/comments/:id',
+        },
       ],
 
       afterFiles: [

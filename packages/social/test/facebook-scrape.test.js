@@ -197,7 +197,7 @@ test('each platform is asked no faster than it tolerates', () => {
   assert.equal(floorMinutesFor({ social_network: 'instagram' }), 30);
   assert.equal(floorMinutesFor({ social_network: 'facebook' }), 60);
 
-  // Reddit is fetched rather than collected and takes the ordinary hour.
+  // Reddit, collected through a shared public mirror, keeps the hour its RSS had.
   assert.equal(floorMinutesFor({ social_network: 'reddit' }), 60);
   assert.equal(floorMinutesFor({}), 60);
 

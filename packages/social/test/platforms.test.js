@@ -6,7 +6,7 @@ import { parseFacebookInput, facebookRef, facebookSource, facebookSpecFromRef } 
 import { pageToken, connectedPages, fetchFacebookSource } from '../src/facebook/fetch.js';
 import { fetchInstagramSource } from '../src/instagram/fetch.js';
 import { socialSourceFrom, socialPathFor, SOCIAL_NETWORKS } from '../src/identify.js';
-import { isCollected, fetchSocialSource } from '../src/collect.js';
+import { isCollected, needsRuntime, fetchSocialSource } from '../src/collect.js';
 import { failureResult, ANOMALY_SECONDS, UNCONFIGURED_SECONDS } from '../src/failure.js';
 import { socialDisplayTitle } from '../src/display.js';
 import { XNoSuchSource, XRateLimited, XUnavailable, XAuthFailed } from '../src/x/errors.js';
@@ -283,10 +283,13 @@ test('Instagram with no provider configured reschedules for an hour', async () =
 test('the four namespaces, and which of them needs a collector', () => {
   assert.deepEqual([...SOCIAL_NETWORKS], ['reddit', 'x', 'instagram', 'facebook']);
 
-  // Reddit is a social network and is NOT collected: it publishes real RSS and
-  // is fetched like any blog. That asymmetry is the whole reason the two
-  // questions are separate.
-  assert.equal(isCollected({ social_network: 'reddit' }), false);
+  // Reddit is collected through Arctic Shift since reddit.com stopped answering
+  // datacenter addresses reliably, and is the one collector that needs no
+  // runtime, so it keeps running with X switched off.
+  assert.equal(isCollected({ social_network: 'reddit' }), true);
+  assert.equal(needsRuntime({ social_network: 'reddit' }), false);
+  assert.equal(needsRuntime({ social_network: 'x' }), true);
+  assert.equal(needsRuntime({}), false);
   assert.equal(isCollected({ social_network: 'x' }), true);
   assert.equal(isCollected({ social_network: 'instagram' }), true);
   assert.equal(isCollected({ social_network: 'facebook' }), true);
@@ -336,7 +339,7 @@ test('no public path ever names a provider', () => {
 });
 
 test('the dispatcher refuses a network it has no collector for', async () => {
-  const result = await fetchSocialSource({ social_network: 'reddit' }, { runtime: {} });
+  const result = await fetchSocialSource({ social_network: 'myspace' }, { runtime: {} });
   assert.equal(result.ok, false);
   assert.match(result.error, /no collector/);
 });

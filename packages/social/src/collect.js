@@ -6,15 +6,17 @@
  * So the choice of collector lives here, and the crawler asks one question:
  * is this row collected rather than fetched?
  *
- * Reddit is deliberately absent. It publishes real RSS, so it is *fetched* like
- * any blog and needs no collector at all — the `/r/` namespace is about naming
- * it, not about reading it. That asymmetry is the whole reason `social_network`
- * and "needs a collector" are two different questions.
+ * Reddit was deliberately absent for a while: it publishes real RSS, so it was
+ * fetched like any blog. It does not publish that RSS reliably to a datacenter
+ * address, so since 2026-10-06 it is collected through Arctic Shift instead
+ * (`reddit/arctic.js`). `social_network` and "needs a collector" are still two
+ * different questions; today they happen to have the same answer.
  */
 
 import { fetchXSource } from './x/fetch.js';
 import { fetchInstagramSource } from './instagram/fetch.js';
 import { fetchFacebookSource } from './facebook/fetch.js';
+import { fetchRedditSource } from './reddit/fetch.js';
 
 /**
  * The networks that cannot simply be fetched, and what collects them.
@@ -28,7 +30,17 @@ const COLLECTORS = {
   x: fetchXSource,
   instagram: fetchInstagramSource,
   facebook: fetchFacebookSource,
+  reddit: fetchRedditSource,
 };
+
+/**
+ * Collectors that need nothing configured: no session, no bridge, no key.
+ *
+ * The crawler only builds its runtime when X is switched on, and refuses the
+ * others without one. A public mirror needs none, and holding fifty thousand
+ * subreddits hostage to an X setting would be the quietest possible outage.
+ */
+const RUNTIME_FREE = new Set(['reddit']);
 
 /**
  * The fastest each platform may be asked, in minutes.
@@ -51,6 +63,9 @@ export const FLOOR_MINUTES = {
   x: 5,
   instagram: 30,
   facebook: 60,
+  // A public archive rather than a personal session, but one shared mirror
+  // serving fifty thousand subreddits; the hourly floor Reddit's RSS had.
+  reddit: 60,
 };
 
 /** The default for anything fetched rather than collected. */
@@ -85,4 +100,14 @@ export async function fetchSocialSource(feed, opts) {
   const collect = COLLECTORS[String(feed?.social_network ?? '')];
   if (!collect) return { ok: false, error: `no collector for ${feed?.social_network}` };
   return collect(feed, opts);
+}
+
+/**
+ * Can this row be collected without the X runtime?
+ *
+ * @param {{ social_network?: string|null }} feed
+ * @returns {boolean}
+ */
+export function needsRuntime(feed) {
+  return isCollected(feed) && !RUNTIME_FREE.has(String(feed?.social_network ?? ''));
 }
