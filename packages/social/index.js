@@ -82,6 +82,7 @@ export { failureResult, retryAfterFor, ANOMALY_SECONDS, UNCONFIGURED_SECONDS } f
 export {
   fetchSocialSource,
   isCollected,
+  needsRuntime,
   floorMinutesFor,
   FLOOR_MINUTES,
   DEFAULT_FLOOR_MINUTES,
@@ -90,3 +91,18 @@ export { scrapeFacebookPage } from './src/facebook/scrape.js';
 
 export { socialSourceFrom, socialPathFor, SOCIAL_NETWORKS } from './src/identify.js';
 export { socialDisplayTitle } from './src/display.js';
+
+export {
+  ARCTIC_BASE,
+  arcticGet,
+  commentTree,
+  fetchRedditComments,
+  fetchRedditListing,
+  fetchRedditPost,
+  isShowable as isShowableRedditPost,
+  postToItem as redditPostToItem,
+  redditMarkdown,
+  redditPostId,
+} from './src/reddit/arctic.js';
+
+export { fetchRedditSource } from './src/reddit/fetch.js';

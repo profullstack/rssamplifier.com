@@ -2373,6 +2373,59 @@ select {
   white-space: pre-wrap;
 }
 
+/* A Reddit thread borrows the reader's shell but is a page to read top to
+   bottom, not a toolbar over a frame: one column, and a title at title size. */
+.reddit-thread {
+  max-width: var(--measure);
+  margin: 0 auto;
+  width: 100%;
+}
+
+.reddit-thread .reader-head {
+  padding: 0 0 0.8rem;
+}
+
+.reddit-thread .reader-head h1 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 0.3rem 0 0;
+}
+
+.reddit-thread .reader-article {
+  max-width: none;
+  margin: 0;
+}
+
+/* Reddit threads, mirrored: replies nest, and bodies are HTML rather than text,
+   so the pre-wrap our own comments rely on would double every paragraph. */
+.reddit-comments .reddit-comments {
+  margin: 0.6rem 0 0 0.9rem;
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--line);
+}
+
+.reddit-comments .reddit-comments .comment:last-child {
+  border-bottom: 0;
+}
+
+.comment-body.reddit-body {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.comment-body.reddit-body > :first-child {
+  margin-top: 0;
+}
+
+.comment-body.reddit-body > :last-child {
+  margin-bottom: 0;
+}
+
+.op-badge {
+  font-weight: 600;
+  color: var(--accent, inherit);
+}
+
 .comment-form {
   display: flex;
   flex-direction: column;

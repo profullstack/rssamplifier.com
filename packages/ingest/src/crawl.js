@@ -1,6 +1,6 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
-import { fetchSocialSource, floorMinutesFor, isCollected } from '@rssamplifier/social';
+import { fetchSocialSource, floorMinutesFor, isCollected, needsRuntime } from '@rssamplifier/social';
 
 import { prepareCredits } from './enrich.js';
 import {
@@ -201,7 +201,10 @@ export function topicsFrom(feed = {}, storedItems = []) {
  */
 async function collectSocial(feed, opts) {
   const runtime = opts.xRuntime ?? null;
-  if (!runtime) {
+  // Reddit, through a public mirror, needs no runtime; the session-backed
+  // networks do, and wait an hour rather than count a missing deployment
+  // against the source.
+  if (!runtime && needsRuntime(feed)) {
     return { ok: false, throttled: true, retryAfter: 3600, error: 'social-runtime-unavailable' };
   }
 
@@ -220,10 +223,10 @@ export async function crawlFeed(db, feed, opts = {}) {
   // never learn that any of them exists (§30, AC-8).
   //
   // `isCollected` rather than a list of network names, because the two
-  // questions differ: Reddit *is* a social network and is *not* collected — it
-  // publishes real RSS and is fetched like any blog, and `/r/` is about naming
-  // it rather than about reading it. @rssamplifier/social owns that
-  // distinction, so adding a platform never edits this file.
+  // questions differ: a network can be social and still be fetched. Reddit was
+  // that case until reddit.com stopped answering us reliably; it is collected
+  // through Arctic Shift now. @rssamplifier/social owns that distinction, so
+  // adding or moving a platform never edits this file.
   const social = isCollected(feed);
 
   // How fast this row may be asked, which is a property of its platform rather
