@@ -180,7 +180,9 @@ export default async function SalesPage({ searchParams }) {
         <a href="mailto:hello@rssamplifier.com">hello@rssamplifier.com</a>. It is a separate ask
         from removal on purpose — “list my blog, but do not sell my writing to a model” is a
         coherent position and nobody should have to leave the directory to hold it. Excluded feeds,
-        and every post and article belonging to them, are absent from every stream.
+        and every post and article belonging to them, are absent from every stream, and the reader
+        and the MCP server send people to the publisher's own site rather than serving a copy of
+        the article.
         {corpus && corpus.optedOut > 0 ? ` ${fmt(corpus.optedOut)} have asked so far.` : ''}
       </p>
 

@@ -14,6 +14,7 @@ import { FILTER_FROM } from '../../../lib/listFilter.js';
 import { jsonLdScript } from '../../../lib/jsonld.js';
 import { profileUrl } from '../../../lib/openprofile.js';
 import { profiles } from '@rssamplifier/db';
+import { pageParam } from '../../../lib/pageParam.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +22,7 @@ export const dynamic = 'force-dynamic';
  * @param {{ params: Promise<{ slug: string }> }} props
  */
 export async function generateMetadata({ params }) {
-  const { slug } = await params;
+  const slug = pageParam((await params).slug);
   const person = await authors.authorBySlug(db(), slug);
   if (!person) return { title: 'Not found' };
 
@@ -57,7 +58,7 @@ export async function generateMetadata({ params }) {
  * @param {{ params: Promise<{ slug: string }>, searchParams: Promise<{ claim?: string }> }} props
  */
 export default async function AuthorPage({ params, searchParams }) {
-  const { slug } = await params;
+  const slug = pageParam((await params).slug);
   const person = await authors.authorBySlug(db(), slug);
   if (!person) notFound();
 

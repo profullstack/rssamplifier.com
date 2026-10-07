@@ -207,3 +207,26 @@ export async function listRemovals(db) {
     created_at: String(r.created_at),
   }));
 }
+
+/**
+ * Take a host back off the removal list.
+ *
+ * For a removal made in error — 2026-10-07, a publisher who asked to be left out
+ * of the corpus was removed from the directory instead. This only lifts the
+ * block: the deleted feed is not brought back, it has to be submitted again
+ * (or re-inserted from a backup), and it will be crawled from scratch.
+ *
+ * @param {Client} db
+ * @param {string} url any URL on the host, or the host itself
+ * @returns {Promise<number>} how many removal records were lifted
+ */
+export async function restoreRemoval(db, url) {
+  const raw = String(url).trim();
+  const host = removalHost(raw.includes('://') ? raw : `https://${raw}/`);
+  if (!host) throw new Error(`not a URL: ${raw}`);
+  const res = await db.execute({
+    sql: 'delete from feed_removals where host = ? or feed_url = ?',
+    args: [host, raw],
+  });
+  return Number(res.rowsAffected ?? 0);
+}

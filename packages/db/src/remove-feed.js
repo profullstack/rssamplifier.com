@@ -7,19 +7,22 @@
  *
  *   node packages/db/src/remove-feed.js --list
  *
+ *   node packages/db/src/remove-feed.js --restore https://someone.substack.com/
+ *
  * Runs against TURSO_DATABASE_URL like migrate.js does. Deletes every feed on
  * the URL's host with its items, extracts and orphaned author, and records the
  * host in feed_removals so discovery and resubmission cannot bring it back.
  */
 
 import { connect } from './client.js';
-import { listRemovals, removeFeed } from './removals.js';
+import { listRemovals, removeFeed, restoreRemoval } from './removals.js';
 
 function parse(argv) {
-  const out = { url: null, reason: null, by: null, list: false };
+  const out = { url: null, reason: null, by: null, list: false, restore: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--list') out.list = true;
+    else if (arg === '--restore') out.restore = true;
     else if (arg === '--reason') out.reason = argv[++i] ?? null;
     else if (arg === '--by') out.by = argv[++i] ?? null;
     else if (arg.startsWith('--')) throw new Error(`unknown option ${arg}`);
@@ -44,8 +47,18 @@ async function main() {
     return;
   }
 
+  if (opts.restore && opts.url) {
+    const lifted = await restoreRemoval(db, opts.url);
+    console.log(
+      lifted > 0
+        ? `lifted ${lifted} removal record(s); the host can be submitted again`
+        : 'no removal on record for that host',
+    );
+    return;
+  }
+
   if (!opts.url) {
-    console.error('usage: remove-feed.js <feed-url> [--reason TEXT] [--by WHO] | --list');
+    console.error('usage: remove-feed.js <feed-url> [--reason TEXT] [--by WHO] | --restore <url> | --list');
     process.exit(2);
   }
 
