@@ -117,6 +117,9 @@ export default async function ReaderPage({ params, searchParams }) {
   // the API both address a post as (slug, guid).
   const itemId = String(post.id);
 
+  // Listed, but not to be handed on: see readerView and corpus-opt-out.js.
+  const optOut = Number(feed.dataset_opt_out ?? 0) === 1;
+
   // Asked only when the answer can change anything. Framing a video host is not
   // on the table, and this is a request to somebody else's server on the way to
   // rendering every video page.
@@ -127,7 +130,7 @@ export default async function ReaderPage({ params, searchParams }) {
   // the post is rendered.
   const verdict =
     postUrl && !watchable
-      ? await readerView({ itemId, url: postUrl })
+      ? await readerView({ itemId, url: postUrl, optOut })
       : { frameable: false, reason: watchable ? 'video-post' : 'no-url', article: null };
 
   const nav = await q.neighbours(client, String(feed.created_at));
@@ -178,9 +181,13 @@ export default async function ReaderPage({ params, searchParams }) {
   // itself carried only a summary. Before this, asking for a language on a
   // summary-only feed translated a headline and left the reader on an English
   // card — the translator had nothing else to work with. It does now.
-  const translatable = source?.content_html
-    ? String(source.content_html)
-    : (verdict.article?.html ?? null);
+  // Not for a publisher who opted out: a translated copy of their article is
+  // still their article. The title and summary are what their feed syndicates.
+  const translatable = optOut
+    ? null
+    : source?.content_html
+      ? String(source.content_html)
+      : (verdict.article?.html ?? null);
 
   const attempt = wanted
     ? await ensureTranslation(client, {
@@ -204,7 +211,7 @@ export default async function ReaderPage({ params, searchParams }) {
   // the way out of the translator as well; the original is sanitized here
   // because until now nothing rendered it and it has never been through a
   // sanitizer at all.
-  const article = translated?.contentHtml
+  const article = translated?.contentHtml && !optOut
     ? translated.contentHtml
     : source?.content_html
       ? sanitizeHtml(String(source.content_html))
@@ -820,6 +827,7 @@ function explain(reason) {
   // that permanence — which for a reader who need only wait a moment is the
   // one wrong thing to tell them. See lib/pageGate.js.
   if (reason === 'busy') return 'The reader is busy right now; this one is worth trying again.';
+  if (reason === 'publisher-opt-out') return 'The publisher asks that their writing be read on their own site.';
   return 'This page cannot be shown here.';
 }
 

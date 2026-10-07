@@ -359,7 +359,7 @@ export const TOOLS = [
     name: 'read_post',
     title: 'Read a post',
     description:
-      "The full text of one post, extracted from the publisher's own page and returned as prose. Takes the feed slug and post guid that search, get_feed and topic_posts return. The first reader pays for the fetch and everyone after them reads it out of the database, so the publisher is asked once rather than once per view. A post behind a paywall, or on a site that is down, comes back with the feed's summary and a reason instead — never an error.",
+      "The full text of one post, extracted from the publisher's own page and returned as prose. Takes the feed slug and post guid that search, get_feed and topic_posts return. The first reader pays for the fetch and everyone after them reads it out of the database, so the publisher is asked once rather than once per view. A post behind a paywall, on a site that is down, or by a publisher who asked not to be redistributed (reason publisher-opt-out) comes back with the feed's summary and a reason instead — never an error.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -381,7 +381,13 @@ export const TOOLS = [
       const item = await q.itemByGuid(client, String(found.id), guid);
       if (!item) throw invalid(`no post with guid '${guid}' in '${slug}'`);
 
-      const view = await readerView({ itemId: String(item.id), url: item.url ?? null });
+      // A publisher opted out of the corpus gets no text handed to an agent:
+      // `reason` says so and `url` is where to read them.
+      const view = await readerView({
+        itemId: String(item.id),
+        url: item.url ?? null,
+        optOut: Number(found.dataset_opt_out ?? 0) === 1,
+      });
       const body = clip(plainText(view.article?.html ?? ''), ARTICLE_LIMIT);
 
       return {

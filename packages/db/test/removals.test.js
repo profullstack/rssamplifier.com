@@ -9,6 +9,7 @@ import {
   dropRemoved,
   isRemovedUrl,
   listRemovals,
+  restoreRemoval,
   removalHost,
   removeFeed,
 } from '../src/removals.js';
@@ -143,4 +144,21 @@ test('removing again is idempotent and reports nothing to delete', async () => {
 
 test('removeFeed refuses something that is not a URL', async () => {
   await assert.rejects(removeFeed(db, { feed_url: 'nope' }), /not a URL/);
+});
+
+test('a removal made in error can be lifted, and the host is accepted again', async () => {
+  assert.equal(await isRemovedUrl(db, 'https://potter.substack.com/feed'), true);
+  // Any URL on the host, or the bare host, finds the record.
+  assert.equal(await restoreRemoval(db, 'potter.substack.com'), 1);
+  assert.equal(await isRemovedUrl(db, 'https://potter.substack.com/feed'), false);
+  assert.equal((await listRemovals(db)).length, 0);
+
+  const back = await q.insertFeed(db, {
+    slug: 'potter-back',
+    feed_url: 'https://potter.substack.com/feed',
+    title: 'Potter',
+    next_fetch_at: nowIso(),
+  });
+  assert.ok(back);
+  assert.equal(await restoreRemoval(db, 'https://potter.substack.com/'), 0, 'nothing left to lift');
 });

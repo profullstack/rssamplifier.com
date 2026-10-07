@@ -644,6 +644,23 @@ export async function setDatasetOptOut(db, slug, optOut) {
 }
 
 /**
+ * Every opted-out feed, for the operator script.
+ *
+ * @param {Client} db
+ * @returns {Promise<{ slug: string, feed_url: string, title: string|null }[]>}
+ */
+export async function listOptedOut(db) {
+  const { rows } = await db.execute(
+    `select slug, feed_url, title from feeds where dataset_opt_out = 1 order by slug`,
+  );
+  return rows.map((r) => ({
+    slug: String(r.slug),
+    feed_url: String(r.feed_url),
+    title: r.title == null ? null : String(r.title),
+  }));
+}
+
+/**
  * How many publishers have opted out.
  *
  * Rides the partial index, so it costs a few pages rather than a scan. Shown on

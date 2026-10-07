@@ -5,6 +5,7 @@ import { newId, nowIso } from '../src/client.js';
 import { connectTest } from '../src/testdb.js';
 import * as accounts from '../src/accounts.js';
 import * as dataset from '../src/dataset.js';
+import { feedBySlug } from '../src/queries.js';
 
 /**
  * The corpus gate, the cadence limits, and the publisher's veto.
@@ -411,4 +412,14 @@ test('an enquiry is stored, and repeats from one address are countable', async (
   assert.equal(await dataset.enquiryCountFrom(db, 'hash-2', '2000-01-01T00:00:00.000Z'), 0);
   // No address to count against is not an error, and must not read as a flood.
   assert.equal(await dataset.enquiryCountFrom(db, null, '2000-01-01T00:00:00.000Z'), 0);
+});
+
+test('the opted-out list and the feed row both carry the flag', async () => {
+  assert.deepEqual(
+    (await dataset.listOptedOut(db)).map((f) => f.slug),
+    ['shy'],
+  );
+  // The reader and read_post decide from the feed row, so the row has to say.
+  assert.equal(Number((await feedBySlug(db, 'shy')).dataset_opt_out), 1);
+  assert.equal(Number((await feedBySlug(db, 'open')).dataset_opt_out), 0);
 });

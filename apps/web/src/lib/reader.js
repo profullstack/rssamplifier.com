@@ -29,16 +29,30 @@ import { withPageSlot } from './pageGate.js';
  * all of them and the reader should not see a stack trace because a publisher's
  * origin was down.
  *
- * @param {{ itemId: string, url: string|null }} post
+ * A publisher who opted out of the corpus (`feeds.dataset_opt_out`) asked us
+ * not to hand their writing on, and an article we read off their page and
+ * serve from ours is exactly that. Their page may still be framed — that is
+ * their server answering the reader — but nothing is extracted, stored or
+ * served from the cache, and a refusal ends in the link out.
+ *
+ * @param {{ itemId: string, url: string|null, optOut?: boolean }} post
+ * @param {{ probe?: typeof probePage }} [deps] the opt-out path's fetch, replaceable in tests
  * @returns {Promise<{
  *   frameable: boolean,
  *   reason: string,
  *   article: { html: string, byline: string|null, siteName: string|null, length: number, preview: boolean }|null,
  * }>}
  */
-export async function readerView(post) {
-  const { itemId, url } = post;
+export async function readerView(post, { probe = probePage } = {}) {
+  const { itemId, url, optOut = false } = post;
   if (!url) return { frameable: false, reason: 'no-url', article: null };
+
+  if (optOut) {
+    return withPageSlot(
+      () => frameOnly(url, probe),
+      () => ({ frameable: false, reason: 'busy', article: null }),
+    );
+  }
 
   const client = db();
 
@@ -65,6 +79,29 @@ export async function readerView(post) {
     () => ({ frameable: false, reason: 'busy', article: null }),
   );
 }
+
+/**
+ * Ask only whether the publisher's page may be framed, and never read it.
+ *
+ * @param {string} url
+ * @param {typeof probePage} probe
+ * @returns {Promise<{ frameable: boolean, reason: string, article: null }>}
+ */
+async function frameOnly(url, probe) {
+  try {
+    const page = await probe(url, { origin: siteUrl() });
+    if (isStream(page.contentType)) return { frameable: false, reason: 'stream', article: null };
+    if (page.frameable) return { frameable: true, reason: page.reason, article: null };
+  } catch {
+    /* the link out is the answer to a failure as well */
+  }
+  return { frameable: false, reason: OPTED_OUT, article: null };
+}
+
+/**
+ * The reason given when a post is not shown because its publisher opted out.
+ */
+export const OPTED_OUT = 'publisher-opt-out';
 
 /**
  * Fetch the page and read it, having decided that is worth doing.
