@@ -32,6 +32,7 @@ import Thumb from '../Thumb.jsx';
 import Toolbar from '../Toolbar.jsx';
 import { CATEGORIES } from '../CategoryIndex.jsx';
 import { jsonLdScript } from '../../lib/jsonld.js';
+import { pageParam } from '../../lib/pageParam.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,7 +66,7 @@ function landingPath(feed) {
  * @param {{ params: Promise<{ slug: string }> }} props
  */
 export async function generateMetadata({ params }) {
-  const { slug } = await params;
+  const slug = pageParam((await params).slug);
   const feed = await q.feedBySlug(db(), slug);
   if (!feed) return { title: 'Not found' };
 
@@ -152,7 +153,7 @@ export async function generateMetadata({ params }) {
  * @param {{ params: Promise<{ slug: string }>, base?: string }} props
  */
 export default async function FeedPage({ params, base }) {
-  const { slug } = await params;
+  const slug = pageParam((await params).slug);
   const client = db();
 
   const feed = await q.feedBySlug(client, slug);

@@ -25,6 +25,7 @@ import { decodeXml } from '../../../lib/opml-scan.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import ViewerKeys from './ViewerKeys.jsx';
+import { pageParam } from '../../../lib/pageParam.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +33,7 @@ export const dynamic = 'force-dynamic';
  * @param {{ params: Promise<{ slug: string }> }} props
  */
 export async function generateMetadata({ params }) {
-  const { slug } = await params;
+  const slug = pageParam((await params).slug);
   const loaded = await loadRing(slug);
   if (!loaded) return { title: 'Not found' };
   const { ring } = loaded;
@@ -85,7 +86,7 @@ function stepAll(members, current, random = Math.random) {
  * @param {{ params: Promise<{ slug: string }>, searchParams: Promise<Record<string, string|string[]|undefined>> }} props
  */
 export default async function ViewPage({ params, searchParams }) {
-  const { slug } = await params;
+  const slug = pageParam((await params).slug);
   const query = await searchParams;
   const [loaded, user] = await Promise.all([loadRing(slug), currentUser()]);
   if (!loaded) notFound();

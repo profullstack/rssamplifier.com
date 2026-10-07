@@ -20,6 +20,7 @@ import PlayButton from '../../PlayButton.jsx';
 import PostActions from '../../PostActions.jsx';
 import QueueButton from '../../QueueButton.jsx';
 import ReaderToolbar from '../../ReaderToolbar.jsx';
+import { pageParam } from '../../../lib/pageParam.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,7 @@ export const dynamic = 'force-dynamic';
  * @param {{ params: Promise<{ slug: string }> }} props
  */
 export async function generateMetadata({ params }) {
-  const { slug } = await params;
+  const slug = pageParam((await params).slug);
   const feed = await q.feedBySlug(db(), slug);
   return {
     title: feed ? `Reading · ${feed.title}` : 'Not found',
@@ -70,7 +71,7 @@ export async function generateMetadata({ params }) {
  * }} props
  */
 export default async function ReaderPage({ params, searchParams }) {
-  const { slug } = await params;
+  const slug = pageParam((await params).slug);
   const { p: guid, lang } = await searchParams;
 
   const client = db();
