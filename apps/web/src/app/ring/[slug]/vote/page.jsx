@@ -42,13 +42,13 @@ export default async function VotePage({ params, searchParams }) {
   // Every shape a hop accepts: ?member=, ?from= (and the other rings'
   // spellings), or no query at all and the Referer of the footer it was
   // clicked in, which is how @profullstack/footer links here.
-  const params = new URLSearchParams();
-  for (const [k, v] of Object.entries(query)) if (typeof v === 'string') params.set(k, v);
-  const from =
+  const asked = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) if (typeof v === 'string') asked.set(k, v);
+  const addressed =
     typeof query.member === 'string'
       ? { slug: query.member }
-      : resolveFrom({ params, referer: (await headers()).get('referer') });
-  const member = from ? findMember(members, from) : null;
+      : resolveFrom({ params: asked, referer: (await headers()).get('referer') });
+  const member = addressed ? findMember(members, addressed) : null;
   const outcome = typeof query.voted === 'string' ? OUTCOME[query.voted] ?? '' : '';
 
   if (!member) {
