@@ -1642,7 +1642,8 @@ html[data-dock] body:has(.episode-player.page-docked):not(:has(.dock-player)) {
    where nobody would ever scroll to it, and the usual reading measure would
    waste most of the width on someone else's page, so the reader opts out of
    both. */
-body:has(.reader) footer.site {
+body:has(.reader) footer.site,
+body:has(.reader) .pfs-footer {
   display: none;
 }
 
@@ -1820,6 +1821,11 @@ footer.site {
 
 footer.site a {
   color: var(--muted);
+}
+
+/* @profullstack/footer, below footer.site: muted like the rest of it. */
+.pfs-footer {
+  --pfs-footer-muted: var(--muted);
 }
 
 .empty {

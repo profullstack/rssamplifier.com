@@ -1,6 +1,6 @@
 import './globals.css';
 import './ui.css';
-import { RING_ICON_BODY } from '../lib/ringIcons.js';
+import { Footer } from '@profullstack/footer/react';
 
 import { siteUrl } from '../lib/db.js';
 import { SIGNED_IN_HINT_COOKIE } from '../lib/session-hint.js';
@@ -299,42 +299,6 @@ export default function RootLayout({ children }) {
               <a href="/authors">Authors</a>
             </p>
             <RingLeaders />
-            {/* This site's own membership in the Profullstack ring it hosts:
-                the same anchors every member pastes, with our address
-                in `from`, so the ring checker finds them like anyone else's. */}
-            <nav className="webring" aria-label="Profullstack webring">
-              <p>
-                <a
-                  href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Frssamplifier.com%2F"
-                  rel="prev"
-                  title="Previous site"
-                >
-                  {'<<'}
-                </a>{' '}
-                <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>{' '}
-                <a
-                  href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Frssamplifier.com%2F"
-                  rel="next"
-                  title="Next site"
-                >
-                  {'>>'}
-                </a>{' '}
-                <a
-                  href="https://rssamplifier.com/ring/profullstack/random?from=https%3A%2F%2Frssamplifier.com%2F"
-                  title="Random site"
-                  aria-label="Random site"
-                >
-                  <RingIcon name="random" />
-                </a>{' '}
-                <a
-                  href="https://rssamplifier.com/ring/profullstack/vote?from=https%3A%2F%2Frssamplifier.com%2F"
-                  title="Vote for this site"
-                  aria-label="Vote for this site"
-                >
-                  <RingIcon name="vote" />
-                </a>
-              </p>
-            </nav>
             {/* The two platform namespaces, on a line of their own rather than
                 appended to the browse row above. That row is the directory's
                 own categories — what a feed *is* — and these are two places
@@ -367,20 +331,23 @@ export default function RootLayout({ children }) {
                   text node. */}
               <code>{`curl -fsSL ${siteUrl()}/install.sh | sh`}</code>
             </p>
-            <p>
-              <a href="/about">About</a> · <a href="/advertise">Advertise</a> ·{' '}
-              {/* Beside Advertise rather than beside About: both are the
-                  commercial half of the footer, and a reader looking for one is
-                  the reader most likely to want the other. */}
-              <a href="/sales">Training data</a> · <a href="/contact">Contact</a> ·{' '}
-              <a href="/privacy">Privacy</a> ·{' '}
-              <a href="/terms">Terms</a> ·{' '}
-              <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
-                Source on GitHub
-              </a>
-            </p>
           </div>
         </footer>
+        {/* The bottom bar is @profullstack/footer: the same footer, ring nav
+            and copyright every Profullstack site renders, so this site shows
+            up in the ring it hosts exactly like a member does. */}
+        <Footer
+          site="https://rssamplifier.com/"
+          links={[
+            { label: 'About', href: '/about' },
+            { label: 'Advertise', href: '/advertise' },
+            { label: 'Training data', href: '/sales' },
+            { label: 'Contact', href: '/contact' },
+            { label: 'Privacy', href: '/privacy' },
+            { label: 'Terms', href: '/terms' },
+            { label: 'Source on GitHub', href: 'https://github.com/profullstack/rssamplifier.com', rel: 'noopener' },
+          ]}
+        />
 
         {/* The player, in the layout rather than in a page, because that is the
             difference between one that follows you around the directory and one
@@ -405,29 +372,5 @@ export default function RootLayout({ children }) {
         <Script src="https://crawlproof.com/ad.js" strategy="afterInteractive" />
       </body>
     </html>
-  );
-}
-
-/**
- * An OpenIcon glyph from the ring footer set (lib/ringIcons.js), as JSX.
- *
- * @param {{ name: 'random'|'vote' }} props
- */
-function RingIcon({ name }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      width="1em"
-      height="1em"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      style={{ verticalAlign: '-0.125em' }}
-      dangerouslySetInnerHTML={{ __html: RING_ICON_BODY[name] }}
-    />
   );
 }

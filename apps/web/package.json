@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@logicsrc/openaccess": "^0.3.0",
+    "@profullstack/footer": "latest",
     "@profullstack/leaderboard": "^0.3.0",
     "@profullstack/notifications": "^0.1.0",
     "@profullstack/openprofile": "^0.1.2",
