@@ -1,10 +1,11 @@
 import { webrings } from '@rssamplifier/db';
+import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { ChevronUp } from 'lucide-react';
 
 import { db } from '../../../../lib/db.js';
 import { loadRing } from '../../../../lib/rings.js';
-import { findMember } from '../../../../lib/openwebring.js';
+import { findMember, resolveFrom } from '../../../../lib/openwebring.js';
 import { decodeXml } from '../../../../lib/opml-scan.js';
 import { feedImage } from '../../../../lib/thumbs.js';
 import { Avatar } from '../../../Thumb.jsx';
@@ -38,12 +39,16 @@ export default async function VotePage({ params, searchParams }) {
   const { ring, members } = loaded;
   const path = `/ring/${encodeURIComponent(ring.slug)}`;
 
-  const member =
+  // Every shape a hop accepts: ?member=, ?from= (and the other rings'
+  // spellings), or no query at all and the Referer of the footer it was
+  // clicked in, which is how @profullstack/footer links here.
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) if (typeof v === 'string') params.set(k, v);
+  const from =
     typeof query.member === 'string'
-      ? findMember(members, { slug: query.member })
-      : typeof query.from === 'string'
-        ? findMember(members, { url: query.from })
-        : null;
+      ? { slug: query.member }
+      : resolveFrom({ params, referer: (await headers()).get('referer') });
+  const member = from ? findMember(members, from) : null;
   const outcome = typeof query.voted === 'string' ? OUTCOME[query.voted] ?? '' : '';
 
   if (!member) {
