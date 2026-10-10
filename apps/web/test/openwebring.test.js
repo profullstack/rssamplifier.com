@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { ringIconSvg } from '../src/lib/ringIcons.js';
 
 import {
   checkRingMember,
@@ -390,18 +391,23 @@ test('the OPML is the members\' feeds in ring order', () => {
   assert.equal((renderOpml({ ring: RING, members: [] }).match(/<outline/g) ?? []).length, 0);
 });
 
-test('the join snippet is four plain anchors and nothing else', () => {
+test('the join snippet is five plain anchors and nothing else', () => {
   const snippet = joinSnippet({ base: BASE, ring: RING, siteUrl: 'https://alpha.example/' });
   const lines = snippet.split('\n');
-  assert.equal(lines.length, 4);
+  assert.equal(lines.length, 5);
   assert.equal(lines[0], `<a href="${BASE}/ring/physics/previous?from=https%3A%2F%2Falpha.example%2F">&lt;&lt;</a>`);
   assert.equal(lines[1], `<a href="${BASE}/ring/physics">Physics</a>`);
   assert.equal(lines[2], `<a href="${BASE}/ring/physics/next?from=https%3A%2F%2Falpha.example%2F">&gt;&gt;</a>`);
   assert.equal(
     lines[3],
-    `<a href="${BASE}/ring/physics/random?from=https%3A%2F%2Falpha.example%2F" title="Random site" aria-label="Random site">&#x2684;</a>`,
+    `<a href="${BASE}/ring/physics/random?from=https%3A%2F%2Falpha.example%2F" title="Random site" aria-label="Random site">${ringIconSvg('random')}</a>`,
+  );
+  assert.equal(
+    lines[4],
+    `<a href="${BASE}/ring/physics/vote?from=https%3A%2F%2Falpha.example%2F" title="Vote for this site" aria-label="Vote for this site">${ringIconSvg('vote')}</a>`,
   );
   assert.ok(!/script|img|rel=/.test(snippet));
+  assert.ok(!/https?:\/\/(?!rssamplifier|www\.w3\.org)/.test(snippet.replace(BASE, '')), 'the icons are inline, fetched from nowhere');
   assert.ok(linksToRing(snippet, BASE, 'physics'), 'and the verification accepts its own snippet');
   assert.match(joinSnippet({ base: BASE, ring: { slug: 'x', title: 'A & B <c>' } }), />A &amp; B &lt;c&gt;</);
 });

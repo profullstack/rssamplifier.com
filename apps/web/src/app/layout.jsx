@@ -1,5 +1,6 @@
 import './globals.css';
 import './ui.css';
+import { RING_ICON_BODY } from '../lib/ringIcons.js';
 
 import { siteUrl } from '../lib/db.js';
 import { SIGNED_IN_HINT_COOKIE } from '../lib/session-hint.js';
@@ -323,7 +324,14 @@ export default function RootLayout({ children }) {
                   title="Random site"
                   aria-label="Random site"
                 >
-                  {'⚄'}
+                  <RingIcon name="random" />
+                </a>{' '}
+                <a
+                  href="https://rssamplifier.com/ring/profullstack/vote?from=https%3A%2F%2Frssamplifier.com%2F"
+                  title="Vote for this site"
+                  aria-label="Vote for this site"
+                >
+                  <RingIcon name="vote" />
                 </a>
               </p>
             </nav>
@@ -397,5 +405,29 @@ export default function RootLayout({ children }) {
         <Script src="https://crawlproof.com/ad.js" strategy="afterInteractive" />
       </body>
     </html>
+  );
+}
+
+/**
+ * An OpenIcon glyph from the ring footer set (lib/ringIcons.js), as JSX.
+ *
+ * @param {{ name: 'random'|'vote' }} props
+ */
+function RingIcon({ name }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ verticalAlign: '-0.125em' }}
+      dangerouslySetInnerHTML={{ __html: RING_ICON_BODY[name] }}
+    />
   );
 }

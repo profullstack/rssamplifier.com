@@ -10,6 +10,7 @@ import {
   statusAfter,
 } from '@rssamplifier/ingest';
 import { webrings } from '@rssamplifier/db';
+import { ringIconSvg } from './ringIcons.js';
 
 import { SCOPE_PROFILE_EDIT, SCOPE_RING_EDIT } from './openaccess.js';
 
@@ -326,11 +327,12 @@ export function renderOpml({ ring, members }) {
 }
 
 /**
- * The four anchors a member pastes, with their own address in `from`.
+ * The five anchors a member pastes, with their own address in `from`.
  *
- * Plain links and nothing else: no script, no image, no rel the spec did
- * not register. They read `<< Ring >> ⚄`: the arrows are the hops and the
- * die is the random hop, so no words are needed. The ring link is what the
+ * Plain links and nothing else: no script, no image file, no rel the spec
+ * did not register. They read `<< Ring >> ⚄ ▲`: the arrows are the hops, the
+ * die is the random hop and the triangle is a vote for the site, drawn as
+ * inline OpenIcon glyphs (lib/ringIcons.js), so no words are needed. The ring link is what the
  * verification looks for, and any hop counts too.
  *
  * @param {{ base: string, ring: { slug: string, title: string }, siteUrl?: string }} input
@@ -343,7 +345,8 @@ export function joinSnippet({ base, ring, siteUrl = 'https://example.com/' }) {
     `<a href="${page}/previous?from=${from}">&lt;&lt;</a>`,
     `<a href="${page}">${escapeHtml(ring.title)}</a>`,
     `<a href="${page}/next?from=${from}">&gt;&gt;</a>`,
-    `<a href="${page}/random?from=${from}" title="Random site" aria-label="Random site">&#x2684;</a>`,
+    `<a href="${page}/random?from=${from}" title="Random site" aria-label="Random site">${ringIconSvg('random')}</a>`,
+    `<a href="${page}/vote?from=${from}" title="Vote for this site" aria-label="Vote for this site">${ringIconSvg('vote')}</a>`,
   ].join('\n');
 }
 
