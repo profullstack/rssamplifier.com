@@ -326,12 +326,12 @@ export function renderOpml({ ring, members }) {
 }
 
 /**
- * The three anchors a member pastes, with their own address in `from`.
+ * The four anchors a member pastes, with their own address in `from`.
  *
- * Exactly three plain links and nothing else: no script, no image, no rel
- * the spec did not register. They read `<< Ring >>`: the arrows are the
- * hops, so no words are needed. The middle one is what the verification looks
- * for, and either hop counts too.
+ * Plain links and nothing else: no script, no image, no rel the spec did
+ * not register. They read `<< Ring >> ⚄`: the arrows are the hops and the
+ * die is the random hop, so no words are needed. The ring link is what the
+ * verification looks for, and any hop counts too.
  *
  * @param {{ base: string, ring: { slug: string, title: string }, siteUrl?: string }} input
  * @returns {string}
@@ -343,6 +343,7 @@ export function joinSnippet({ base, ring, siteUrl = 'https://example.com/' }) {
     `<a href="${page}/previous?from=${from}">&lt;&lt;</a>`,
     `<a href="${page}">${escapeHtml(ring.title)}</a>`,
     `<a href="${page}/next?from=${from}">&gt;&gt;</a>`,
+    `<a href="${page}/random?from=${from}" title="Random site" aria-label="Random site">&#x2684;</a>`,
   ].join('\n');
 }
 
