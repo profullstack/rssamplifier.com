@@ -4,6 +4,7 @@ import { hashIp } from '@rssamplifier/ingest';
 
 import { db, siteUrl } from './db.js';
 import { SIGNED_IN_HINT_COOKIE } from './session-hint.js';
+import { clientIp } from '@profullstack/x402-gateway/edge';
 
 /**
  * Reading and writing the signed-in reader, from a request.
@@ -103,8 +104,7 @@ export async function sessionToken() {
  */
 export async function requestMeta() {
   const list = await headers();
-  const ip =
-    list.get('x-forwarded-for')?.split(',')[0]?.trim() || list.get('x-real-ip') || null;
+  const ip = clientIp({ headers: list }) || null;
 
   return {
     userAgent: list.get('user-agent')?.slice(0, 300) ?? null,

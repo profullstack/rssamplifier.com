@@ -5,6 +5,7 @@ import { q, newId } from '@rssamplifier/db';
 import { db, siteUrl } from '../../../lib/db.js';
 import { sniffKind } from '../../../lib/opml-scan.js';
 import { clampRawInput } from '../../../lib/submitted.js';
+import { clientIp } from '@profullstack/x402-gateway/edge';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -117,10 +118,7 @@ export async function POST(req) {
   const client = db();
   const contentType = req.headers.get('content-type') ?? '';
 
-  const ip =
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    null;
+  const ip = clientIp(req) || null;
   const ipHash = hashIp(ip, process.env['IP_HASH_SALT']);
 
   // Checked against the declared length before the body is read, as well as

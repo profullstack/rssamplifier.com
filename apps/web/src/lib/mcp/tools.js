@@ -13,6 +13,7 @@ import { readerView } from '../reader.js';
 import { freshness } from '../freshness.js';
 import { clampRawInput } from '../submitted.js';
 import { clip, plainText } from './text.js';
+import { clientIp } from '@profullstack/x402-gateway/edge';
 
 /**
  * What an agent can do with the directory.
@@ -753,8 +754,7 @@ export const TOOLS = [
 
       // Same per-IP ledger the form writes to, so an agent and a browser share
       // one budget rather than the agent having a private one.
-      const ip =
-        ctx.header('x-forwarded-for')?.split(',')[0]?.trim() || ctx.header('x-real-ip') || null;
+      const ip = clientIp({ headers: { get: (name) => ctx.header(name) ?? null } }) || null;
       const ipHash = hashIp(ip, process.env['IP_HASH_SALT']);
 
       if (ipHash && (await q.submissionCount(client, ipHash)) >= SUBMIT_RATE_LIMIT) {

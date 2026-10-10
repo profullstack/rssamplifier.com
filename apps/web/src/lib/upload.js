@@ -1,5 +1,6 @@
 import { hashIp } from '@rssamplifier/ingest';
 import { q } from '@rssamplifier/db';
+import { clientIp } from '@profullstack/x402-gateway/edge';
 
 /**
  * Feeds one upload may queue.
@@ -48,10 +49,7 @@ export const UPLOAD_WINDOW_MS = 6 * 60 * 60 * 1000;
  * @returns {string|null}
  */
 export function ipHashOf(req) {
-  const ip =
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    null;
+  const ip = clientIp(req) || null;
   return hashIp(ip, process.env['IP_HASH_SALT']);
 }
 

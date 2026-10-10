@@ -3,6 +3,7 @@ import { parseKeywords, MAX_KEYWORDS, apiKey } from '@rssamplifier/search';
 import { discovery, newId } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
+import { clientIp } from '@profullstack/x402-gateway/edge';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -38,10 +39,7 @@ export async function POST(req) {
     return json({ ok: false, error: 'search-unavailable' }, 503);
   }
 
-  const ip =
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    null;
+  const ip = clientIp(req) || null;
   const ipHash = hashIp(ip, process.env['IP_HASH_SALT']);
 
   let raw = '';
