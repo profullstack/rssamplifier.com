@@ -11,6 +11,13 @@ import RingLeaders from './RingLeaders.jsx';
 import Script from "next/script";
 import { jsonLdScript } from '../lib/jsonld.js';
 
+/**
+ * ISR for every prerendered page (/about, /privacy, …): re-rendered at most
+ * hourly, so a new @profullstack/footer template release reaches them without
+ * a redeploy. The many force-dynamic pages are unaffected.
+ */
+export const revalidate = 3600;
+
 export const metadata = {
   metadataBase: new URL(siteUrl()),
   title: {
