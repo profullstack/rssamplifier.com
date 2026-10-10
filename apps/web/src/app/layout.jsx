@@ -299,13 +299,14 @@ export default function RootLayout({ children }) {
             </p>
             <RingLeaders />
             {/* This site's own membership in the Profullstack ring it hosts:
-                the same three anchors every member pastes, with our address
+                the same anchors every member pastes, with our address
                 in `from`, so the ring checker finds them like anyone else's. */}
             <nav className="webring" aria-label="Profullstack webring">
               <p>
                 <a
                   href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Frssamplifier.com%2F"
                   rel="prev"
+                  title="Previous site"
                 >
                   {'<<'}
                 </a>{' '}
@@ -313,8 +314,16 @@ export default function RootLayout({ children }) {
                 <a
                   href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Frssamplifier.com%2F"
                   rel="next"
+                  title="Next site"
                 >
                   {'>>'}
+                </a>{' '}
+                <a
+                  href="https://rssamplifier.com/ring/profullstack/random?from=https%3A%2F%2Frssamplifier.com%2F"
+                  title="Random site"
+                  aria-label="Random site"
+                >
+                  {'⚄'}
                 </a>
               </p>
             </nav>

@@ -354,7 +354,7 @@ export default async function RingPage({ params, searchParams }) {
               Membership is a fact about your site rather than a form. Your feed is listed under{' '}
               <a href={`/topics/${encodeURIComponent(ring.topic_slug ?? ring.slug)}`}>{ring.title}</a>{' '}
               in the directory (<a href="/submit">submit it</a> if it is not), and the ring lists it.
-              To be active, put these three links anywhere on your front page, with your own
+              To be active, put these links anywhere on your front page, with your own
               address in <code>from</code>:
             </p>
             <pre className="code-block">{joinSnippet({ base, ring })}</pre>
