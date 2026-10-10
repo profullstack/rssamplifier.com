@@ -1,3 +1,4 @@
+import { clientIp } from '@profullstack/x402-gateway/edge';
 /**
  * Escalating backoff for crawl traffic.
  *
@@ -170,18 +171,18 @@ function sweep(now) {
 /**
  * The address a request came from.
  *
- * Railway terminates TLS in front of the app, so the socket peer is a proxy and
- * the caller is the first entry of `x-forwarded-for` — only the first, because
- * everything after it was supplied by whatever sat in between and a caller can
- * write what it likes there.
+ * nginx on dev2 terminates TLS in front of the app, so the socket peer is a
+ * proxy. The caller is `x-real-ip`, which nginx sets from the socket, else the
+ * LAST `x-forwarded-for` hop, the one our edge appended (clientIp in
+ * @profullstack/x402-gateway). Never the first: nginx's
+ * $proxy_add_x_forwarded_for appends to whatever the client sent, so the first
+ * entry is the client's to choose and a limit keyed on it is optional.
  *
  * @param {Request} req
  * @returns {string}
  */
 export function callerAddress(req) {
-  const forwarded = req.headers.get('x-forwarded-for') ?? '';
-  const first = forwarded.split(',')[0]?.trim();
-  return first || req.headers.get('x-real-ip') || 'unknown';
+  return clientIp(req) || 'unknown';
 }
 
 /**

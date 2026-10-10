@@ -151,11 +151,15 @@ test('an undeclared caller is metered per address', () => {
   );
 });
 
-test('only the first forwarded address is trusted', () => {
-  const req = new Request('https://rssamplifier.com/', {
-    headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1, 192.168.1.1' },
+test('a forged first forwarded address buys no new allowance', () => {
+  const a = new Request('https://rssamplifier.com/', {
+    headers: { 'x-forwarded-for': '1.1.1.1, 203.0.113.9', 'x-real-ip': '203.0.113.9' },
   });
-  assert.equal(callerAddress(req), '203.0.113.9');
+  const b = new Request('https://rssamplifier.com/', {
+    headers: { 'x-forwarded-for': '2.2.2.2, 203.0.113.9', 'x-real-ip': '203.0.113.9' },
+  });
+  assert.equal(callerAddress(a), '203.0.113.9');
+  assert.equal(callerAddress(a), callerAddress(b), 'one caller, however many first entries it invents');
 });
 
 test('the measured crawl rates land on the right side of the line', () => {

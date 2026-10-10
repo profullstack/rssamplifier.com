@@ -3,6 +3,7 @@ import { apiKeyFromRequest, looksLikeApiKey, hashToken } from '@rssamplifier/aut
 
 import { db } from './db.js';
 import { consume, limitHeaders, ANONYMOUS_HOURLY } from './ratelimit.js';
+import { clientIp } from '@profullstack/x402-gateway/edge';
 
 /**
  * Who is calling, and may they.
@@ -20,18 +21,14 @@ import { consume, limitHeaders, ANONYMOUS_HOURLY } from './ratelimit.js';
 /**
  * The address a request came from, for counting anonymous callers.
  *
- * Railway terminates TLS in front of the app, so the socket address is a proxy
- * and the real client is in x-forwarded-for. Only the first entry is read: the
- * rest are supplied by whatever sat in between and a caller can write anything
- * they like into them.
+ * `x-real-ip`, else the last `x-forwarded-for` hop (clientIp; see
+ * crawlThrottle.callerAddress for why never the first).
  *
  * @param {Request} req
  * @returns {string}
  */
 function callerAddress(req) {
-  const forwarded = req.headers.get('x-forwarded-for') ?? '';
-  const first = forwarded.split(',')[0]?.trim();
-  return first || req.headers.get('x-real-ip') || 'unknown';
+  return clientIp(req) || 'unknown';
 }
 
 /**
