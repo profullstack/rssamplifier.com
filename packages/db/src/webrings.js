@@ -874,6 +874,59 @@ export async function ringLikeCounts(db, slugs) {
   return out;
 }
 
+/* ------------------------------------------------------------------ votes */
+
+/** Votes one address may cast in an hour, across every site in every ring. */
+export const RING_VOTE_HOURLY_CAP = 10;
+
+/**
+ * One anonymous vote for a member of a ring.
+ *
+ * `voter` is the caller's address hashed with the UTC day (the web app makes
+ * it; see apps/web/src/lib/ringVotes.js), so the primary key is the one vote
+ * per site per day and the hourly cap is a count of the same column. The cap
+ * is checked before the insert rather than in it, so two requests landing in
+ * the same instant can both pass it; that is one vote over the cap at worst,
+ * and never a second vote for the same site.
+ *
+ * @param {Client} db
+ * @param {{ ringSlug: string, memberSlug: string, voter: string, now?: Date, hourlyCap?: number }} vote
+ * @returns {Promise<'voted'|'already'|'throttled'>}
+ */
+export async function castRingVote(db, { ringSlug, memberSlug, voter, now = new Date(), hourlyCap = RING_VOTE_HOURLY_CAP }) {
+  const at = now.toISOString();
+  const hourAgo = new Date(now.getTime() - 3600_000).toISOString();
+  const { rows } = await db.execute({
+    sql: `select count(*) as n from ring_votes where voter = ? and created_at > ?`,
+    args: [voter, hourAgo],
+  });
+  if (Number(rows[0]?.n ?? 0) >= hourlyCap) return 'throttled';
+  const done = await db.execute({
+    sql: `insert into ring_votes (ring_slug, member_slug, voter, day, created_at) values (?, ?, ?, ?, ?)
+          on conflict (ring_slug, member_slug, voter, day) do nothing`,
+    args: [ringSlug, memberSlug, voter, at.slice(0, 10), at],
+  });
+  return Number(done.rowsAffected ?? 0) > 0 ? 'voted' : 'already';
+}
+
+/**
+ * Votes per member of a ring, all time.
+ *
+ * @param {Client} db
+ * @param {string} ringSlug
+ * @returns {Promise<Record<string, number>>}
+ */
+export async function ringVoteCounts(db, ringSlug) {
+  /** @type {Record<string, number>} */
+  const out = {};
+  const { rows } = await db.execute({
+    sql: `select member_slug, count(*) as n from ring_votes where ring_slug = ? group by member_slug`,
+    args: [ringSlug],
+  });
+  for (const r of rows) out[String(r.member_slug)] = Number(r.n);
+  return out;
+}
+
 /**
  * One fact with a time: somebody did this with this ring.
  *

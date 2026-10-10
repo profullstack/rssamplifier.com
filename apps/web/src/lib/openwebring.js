@@ -344,6 +344,7 @@ export function joinSnippet({ base, ring, siteUrl = 'https://example.com/' }) {
     `<a href="${page}">${escapeHtml(ring.title)}</a>`,
     `<a href="${page}/next?from=${from}">&gt;&gt;</a>`,
     `<a href="${page}/random?from=${from}" title="Random site" aria-label="Random site">&#x2684;</a>`,
+    `<a href="${page}/vote?from=${from}" title="Vote for this site" aria-label="Vote for this site">&#x25B2;</a>`,
   ].join('\n');
 }
 

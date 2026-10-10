@@ -2,7 +2,7 @@ import { webrings } from '@rssamplifier/db';
 
 /** Slugs that are pages under /ring, so a ring cannot take them. */
 const RESERVED = new Set([
-  'new', 'edit', 'next', 'previous', 'prev', 'random', 'opml', 'check', 'view', 'leaders', 'like', 'share',
+  'new', 'edit', 'next', 'previous', 'prev', 'random', 'opml', 'check', 'view', 'leaders', 'like', 'share', 'vote',
 ]);
 
 /**

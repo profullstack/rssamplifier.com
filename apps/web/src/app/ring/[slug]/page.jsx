@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CircleDashed,
   Eye,
   Link2,
@@ -107,9 +108,10 @@ export default async function RingPage({ params, searchParams }) {
   for (const m of members) if (m.made_by && m.made_by in said) said[m.made_by] += 1;
   const unstated = members.length - said.human - said.ai - said.both;
   const owner = ownsRing(user, ring);
-  const [liked, likes] = await Promise.all([
+  const [liked, likes, votes] = await Promise.all([
     user ? webrings.ringLiked(db(), ring.slug, String(user.id)) : false,
     webrings.ringLikes(db(), ring.slug),
+    webrings.ringVoteCounts(db(), ring.slug),
   ]);
   const checked = typeof query.checked === 'string' ? query.checked : '';
   const outcome = typeof query.status === 'string' ? query.status : '';
@@ -293,6 +295,11 @@ export default async function RingPage({ params, searchParams }) {
                     <Badge variant={status.variant} title={status.title}>
                       <status.Icon /> {status.label}
                     </Badge>
+                    {votes[m.member_slug] > 0 && (
+                      <Badge variant="outline" title="Votes from readers">
+                        <ChevronUp /> {votes[m.member_slug]} {votes[m.member_slug] === 1 ? 'vote' : 'votes'}
+                      </Badge>
+                    )}
                     {m.item_count > 0 && (
                       <Badge variant="outline">
                         {m.item_count} {m.category === 'podcast' ? 'episodes' : 'posts'}
@@ -302,6 +309,13 @@ export default async function RingPage({ params, searchParams }) {
                   <CardFooter className="text-muted-foreground mt-auto gap-4 px-5 text-xs">
                     <a href={memberPath} className="hover:underline">
                       In the directory
+                    </a>
+                    <a
+                      href={`${path}/vote?member=${encodeURIComponent(m.member_slug)}`}
+                      rel="nofollow"
+                      className="hover:underline"
+                    >
+                      Vote
                     </a>
                     <a
                       href={`${page}/${encodeURIComponent(m.member_slug)}/next`}
