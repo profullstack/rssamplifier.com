@@ -359,6 +359,25 @@ function escapeHtml(s) {
 }
 
 /**
+ * The account that is making or managing a ring, from a caller.
+ *
+ * Rings belong to accounts, and two credentials name an account: the
+ * site's session, and one of the account's API keys (`rsa_...`). The key is
+ * what lets a program keep a ring it owns in step with a list it holds
+ * elsewhere (pit.world mirrors its ring this way) without a browser. An
+ * OpenAccess bearer names a principal at the hub, not an account here, so
+ * it cannot own a ring.
+ *
+ * @param {import('./profileAuth.js').Caller} caller
+ * @returns {{ id: string }|null}
+ */
+export function ringAccountOf(caller) {
+  if (!caller || !caller.userId) return null;
+  if (caller.kind !== 'session' && caller.kind !== 'apikey') return null;
+  return { id: String(caller.userId) };
+}
+
+/**
  * Whether a caller may state who makes a member site, and as whom.
  *
  * Three ways in: an admin of the site; a holder of an OpenAccess grant for

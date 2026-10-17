@@ -3,8 +3,8 @@ import { RING_USER_AGENT } from '@rssamplifier/ingest';
 
 import { db, siteUrl } from './db.js';
 import { withPageSlot } from './pageGate.js';
-import { fetchPage } from './profileAuth.js';
-import { checkRingMember, hop, resolveFrom, ringUrl, statusAfter } from './openwebring.js';
+import { callerOf, fetchPage } from './profileAuth.js';
+import { checkRingMember, hop, resolveFrom, ringAccountOf, ringUrl, statusAfter } from './openwebring.js';
 
 /**
  * The database-backed half of the webring routes.
@@ -153,6 +153,18 @@ export async function profilesForFeed(feedId) {
   const client = db();
   const credited = await authors.authorsForFeed(client, feedId);
   return Promise.all(credited.map((person) => profiles.profileForAuthor(client, String(person.id))));
+}
+
+/**
+ * The account behind a ring write: the session, or an API key of the
+ * account (`Authorization: Bearer rsa_...` or `X-API-Key`). Null for
+ * anybody else.
+ *
+ * @param {Request} req
+ * @returns {Promise<{ id: string }|null>}
+ */
+export async function ringAccount(req) {
+  return ringAccountOf(await callerOf(req));
 }
 
 /**

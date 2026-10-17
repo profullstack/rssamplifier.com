@@ -1,8 +1,7 @@
 import { webrings } from '@rssamplifier/db';
 
 import { db } from '../../../../../lib/db.js';
-import { currentUser } from '../../../../../lib/auth.js';
-import { forgetRing, loadRing, ownsRing } from '../../../../../lib/rings.js';
+import { forgetRing, loadRing, ownsRing, ringAccount } from '../../../../../lib/rings.js';
 import { readRingForm, resolveMembers } from '../../../../../lib/ringForms.js';
 import { json } from '../../../authors/route.js';
 
@@ -18,7 +17,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(req, { params }) {
   const { slug } = await params;
-  const user = await currentUser();
+  const user = await ringAccount(req);
   const wantsHtml = (req.headers.get('accept') ?? '').includes('text/html');
   const loaded = await loadRing(slug);
   if (!loaded) return json({ error: 'not-found', slug }, 404);
