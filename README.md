@@ -275,6 +275,24 @@ What they wrote wins per section; what they did not touch is still generated; a 
 as `none` is dropped. The parser, renderer and overlay are
 [`@profullstack/openprofile`](https://www.npmjs.com/package/@profullstack/openprofile).
 
+## Webrings, by hand or by program
+
+Every topic is an [OpenWebring](https://logicsrc.com/openwebring) ring, and anyone signed in can make
+their own at `/ring/new`. A ring belongs to the account that made it, and that account can manage it
+from a program as well as from the page: send one of the account's API keys (from `/account`) as
+`Authorization: Bearer rsa_...` (or `X-API-Key`) to
+
+| Call | What |
+| --- | --- |
+| `POST /api/rings` | Make a ring: `{ "title", "description", "members": [feed or site URLs, or slugs] }` |
+| `POST /api/rings/{slug}` | Change its title or description |
+| `POST /api/rings/{slug}/members` | `{ "action": "add", "members": [...] }` or `{ "action": "remove", "member": "<slug>" }` |
+| `GET /api/rings/{slug}` | The ring file, with each member's feed, page and hops (no key needed) |
+
+Members must be feeds in the directory; anything that is not yet comes back under `missing`, so
+submit it (`POST /api/submit`) and add it again after the crawl. pit.world keeps its `pit-world`
+ring in step with its claimed listings this way.
+
 ## Topics, and topics by category
 
 A topic page is every feed filed under a subject. On a well-covered one that is

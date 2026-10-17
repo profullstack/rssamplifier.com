@@ -18,6 +18,7 @@ import {
   parseRingDescriptor,
   renderOpml,
   resolveFrom,
+  ringAccountOf,
   ringFile,
   siteKey,
   statusAfter,
@@ -460,4 +461,14 @@ test('a member entry is the member, in the file\'s words', () => {
     since: '2026-09-03T00:00:00.000Z',
     checked: '2026-09-11T00:00:00.000Z',
   });
+});
+
+test('a ring is owned and managed by an account: its session or one of its API keys', () => {
+  const base = { email: null, principal: null, scopes: [] };
+  assert.deepEqual(ringAccountOf({ ...base, kind: 'session', userId: 'u1' }), { id: 'u1' });
+  assert.deepEqual(ringAccountOf({ ...base, kind: 'apikey', userId: 'u2' }), { id: 'u2' });
+  // An OpenAccess principal is somebody at the hub, not an account here.
+  assert.equal(ringAccountOf({ ...base, kind: 'openaccess', userId: null, principal: 'p', scopes: ['openwebring:edit'] }), null);
+  assert.equal(ringAccountOf({ ...base, kind: null, userId: null }), null);
+  assert.equal(ringAccountOf(/** @type {any} */ (null)), null);
 });

@@ -1,6 +1,5 @@
 import { siteUrl } from '../../../../lib/db.js';
-import { forgetRing, loadRing, ownsRing } from '../../../../lib/rings.js';
-import { currentUser } from '../../../../lib/auth.js';
+import { forgetRing, loadRing, ownsRing, ringAccount } from '../../../../lib/rings.js';
 import { readRingForm } from '../../../../lib/ringForms.js';
 import { webrings } from '@rssamplifier/db';
 import { db } from '../../../../lib/db.js';
@@ -47,7 +46,7 @@ export async function GET(req, { params }) {
  */
 export async function POST(req, { params }) {
   const { slug } = await params;
-  const user = await currentUser();
+  const user = await ringAccount(req);
   const wantsHtml = (req.headers.get('accept') ?? '').includes('text/html');
   const loaded = await loadRing(slug);
   if (!loaded) return json({ error: 'not-found', slug }, 404);

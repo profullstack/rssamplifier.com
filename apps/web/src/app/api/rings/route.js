@@ -1,8 +1,7 @@
 import { webrings } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
-import { currentUser } from '../../../lib/auth.js';
-import { forgetRing } from '../../../lib/rings.js';
+import { forgetRing, ringAccount } from '../../../lib/rings.js';
 import { readRingForm, resolveMembers, ringSlugFor } from '../../../lib/ringForms.js';
 import { SPEC, hostEntry } from '../../../lib/openwebring.js';
 import { json } from '../authors/route.js';
@@ -43,7 +42,7 @@ export async function GET() {
  * @param {Request} req
  */
 export async function POST(req) {
-  const user = await currentUser();
+  const user = await ringAccount(req);
   const wantsHtml = (req.headers.get('accept') ?? '').includes('text/html');
   const back = (/** @type {string} */ query) =>
     Response.redirect(new URL(`/ring/new${query}`, req.url), 303);
