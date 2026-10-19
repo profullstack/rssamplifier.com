@@ -140,6 +140,8 @@ export default async function DiscoveryPage({ params }) {
         </div>
       </dl>
 
+      <AdBanner />
+
       {terms.length > 0 && (
         <>
           <h2>Keywords</h2>
@@ -188,8 +190,6 @@ export default async function DiscoveryPage({ params }) {
       <h2>For agents</h2>
       <p>The same status as JSON, safe to poll:</p>
       <pre className="snippet">{`curl https://rssamplifier.com/api/discoveries/${id}`}</pre>
-
-      <AdBanner />
 
       {/*
        * The stream carries the bar and the log; this is only what fills in the

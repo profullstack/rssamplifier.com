@@ -17,7 +17,6 @@ import { shareText } from '../../lib/share.js';
 import { feedCard, postThumb } from '../../lib/thumbs.js';
 import { feedAlternates } from '../../lib/subscribe.js';
 import Ad from '../Ad.jsx';
-import AdBanner from '../AdBanner.jsx';
 import AuthorLinks from '../AuthorLinks.jsx';
 import FollowControls from '../FollowControls.jsx';
 import ListFilter from '../ListFilter.jsx';
@@ -526,8 +525,6 @@ export default async function FeedPage({ params, base }) {
           return format ? [entry, <Ad key={`ad-${i}`} format={format} />] : [entry];
         })
       )}
-
-      <AdBanner />
 
       <Toolbar
         prev={nav.prev}

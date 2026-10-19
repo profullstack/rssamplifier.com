@@ -111,6 +111,13 @@ export default async function SubmissionPage({ params }) {
         </div>
       </dl>
 
+      {/*
+       * A long import is watched, not read — the tab sits open for hours. That
+       * is real attention, so it carries one unit, but below the status: the
+       * numbers are the reason the page exists.
+       */}
+      <AdBanner />
+
       {/* The percentage moved into the bar; this is only the email promise. */}
       {progress.queued > 0 && submission.notify_email && (
         <p className="notice">
@@ -172,13 +179,6 @@ export default async function SubmissionPage({ params }) {
       <h2>For agents</h2>
       <p>The same status as JSON, safe to poll:</p>
       <pre className="snippet">{`curl https://rssamplifier.com/api/submissions/${id}`}</pre>
-
-      {/*
-       * A long import is watched, not read — the tab sits open for hours. That
-       * is real attention, so it carries one unit, but below the status: the
-       * numbers are the reason the page exists.
-       */}
-      <AdBanner />
 
       {/*
        * This page had nothing of the sort: an import was watched by reloading

@@ -4,7 +4,8 @@ import { alerts, authors } from '@rssamplifier/db';
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { feedAlternates } from '../../../lib/subscribe.js';
-import AdBanner from '../../AdBanner.jsx';
+import { AD_TEXT } from '../../../lib/ads.js';
+import Ad from '../../Ad.jsx';
 import AuthorLinks from '../../AuthorLinks.jsx';
 import FollowControls from '../../FollowControls.jsx';
 import SubscribeLinks from '../../SubscribeLinks.jsx';
@@ -167,6 +168,8 @@ export default async function AuthorPage({ params, searchParams }) {
         {person.bio && <p className="profile-bio">{person.bio}</p>}
       </header>
 
+      <Ad format={AD_TEXT} />
+
       <AuthorLinks links={links} prominent />
 
       {/* The profile as a file, and the person's way in to it. Unclaimed: a
@@ -307,8 +310,6 @@ export default async function AuthorPage({ params, searchParams }) {
         Machine-readable: <a href={`/api/authors/${encodeURIComponent(slug)}`}>JSON</a>,{' '}
         <a href={openprofile}>OpenProfile.md</a>
       </p>
-
-      <AdBanner />
     </>
   );
 }

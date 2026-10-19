@@ -3,7 +3,6 @@ import { directoryIndex } from '../lib/directory.js';
 import { feedAlternates } from '../lib/subscribe.js';
 import { AD_TEXT, adPlan } from '../lib/ads.js';
 import Ad from './Ad.jsx';
-import AdBanner from './AdBanner.jsx';
 import SubscribeLinks from './SubscribeLinks.jsx';
 import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
@@ -175,8 +174,6 @@ export default async function Home() {
           })}
         </div>
       )}
-
-      <AdBanner />
 
       <Toolbar next={rows[0]?.slug ? String(rows[0].slug) : null} />
     </>

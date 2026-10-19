@@ -6,7 +6,6 @@ import { AD_MREC, AD_TEXT, adPlan } from '../../lib/ads.js';
 import { CATEGORIES } from '../../lib/categories.js';
 import { filtersWithHits, searchFilter, searchHref, totalHits } from '../../lib/searchFilters.js';
 import Ad from '../Ad.jsx';
-import AdBanner from '../AdBanner.jsx';
 import SubscribeLinks from '../SubscribeLinks.jsx';
 import Thumb, { Avatar } from '../Thumb.jsx';
 import ListFilter from '../ListFilter.jsx';
@@ -260,8 +259,6 @@ export default async function SearchPage({ searchParams }) {
           })}
         </>
       )}
-
-      {found && <AdBanner />}
 
       {query && (
         <p className="also-search">

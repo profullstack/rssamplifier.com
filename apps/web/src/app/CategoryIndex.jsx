@@ -4,7 +4,6 @@ import { db, siteUrl } from '../lib/db.js';
 import { AD_TEXT, adPlan } from '../lib/ads.js';
 import { CATEGORIES, listHref, viewName } from '../lib/categories.js';
 import Ad from './Ad.jsx';
-import AdBanner from './AdBanner.jsx';
 import ListFilter from './ListFilter.jsx';
 import PlayButton from './PlayButton.jsx';
 import SubscribeLinks from './SubscribeLinks.jsx';
@@ -345,8 +344,6 @@ export default async function CategoryIndex({ kind, page = 1, view = 'shows' }) 
         Machine-readable: <a href={`/api/feeds?kind=${kind}`}>JSON</a> ·{' '}
         <a href={`/opml?kind=${kind}`}>OPML</a>
       </p>
-
-      <AdBanner />
     </>
   );
 }

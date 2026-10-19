@@ -3,7 +3,6 @@ import { q } from '@rssamplifier/db';
 import { db, siteUrl } from '../../lib/db.js';
 import { AD_TEXT } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
-import AdBanner from '../AdBanner.jsx';
 import ListFilter from '../ListFilter.jsx';
 import { FILTER_FROM } from '../../lib/listFilter.js';
 import { pageNumber } from '../CategoryIndex.jsx';
@@ -189,8 +188,6 @@ export default async function TopicsPage({ searchParams }) {
         Machine-readable:{' '}
         <a href={query ? `/api/topics?q=${encodeURIComponent(query)}` : '/api/topics'}>JSON</a>
       </p>
-
-      <AdBanner />
     </>
   );
 }
