@@ -43,7 +43,7 @@
         "@profullstack/notifications": "^0.1.0",
         "@profullstack/openprofile": "^0.1.2",
         "@profullstack/partners": "^0.2.0",
-        "@profullstack/player": "^0.3.1",
+        "@profullstack/player": "0.15.0",
         "@profullstack/rssamplifier": "workspace:*",
         "@profullstack/submit-feed": "^0.1.1",
         "@profullstack/x402-gateway": "^0.10.0",
@@ -355,7 +355,7 @@
 
     "@profullstack/partners": ["@profullstack/partners@0.2.0", "", { "dependencies": { "@profullstack/leaderboard": "0.3.1" } }, "sha512-h8Fal+ZMqpR2xixo8OC/Xb/OXfLXmt2BdBIgohC3tK6U3AkAsDrkUyrlf+DEF8Ut8mptDEjCWDz5EV/dIXBRHw=="],
 
-    "@profullstack/player": ["@profullstack/player@0.3.1", "", { "dependencies": { "hls.js": "1.7.1", "mpegts.js": "1.8.2" }, "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "sha512-/BvjRREIQ+WBw+MJXuSUDONreRnivB36wZDiflnzqrTtDhBUZEbkAgsfKF/m67U7GdSYl1uRJMbQoPEw5I9nMA=="],
+    "@profullstack/player": ["@profullstack/player@0.15.0", "", { "dependencies": { "hls.js": "^1.7.1", "mpegts.js": "^1.8.2" }, "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "sha512-vcOuLZ59jpHzTKAGbd1hjdhjYaNxKoAq5D8RCQszVYRYZEwobJCn/LJy1CeZzaBDfVBCRziWR2lwkWlYHVVFCg=="],
 
     "@profullstack/rssamplifier": ["@profullstack/rssamplifier@workspace:apps/cli"],
 
