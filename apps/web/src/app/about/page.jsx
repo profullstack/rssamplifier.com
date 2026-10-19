@@ -63,6 +63,12 @@ export default function AboutPage() {
         you would rather not be listed, mail us and we will remove it.
       </p>
 
+      {/* One unit, at a section break well into the piece: anyone who read
+          this far is engaged, and nobody arriving at an About page is in a
+          hurry to be sold to on the way in. Not at the very end, which would
+          press it against the footer. */}
+      <Ad format={AD_MREC} />
+
       <h2>Machine-readable</h2>
       <ul>
         <li>
@@ -81,10 +87,6 @@ export default function AboutPage() {
         </li>
       </ul>
       <p>All of them send an open CORS header and need no key.</p>
-
-      {/* One unit, at the end. Anyone who read this far is engaged; nobody
-          arriving at an About page is in a hurry to be sold to on the way in. */}
-      <Ad format={AD_MREC} />
 
       <Toolbar />
     </>
