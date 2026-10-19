@@ -1,4 +1,4 @@
-import { createGateway, isTrainingAgent, readPass, RETRIEVAL_AGENTS } from '@profullstack/x402-gateway';
+import { createGateway, isTrainingAgent, readPass } from '@profullstack/x402-gateway';
 import { crawlSales } from '@rssamplifier/db';
 
 import { db } from './db.js';
@@ -105,16 +105,19 @@ export const DENY_CIDRS = [
 ];
 
 /**
- * Search engines, welcome by name.
+ * Search engines welcome by name alone: only the ones whose operator publishes
+ * no address list the gateway can check.
  *
- * Kept apart from the gateway's retrieval list because these are the classic
- * indexers rather than the AI-answer half of a training pair. Named here
- * because the spoof check below asks "is this the browser it claims to be?",
- * and Googlebot's evergreen user agent claims Chrome (its rendering engine)
- * without sending a browser's fetch-metadata headers. A crawler that names
- * itself is not spoofing anything; it is answered by the lists, not the check.
+ * Googlebot, bingbot, Applebot and DuckDuckBot used to be here too, and that
+ * made them a costume: any scraper wearing "Googlebot" stepped around the gate
+ * entirely. Since gateway 0.10 they are judged by name AND published address
+ * (`gateway.isWelcome`), welcome from their ranges and charged as impostors
+ * from anywhere else. The same call covers the retrieval crawlers and AI chat
+ * fetchers (ChatGPT-User, Claude-User, Perplexity-User, meta-externalfetcher,
+ * meta-webindexer, YouBot...), which Anthony asked to keep welcome on
+ * 2026-10-19.
  */
-const SEARCH_ENGINES = ['Googlebot', 'Bingbot', 'Applebot', 'DuckDuckBot', 'YandexBot'];
+const NAME_ONLY_SEARCH_ENGINES = ['YandexBot'];
 
 /** The shape of one of our API keys — `rsa_<8 hex>_<secret>`, see @rssamplifier/auth. */
 const API_KEY_SHAPE = /^rsa_[0-9a-f]{8}_[\w-]{20,}$/;
@@ -161,7 +164,8 @@ export function exempt(request) {
 
   const ua = request.headers.get('user-agent') ?? '';
   if (isTrainingAgent(ua)) return false;
-  return isTrainingAgent(ua, RETRIEVAL_AGENTS) || isTrainingAgent(ua, SEARCH_ENGINES);
+  // `gateway` is defined below; exempt() only ever runs at request time.
+  return gateway.isWelcome(request) || isTrainingAgent(ua, NAME_ONLY_SEARCH_ENGINES);
 }
 
 export const gateway = createGateway({

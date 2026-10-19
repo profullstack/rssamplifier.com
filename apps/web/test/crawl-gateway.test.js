@@ -299,3 +299,19 @@ test('the matcher lets the gate see what a crawler is after', () => {
   assert.ok(matches('/some-blog/read'), 'the page a corpus crawl is really after');
   assert.ok(!matches('/robots.txt'), 'the file that names the price is never in the way');
 });
+
+test('gateway 0.10: verified crawlers and AI chat fetchers are exempt, copied search-engine strings are charged', async () => {
+  const { exempt, gateway } = await import('../src/lib/crawl-gateway.js');
+  const at = (ua, ip) => new Request('https://rssamplifier.com/topics/x', { headers: { 'user-agent': ua, 'x-real-ip': ip } });
+  const apple = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15 (Applebot/0.1; +http://www.apple.com/go/applebot)';
+  assert.equal(exempt(at(apple, '17.241.75.1')), true, 'Applebot from 17/8');
+  assert.equal(exempt(at(apple, '203.0.113.9')), false, 'Applebot string elsewhere');
+  assert.equal(gateway.isPaid(at(apple, '203.0.113.9')), true, '...is charged as an impostor');
+  for (const t of ['Claude-User/1.0', 'Claude-SearchBot/1.0', 'meta-externalfetcher/1.1', 'meta-webindexer/1.1', 'YouBot/1.0', 'ExaSearchBot/1.0', 'AionBot/1.0']) {
+    assert.equal(exempt(at(`Mozilla/5.0 (compatible; ${t})`, '203.0.113.9')), true, t);
+  }
+  assert.equal(exempt(at('Mozilla/5.0 (compatible; ChatGPT-User/1.0; +https://openai.com/bot)', '23.98.142.177')), true, 'ChatGPT-User from OpenAI');
+  for (const t of ['GPTBot/1.2', 'ClaudeBot/1.0', 'CCBot/2.0', 'Bytespider', 'Amazonbot/0.1']) {
+    assert.equal(exempt(at(`Mozilla/5.0 (compatible; ${t})`, '203.0.113.9')), false, t);
+  }
+});
