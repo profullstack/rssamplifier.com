@@ -112,13 +112,21 @@ test('a caller who has already said who they are is never challenged', () => {
     false,
     'carries an API key',
   );
+  const googlebot = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
   assert.equal(
-    wouldChallenge(
-      req(p, { ua: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' }),
-      p,
-    ),
+    wouldChallenge(req(p, { ua: googlebot, ip: '66.249.73.129' }), p),
     false,
-    'a search engine that names itself',
+    'a search engine that names itself, from its published range',
+  );
+  assert.equal(
+    wouldChallenge(req(p, { ua: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +Claude-User@anthropic.com)' }), p),
+    false,
+    'an AI chat fetcher acting for a person',
+  );
+  assert.equal(
+    wouldChallenge(req(p, { ua: googlebot }), p),
+    true,
+    'a Googlebot string from an address Google does not publish is not who it says',
   );
 });
 
