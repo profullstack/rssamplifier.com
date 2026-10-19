@@ -118,7 +118,15 @@ export async function proxy(request) {
 
   const tier = (await hasValidPass(request)) ? TIERS.pass : tierFor(request);
 
-  const verdict = attempt(callerIdentity(request), Date.now(), tier);
+  /*
+   * A search crawler whose address is in its operator's published range
+   * (Googlebot, bingbot, Applebot: gateway.isWelcome) is not metered. Applebot
+   * alone took ~7,300 402s a day here, all of them refusals of a crawler
+   * robots.txt invites. A copied string from anywhere else is metered as before.
+   */
+  const verdict = gateway.isWelcome(request)
+    ? { ok: true }
+    : attempt(callerIdentity(request), Date.now(), tier);
 
   /*
    * Never allowed to fail: see `countRequest`.
