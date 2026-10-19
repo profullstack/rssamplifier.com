@@ -55,6 +55,15 @@ export default async function SubmitPage({ searchParams }) {
        */}
       <Uploader shared={shared} />
 
+      {/*
+       * The only ad on the funnel, and it is below both forms and the hint
+       * text: putting inventory above a conversion step buys pennies of
+       * impression against whatever the conversion is worth, and here the
+       * conversion is the directory itself growing. Above the API example,
+       * though, so it never ends the page against the footer.
+       */}
+      <Ad format={AD_TEXT} />
+
       <h2>For agents</h2>
       <p>Same endpoint, JSON in and JSON out:</p>
       <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/submit \\
@@ -77,14 +86,6 @@ curl -X POST https://rssamplifier.com/api/submit/batch \\
 curl -X POST https://rssamplifier.com/api/submit/finish \\
   -H 'content-type: application/json' \\
   -d '{"submissionId":"…"}'`}</pre>
-
-      {/*
-       * The only ad on the funnel, and it is below everything: both forms, the
-       * hint text and the API example. Putting inventory above a conversion
-       * step buys pennies of impression against whatever the conversion is
-       * worth, and here the conversion is the directory itself growing.
-       */}
-      <Ad format={AD_TEXT} />
 
       <Toolbar />
     </>

@@ -1,5 +1,6 @@
 import './globals.css';
 import './ui.css';
+import { Footer } from '@profullstack/footer/react';
 
 import { siteUrl } from '../lib/db.js';
 import { SIGNED_IN_HINT_COOKIE } from '../lib/session-hint.js';
@@ -286,21 +287,12 @@ export default function RootLayout({ children }) {
           {children}
         </main>
 
-        {/* Two rows: who runs it and the pages people actually need, then the
-            machine-readable doors. Browsing, rings and the network links live
-            in the masthead and in the pit.world footer below. */}
+        {/* Two rows: the machine-readable doors here, then @profullstack/footer
+            with the pages people need, the Profullstack webring and the
+            copyright. Browsing and the network links live in the masthead and
+            in the pit.world footer last in <body>. */}
         <footer className="site">
           <div className="wrap">
-            <p>
-              &copy; {new Date().getFullYear()}{' '}
-              <a href="https://profullstack.com">Profullstack, Inc.</a> · <a href="/about">About</a>{' '}
-              · <a href="/advertise">Advertise</a> · <a href="/sales">Training data</a> ·{' '}
-              <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
-              <a href="/terms">Terms</a> ·{' '}
-              <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
-                Source
-              </a>
-            </p>
             <p>
               For agents: <a href="/mcp">MCP</a> · <a href="/cli">CLI</a> ·{' '}
               <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}
@@ -308,6 +300,18 @@ export default function RootLayout({ children }) {
             </p>
           </div>
         </footer>
+        <Footer
+          site="https://rssamplifier.com/"
+          links={[
+            { label: 'About', href: '/about' },
+            { label: 'Advertise', href: '/advertise' },
+            { label: 'Training data', href: '/sales' },
+            { label: 'Contact', href: '/contact' },
+            { label: 'Privacy', href: '/privacy' },
+            { label: 'Terms', href: '/terms' },
+            { label: 'Source', href: 'https://github.com/profullstack/rssamplifier.com', rel: 'noopener' },
+          ]}
+        />
 
         {/* The player, in the layout rather than in a page, because that is the
             difference between one that follows you around the directory and one

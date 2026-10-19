@@ -79,13 +79,13 @@ export default async function DiscoverPage({ searchParams }) {
         feeds, tag feeds, shops and the big platforms are dropped before we ever fetch them.
       </p>
 
+      <Ad format={AD_TEXT} />
+
       <h2>For agents</h2>
       <p>Same endpoint, JSON in and JSON out:</p>
       <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/discover \\
   -H 'content-type: application/json' \\
   -d '{"keywords":["siberian huskies"]}'`}</pre>
-
-      <Ad format={AD_TEXT} />
 
       <Toolbar />
     </>
