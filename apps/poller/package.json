@@ -8,12 +8,14 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "@profullstack/scraper-daemon": "0.1.1",
+    "@profullstack/scraper-daemon": "0.2.1",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/discover": "workspace:*",
     "@rssamplifier/feed": "workspace:*",
     "@rssamplifier/ingest": "workspace:*",
     "@rssamplifier/notify": "workspace:*",
-    "@rssamplifier/social": "workspace:*"
+    "@rssamplifier/social": "workspace:*",
+    "bullmq": "6.3.17",
+    "ioredis": "5"
   }
 }

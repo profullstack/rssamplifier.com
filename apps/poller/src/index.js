@@ -1145,6 +1145,7 @@ const daemonStore = pgStore((text, params) => db.execute(text, params));
 
 const daemon = buildPollerDaemon({
   store: daemonStore,
+  redis: process.env.REDIS_URL || null,
   // The daemon's own lines (started, failures, stalls) go to stdout and onto
   // the live log, like everything else this process says.
   log: (...parts) => {
