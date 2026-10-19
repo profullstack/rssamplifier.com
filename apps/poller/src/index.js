@@ -29,6 +29,9 @@ import { findFeedCard } from '@rssamplifier/feed';
 import { deliverAlerts, vapidConfig } from '@rssamplifier/notify';
 import { createXRuntime, xEnabled } from '@rssamplifier/social';
 
+import { pgStore } from '@profullstack/scraper-daemon';
+
+import { buildPollerDaemon, primeBootJobs } from './daemon.js';
 import { createRecorder, toEntry, writeFailure } from './log.js';
 import { shouldRunRsshub, startRsshub } from './rsshub.js';
 
@@ -275,10 +278,6 @@ let alerting = false;
 // And for the queue sample, where an overlap would be pure waste: both passes
 // would read the same counts and write the same row.
 let sampling = false;
-let lastPurge = 0;
-let lastSources = 0;
-let lastTopicSearch = 0;
-let lastTopics = 0;
 
 /**
  * Structured one-line log, so Railway's viewer stays greppable.
@@ -367,136 +366,157 @@ async function tick() {
       }
     }
 
-    // An upload hands over its list and leaves; this is where the list becomes
-    // feeds. One slice a tick rather than a whole submission, so a very large
-    // catalogue cannot hold the crawl above hostage while it queues — the two
-    // share the process and the import is the one that can wait.
-    //
-    // Above the catch-up return, and deliberately the only thing that is.
-    // Everything below is work nobody asked for by name: discovery finds feeds
-    // on its own schedule, cards and clusters decorate what is already indexed,
-    // and none of it has somebody watching a page. An import is the opposite —
-    // a person handed us a list, was given a URL to follow, and that page says
-    // "working". In catch-up mode it said "working" for ever: a 109,474-entry
-    // upload on 2026-08-19 staged all its entries in 55 seconds and then sat at
-    // 0 queued, because this block was eleven lines below a `return`. Nothing
-    // errored, nothing logged, and the only way to find out was to read the
-    // poller source.
-    //
-    // Catch-up mode exists to stop unrelated writes competing with a deep
-    // first-crawl backlog, and that reasoning holds for everything else here.
-    // It does not hold for the one queue a user is actively waiting on, and a
-    // slice a tick is a small enough price that it never had to.
-    try {
-      const drained = await drainImport(db);
-      if (drained.ran) {
-        log('import-drain', {
-          submission: drained.submissionId,
-          queued: drained.queued,
-          skipped: drained.skipped,
-          remaining: drained.remaining,
-          finished: drained.finished,
-        });
-      }
-    } catch (err) {
-      // One bad slice must not take the crawl down with it; the entries are
-      // still staged, so the next tick tries again.
-      log('import-drain-error', { message: String(err?.message ?? err) });
-    }
-
-    // Above the return for the same reason, and because the two are a pair: the
-    // daemon that drains the queue is the one that tells the submitter it
-    // drained. Draining in catch-up mode while leaving this below would finish
-    // somebody's upload and never say so, which is a stranger failure than not
-    // draining at all. A no-op when no mail provider is configured.
-    //
-    // Guarded, unlike where it used to sit. Down there a throw only cost the
-    // housekeeping that followed it; up here it would cost the crawl.
-    try {
-      const notified = await notifyFinishedSubmissions(db);
-      if (notified.sent || notified.failed) log('notified', notified);
-    } catch (err) {
-      log('notify-error', { message: String(err?.message ?? err) });
-    }
-
-    // Retention sweeps run on both sides of the return, deliberately. Catch-up
-    // mode defers work that can be caught up; a retention window cannot be —
-    // skipping it does not postpone the deletes, it keeps the rows. See
-    // `purgeTick`, which found crawl_log holding 64 hours of a 12-hour window.
-    await purgeTick();
-
-    // All work below is resumable enrichment or housekeeping. In recovery mode
-    // the deep first-crawl queue is the job, and returning here lets the next
-    // minute tick begin immediately instead of waiting behind unrelated writes.
-    if (catchupOnly) return;
-
-    // A keyword search queues more work than its request could finish, in both
-    // phases: keywords still to search, then the sites those searches turn up.
-    // Both run after the crawl — an indexed blog going stale matters more than
-    // finding a new one.
-    // `amount` is set alongside each event's own fields rather than instead of
-    // them: the log's amount column is what /crawlstats reads to decide whether a
-    // job is moving, and a summary line that leaves it null reports a busy worker
-    // as a stalled one. The named field stays in the payload, so the wording in
-    // the live log is unchanged.
-    const searched = await drainDiscoveryKeywords(db, keywordBatch);
-    if (searched.searched || searched.failed || searched.fatal) {
-      log('discovery-search', { ...searched, amount: searched.searched });
-    }
-
-    const discovered = await drainDiscoveryQueue(db, discoveryBatch);
-    if (discovered.checked) log('discovery', { ...discovered, amount: discovered.checked });
-
-    // Sources fill the queue the drain above empties. Checked on a long timer
-    // and rate-limited to one source per pass: each is a request to somebody
-    // else's server for a list that changes when a human edits it.
-    if (Date.now() - lastSources > sourceIntervalMs) {
-      lastSources = Date.now();
-      try {
-        for (const result of await runDueSources(db)) {
-          log('discovery-source', result);
-        }
-      } catch (err) {
-        // A source being unreachable must not stop the crawl loop.
-        log('discovery-source-error', { message: String(err?.message ?? err) });
-      }
-    }
-
-    // The directory searching for more of what it already covers. A no-op
-    // without a search key, and a no-op once every shared topic has been
-    // searched once — both are ordinary states, so neither is logged.
-    if (Date.now() - lastTopicSearch > topicSearchIntervalMs) {
-      lastTopicSearch = Date.now();
-      try {
-        const topics = await discoverFromOwnTopics(db);
-        if (topics.ran) log('discovery-topics', { keywords: topics.keywords, runId: topics.runId });
-      } catch (err) {
-        log('discovery-topics-error', { message: String(err?.message ?? err) });
-      }
-    }
-
-
-    const toldSearchers = await notifyFinishedDiscoveries(db);
-    if (toldSearchers.sent || toldSearchers.failed) log('notified-discovery', toldSearchers);
-
-    // Expired sessions and spent challenges are already refused on read, so
-    // clearing them is housekeeping — and this is the process that runs anyway.
-    // Hourly rather than every tick: it is three deletes over indexed columns
-    // and there is nothing to gain from doing them sixty times an hour.
-    // The topics index is a projection of the keywords the crawl above just
-    // rewrote, so it is rebuilt by the process that invalidated it.
-    if (Date.now() - lastTopics > topicsIntervalMs) {
-      lastTopics = Date.now();
-      const topics = await q.refreshTopics(db);
-      log('topics', { topics, ms: Date.now() - lastTopics });
-    }
-
   } catch (err) {
     log('crawl-error', { message: String(err?.message ?? err) });
+    // Rethrown for the daemon, which is the point of wrapping it: a crawl that
+    // keeps failing is now a failing job on /api/v1/daemon and, after
+    // CRAWL_STALE_AFTER, a stall alarm, instead of a tick that "succeeded".
+    throw err;
   } finally {
     running = false;
   }
 }
+
+/**
+ * Turn staged uploads into feeds, and tell the submitter when it is done.
+ *
+ * This was the second half of the crawl tick and is now its own daemon job on
+ * the same cadence. It stays on in catch-up mode, deliberately and for the
+ * reason the comments below give: a person handed over a list and is watching
+ * a page that says "working".
+ */
+async function importTick() {
+  if (stopping) return;
+  // An upload hands over its list and leaves; this is where the list becomes
+  // feeds. One slice a tick rather than a whole submission, so a very large
+  // catalogue cannot hold the crawl above hostage while it queues — the two
+  // share the process and the import is the one that can wait.
+  //
+  // Above the catch-up return, and deliberately the only thing that is.
+  // Everything below is work nobody asked for by name: discovery finds feeds
+  // on its own schedule, cards and clusters decorate what is already indexed,
+  // and none of it has somebody watching a page. An import is the opposite —
+  // a person handed us a list, was given a URL to follow, and that page says
+  // "working". In catch-up mode it said "working" for ever: a 109,474-entry
+  // upload on 2026-08-19 staged all its entries in 55 seconds and then sat at
+  // 0 queued, because this block was eleven lines below a `return`. Nothing
+  // errored, nothing logged, and the only way to find out was to read the
+  // poller source.
+  //
+  // Catch-up mode exists to stop unrelated writes competing with a deep
+  // first-crawl backlog, and that reasoning holds for everything else here.
+  // It does not hold for the one queue a user is actively waiting on, and a
+  // slice a tick is a small enough price that it never had to.
+  try {
+    const drained = await drainImport(db);
+    if (drained.ran) {
+      log('import-drain', {
+        submission: drained.submissionId,
+        queued: drained.queued,
+        skipped: drained.skipped,
+        remaining: drained.remaining,
+        finished: drained.finished,
+      });
+    }
+  } catch (err) {
+    // One bad slice must not take the crawl down with it; the entries are
+    // still staged, so the next tick tries again.
+    log('import-drain-error', { message: String(err?.message ?? err) });
+  }
+
+  // Above the return for the same reason, and because the two are a pair: the
+  // daemon that drains the queue is the one that tells the submitter it
+  // drained. Draining in catch-up mode while leaving this below would finish
+  // somebody's upload and never say so, which is a stranger failure than not
+  // draining at all. A no-op when no mail provider is configured.
+  //
+  // Guarded, unlike where it used to sit. Down there a throw only cost the
+  // housekeeping that followed it; up here it would cost the crawl.
+  try {
+    const notified = await notifyFinishedSubmissions(db);
+    if (notified.sent || notified.failed) log('notified', notified);
+  } catch (err) {
+    log('notify-error', { message: String(err?.message ?? err) });
+  }
+
+}
+
+/*
+ * Everything the old tick() ran below `if (catchupOnly) return;`, one daemon
+ * job each. In catch-up mode none of these is registered at all (see
+ * src/daemon.js), which is the same thing the early return did and is now
+ * asserted by test/daemon.test.js rather than by the order of lines here.
+ *
+ * Each pass is the same call with the same budget as before. What changed is
+ * only who keeps the clock: the half-hourly and daily passes used to be gated
+ * by an in-memory timestamp that reset on every deploy, and are now scheduled
+ * by the daemon, whose next-run time survives a restart.
+ */
+
+// A keyword search queues more work than its request could finish, in both
+// phases: keywords still to search, then the sites those searches turn up.
+// `amount` is set alongside each event's own fields rather than instead of
+// them: the log's amount column is what /crawlstats reads to decide whether a
+// job is moving, and a summary line that leaves it null reports a busy worker
+// as a stalled one. The named field stays in the payload, so the wording in
+// the live log is unchanged.
+async function discoveryKeywordsTick() {
+  if (stopping) return;
+  const searched = await drainDiscoveryKeywords(db, keywordBatch);
+  if (searched.searched || searched.failed || searched.fatal) {
+    log('discovery-search', { ...searched, amount: searched.searched });
+  }
+}
+
+async function discoveryQueueTick() {
+  if (stopping) return;
+  const discovered = await drainDiscoveryQueue(db, discoveryBatch);
+  if (discovered.checked) log('discovery', { ...discovered, amount: discovered.checked });
+}
+
+// Sources fill the queue the drain above empties. Checked on a long timer
+// and rate-limited to one source per pass: each is a request to somebody
+// else's server for a list that changes when a human edits it.
+async function discoverySourcesTick() {
+  if (stopping) return;
+  try {
+    for (const result of await runDueSources(db)) {
+      log('discovery-source', result);
+    }
+  } catch (err) {
+    // A source being unreachable must not stop the crawl loop.
+    log('discovery-source-error', { message: String(err?.message ?? err) });
+  }
+}
+
+// The directory searching for more of what it already covers. A no-op
+// without a search key, and a no-op once every shared topic has been
+// searched once — both are ordinary states, so neither is logged.
+async function discoveryTopicsTick() {
+  if (stopping) return;
+  try {
+    const topics = await discoverFromOwnTopics(db);
+    if (topics.ran) log('discovery-topics', { keywords: topics.keywords, runId: topics.runId });
+  } catch (err) {
+    log('discovery-topics-error', { message: String(err?.message ?? err) });
+  }
+}
+
+async function discoveryNotifyTick() {
+  if (stopping) return;
+  const toldSearchers = await notifyFinishedDiscoveries(db);
+  if (toldSearchers.sent || toldSearchers.failed) log('notified-discovery', toldSearchers);
+}
+
+// The topics index is a projection of the keywords the crawl rewrites, so it
+// is rebuilt by the process that invalidated it.
+async function topicsTick() {
+  if (stopping) return;
+  const started = Date.now();
+  const topics = await q.refreshTopics(db);
+  log('topics', { topics, ms: Date.now() - started });
+}
+
 
 /**
  * Sweep the tables that grow by themselves.
@@ -551,9 +571,8 @@ function tallyTick() {
 }
 
 async function purgeTick() {
-  if (Date.now() - lastPurge < 3_600_000) return;
-  lastPurge = Date.now();
-
+  // Hourly: the daemon's `purge` job owns the cadence now, so the in-memory
+  // gate that used to sit here (and reset on every deploy) is gone.
   try {
     const purged = await accounts.purgeExpired(db);
     if (purged) log('purged', { rows: purged });
@@ -688,7 +707,6 @@ async function backfillTick() {
       // Done for the life of the process; everything stored from here on is
       // keyed as it arrives.
       clusterBackfill = false;
-      clearInterval(backfillTimer);
       log('cluster-backfill-done', {});
     } else {
       // Logged on every pass that read anything, not only ones that wrote.
@@ -1114,28 +1132,100 @@ if (writeWorker) {
   });
 }
 
-const timer = setInterval(tick, intervalMs);
-const backfillTimer = setInterval(backfillTick, clusterIntervalMs);
-const cardTimer = setInterval(cardTick, cardIntervalMs);
-const alertTimer = setInterval(alertTick, alertIntervalMs);
-const enrichTimer = setInterval(enrichTick, authorIntervalMs);
-const ringTimer = setInterval(ringTick, ringIntervalMs);
-const queueTimer = setInterval(queueTick, queueSampleMs);
-const statsTimer = setInterval(statsTick, statsWarmMs);
-const searchTimer = setInterval(searchTick, searchIntervalMs);
-// Same cadence as the queue sample: long enough that the line is a summary
-// rather than a stream, short enough to bracket an experiment against.
-const tallyTimer = setInterval(tallyTick, queueSampleMs);
-void tick();
-void backfillTick();
-void cardTick();
-void alertTick();
-void enrichTick();
-void ringTick();
-void queueTick();
-// Run once at boot, so a deploy does not leave the page slow until the first
-// interval comes round.
-void statsTick();
+/**
+ * One scraper-daemon instead of ten timers (@profullstack/scraper-daemon, the
+ * same architecture as search.peptides, ch4nnels.com and r4ck.dev).
+ *
+ * The functions above are the jobs, unchanged; src/daemon.js says which run
+ * and how often. Its state lives beside ours in Postgres
+ * (scraper_daemon_runs, scraper_daemon_state), and its status document is what
+ * https://rssamplifier.com/api/v1/daemon serves.
+ */
+const daemonStore = pgStore((text, params) => db.execute(text, params));
+
+const daemon = buildPollerDaemon({
+  store: daemonStore,
+  // The daemon's own lines (started, failures, stalls) go to stdout and onto
+  // the live log, like everything else this process says.
+  log: (...parts) => {
+    const line = parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ');
+    console.log(JSON.stringify({ at: new Date().toISOString(), event: 'daemon', line }));
+    if (publishLog) recorder.record(toEntry('daemon', { line }));
+  },
+  onRun: (entry) => {
+    // The crawl logs its own `crawl-error`; anything else that throws out of
+    // its pass is reported here, once, with the job's name on it.
+    if (!entry.ok && entry.job !== 'crawl') {
+      log('daemon-job-error', { job: entry.job, message: entry.error ?? 'failed' });
+    }
+  },
+  // There is no pager on this site (no ops email or SMS path in the poller), so
+  // a stall is said as loudly as this process can: stderr, and an error row on
+  // /crawlstats's operational-errors panel, which is what gets looked at.
+  onStall: ({ job, lastOk, lastError }) => {
+    const message = `${job} has not succeeded since ${lastOk ? new Date(lastOk).toISOString() : 'boot'}` +
+      (lastError ? `: ${lastError}` : '');
+    console.error(`STALLED ${message}`);
+    log('daemon-stalled', { job, message });
+  },
+  config: {
+    intervalMs,
+    catchupOnly,
+    clusterBackfill,
+    clusterIntervalMs,
+    cardEnabled,
+    cardIntervalMs,
+    alertIntervalMs,
+    authorEnabled,
+    authorIntervalMs,
+    ringEnabled,
+    ringIntervalMs,
+    queueSampleMs,
+    statsWarmMs,
+    searchEnabled: searchEnabled && Boolean(searchApiKey) && searchMonthlyBudget > 0,
+    searchIntervalMs,
+    tally: Boolean(writeWorker),
+    sourceIntervalMs,
+    topicSearchIntervalMs,
+    topicsIntervalMs,
+  },
+  run: {
+    crawl: tick,
+    import: importTick,
+    purge: purgeTick,
+    discoveryKeywords: discoveryKeywordsTick,
+    discoveryQueue: discoveryQueueTick,
+    discoverySources: discoverySourcesTick,
+    discoveryTopics: discoveryTopicsTick,
+    discoveryNotify: discoveryNotifyTick,
+    topics: topicsTick,
+    clusterBackfill: backfillTick,
+    cards: cardTick,
+    alerts: alertTick,
+    authors: enrichTick,
+    rings: ringTick,
+    queueSample: queueTick,
+    statsWarm: statsTick,
+    authorSearch: searchTick,
+    writeTally: async () => tallyTick(),
+  },
+});
+
+// What ran at boot under the timers still runs at boot. A failure here only
+// means those jobs wait for their next slot, so it is logged, not fatal.
+try {
+  await primeBootJobs(daemonStore);
+} catch (err) {
+  log('daemon-prime-error', { message: String(err?.message ?? err) });
+}
+daemon.start();
+
+// The daemon's own timer is unref'd (it is a library and will not hold a
+// process open), and the pg pool lets the process exit when idle. The ten
+// timers this replaced were what kept the poller alive between passes; without
+// something holding the event loop it exits cleanly after the first round and
+// docker restarts it, for ever. This is that something, cleared on shutdown.
+const keepAlive = setInterval(() => {}, 60_000);
 
 log('started', {
   intervalSeconds: intervalMs / 1000,
@@ -1163,16 +1253,7 @@ log('started', {
  */
 function shutdown(signal) {
   stopping = true;
-  clearInterval(timer);
-  clearInterval(backfillTimer);
-  clearInterval(cardTimer);
-  clearInterval(enrichTimer);
-  clearInterval(ringTimer);
-  clearInterval(alertTimer);
-  clearInterval(queueTimer);
-  clearInterval(statsTimer);
-  clearInterval(searchTimer);
-  clearInterval(tallyTimer);
+  clearInterval(keepAlive);
 
   // Closed gracefully, which for BullMQ means "finish the job in hand, take no
   // more". A write half-applied because the container went away is the one
@@ -1191,15 +1272,14 @@ function shutdown(signal) {
   // what a crash looks like.
   log('stopping', { signal });
 
-  const deadline = Date.now() + 20_000;
-  const wait = setInterval(() => {
-    if ((!running && !enriching) || Date.now() > deadline) {
-      clearInterval(wait);
-      // Whatever the last batch logged is still in memory: two seconds of lines
-      // is exactly what a 20-second drain would otherwise throw away.
-      void recorder.stop().finally(() => process.exit(0));
-    }
-  }, 250);
+  // The daemon stops scheduling and waits (up to 20 seconds, the drain this
+  // always allowed) for whatever is in flight: the crawl batch above all.
+  void daemon
+    .stop({ graceMs: 20_000 })
+    .catch((err) => console.error('daemon stop failed:', String(err?.message ?? err)))
+    // Whatever the last batch logged is still in memory: two seconds of lines
+    // is exactly what a 20-second drain would otherwise throw away.
+    .finally(() => recorder.stop().finally(() => process.exit(0)));
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));

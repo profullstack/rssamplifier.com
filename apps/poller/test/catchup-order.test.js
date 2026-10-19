@@ -46,33 +46,38 @@ function positionOf(needle) {
   return first;
 }
 
-test('the catch-up early return still exists to be checked against', () => {
-  // If this ever goes away the rest of the file is asserting nothing, and a
-  // silently vacuous test is worse than no test.
-  positionOf('if (catchupOnly) return;');
+/**
+ * The body of one top-level function in the poller, by its declaration.
+ *
+ * @param {string} name
+ */
+function bodyOf(name) {
+  const start = positionOf(`async function ${name}(`);
+  const next = source.indexOf('\nasync function ', start + 1);
+  return source.slice(start, next === -1 ? undefined : next);
+}
+
+// Since the move to @profullstack/scraper-daemon there is no early return to
+// sit above or below: catch-up mode decides which *jobs* are registered (see
+// src/daemon.js and test/daemon.test.js, which asserts that `import` survives
+// catch-up mode and `discovery-*` does not). What is left to hold here is that
+// each call lives in the job it belongs to.
+
+test('an upload is drained by the import job, which catch-up mode keeps', () => {
+  assert.match(bodyOf('importTick'), /await drainImport\(db\)/);
+  assert.match(source, /import: importTick,/);
 });
 
-test('an upload is drained even while the crawler is catching up', () => {
-  assert.ok(
-    positionOf('await drainImport(db)') < positionOf('if (catchupOnly) return;'),
-    'drainImport must run before the catch-up return, or a submission sits at 0% for ever',
-  );
+test('and the submitter is told by the same job, since draining without telling is stranger still', () => {
+  assert.match(bodyOf('importTick'), /await notifyFinishedSubmissions\(db\)/);
 });
 
-test('and the submitter is told, since draining without telling is stranger still', () => {
-  assert.ok(
-    positionOf('await notifyFinishedSubmissions(db)') < positionOf('if (catchupOnly) return;'),
-    'notifyFinishedSubmissions must run before the catch-up return: the daemon that drains ' +
-      'the queue is the one that says it drained',
-  );
-});
-
-test('discovery stays below the return, because nobody is waiting on it', () => {
+test('discovery notifications are their own job, which catch-up mode drops', () => {
   // The other half of the rule. Everything catch-up mode skips is work the
   // crawler gave itself; an import is work a person handed over and was given a
-  // URL to watch. If this ever moves up, the mode has stopped meaning anything.
-  assert.ok(
-    positionOf('await notifyFinishedDiscoveries(db)') > positionOf('if (catchupOnly) return;'),
-    'discovery notifications are housekeeping and belong after the catch-up return',
-  );
+  // URL to watch. If this ever moves into the import job, the mode has stopped
+  // meaning anything.
+  assert.match(bodyOf('discoveryNotifyTick'), /await notifyFinishedDiscoveries\(db\)/);
+  assert.doesNotMatch(bodyOf('importTick'), /notifyFinishedDiscoveries/);
+  assert.match(source, /discoveryNotify: discoveryNotifyTick,/);
 });
