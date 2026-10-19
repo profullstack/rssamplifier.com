@@ -1642,8 +1642,7 @@ html[data-dock] body:has(.episode-player.page-docked):not(:has(.dock-player)) {
    where nobody would ever scroll to it, and the usual reading measure would
    waste most of the width on someone else's page, so the reader opts out of
    both. */
-body:has(.reader) footer.site,
-body:has(.reader) .pfs-footer {
+body:has(.reader) footer.site {
   display: none;
 }
 
@@ -1821,11 +1820,6 @@ footer.site {
 
 footer.site a {
   color: var(--muted);
-}
-
-/* @profullstack/footer, below footer.site: muted like the rest of it. */
-.pfs-footer {
-  --pfs-footer-muted: var(--muted);
 }
 
 .empty {
@@ -3814,9 +3808,8 @@ html:not([data-dock]) .playlist-hint {
 
 /* ---------------------------------------------------------------- cli install
 
-   The homepage strip and the footer line that carry the install command. Both
-   exist to make one line of shell copyable from where somebody already is,
-   rather than from a page they have to go and find. */
+   The homepage strip that carries the install command, so one line of shell is
+   copyable from where somebody already is. */
 
 .install-strip {
   display: grid;
@@ -3853,18 +3846,6 @@ html:not([data-dock]) .playlist-hint {
 
 .install-links a {
   color: var(--muted);
-}
-
-.footer-install code {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  /* The command must not rewrap: a shell line broken across two is a line
-     somebody pastes wrong. It scrolls instead. */
-  white-space: nowrap;
-  overflow-x: auto;
-  display: inline-block;
-  max-width: 100%;
-  vertical-align: bottom;
 }
 
 @media (max-width: 40rem) {
