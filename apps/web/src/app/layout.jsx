@@ -1,20 +1,19 @@
 import './globals.css';
 import './ui.css';
-import { Footer } from '@profullstack/footer/react';
 
 import { siteUrl } from '../lib/db.js';
 import { SIGNED_IN_HINT_COOKIE } from '../lib/session-hint.js';
 import DockPlayer from './DockPlayer.jsx';
 import ServiceWorker from './ServiceWorker.jsx';
 import HeaderMore from './HeaderMore.jsx';
-import RingLeaders from './RingLeaders.jsx';
+import PitFooter from './PitFooter.jsx';
 import Script from "next/script";
 import { jsonLdScript } from '../lib/jsonld.js';
 
 /**
  * ISR for every prerendered page (/about, /privacy, …): re-rendered at most
- * hourly, so a new @profullstack/footer template release reaches them without
- * a redeploy. The many force-dynamic pages are unaffected.
+ * hourly, so a change to the pit.world footer snippet reaches them without a
+ * redeploy. The many force-dynamic pages are unaffected.
  */
 export const revalidate = 3600;
 
@@ -287,74 +286,28 @@ export default function RootLayout({ children }) {
           {children}
         </main>
 
+        {/* Two rows: who runs it and the pages people actually need, then the
+            machine-readable doors. Browsing, rings and the network links live
+            in the masthead and in the pit.world footer below. */}
         <footer className="site">
           <div className="wrap">
             <p>
-              An open, agent-friendly directory of independent blogs. Anyone can add a feed; no
-              account needed. Built by <a href="https://profullstack.com">Profullstack, Inc.</a>
+              &copy; {new Date().getFullYear()}{' '}
+              <a href="https://profullstack.com">Profullstack, Inc.</a> · <a href="/about">About</a>{' '}
+              · <a href="/advertise">Advertise</a> · <a href="/sales">Training data</a> ·{' '}
+              <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
+              <a href="/terms">Terms</a> ·{' '}
+              <a href="https://github.com/profullstack/rssamplifier.com" rel="noopener">
+                Source
+              </a>
             </p>
             <p>
-              Browse: <a href="/blogs">Blogs</a> · <a href="/news">News</a> ·{' '}
-              <a href="/podcasts">Podcasts</a> ·{' '}
-              <a href="/music">Music</a> · <a href="/videos">Videos</a> ·{' '}
-              <a href="/comics">Comics</a> · <a href="/lives">Live</a> ·{' '}
-              <a href="/reels">Reels</a> · <a href="/topics">Topics</a> ·{' '}
-              {/* Authors sits here rather than in the nav above, which the
-                  comment on that strip explains is already at the height a
-                  phone can carry. It is reached from every feed page anyway,
-                  which is where somebody wonders who wrote the thing. */}
-              <a href="/authors">Authors</a>
-            </p>
-            <RingLeaders />
-            {/* The two platform namespaces, on a line of their own rather than
-                appended to the browse row above. That row is the directory's
-                own categories — what a feed *is* — and these are two places
-                feeds come from, which is a different question. Keeping them
-                apart also stops the row growing a third arm every time a
-                platform is added. */}
-            <p>
-              Platforms: <a href="/r">Reddit</a> · <a href="/x">X</a> ·{' '}
-              <a href="/ig">Instagram</a> · <a href="/fb">Facebook</a>
-            </p>
-            <p>
-              Machine-readable: <a href="/mcp">MCP server</a> · <a href="/cli">CLI</a> ·{' '}
+              For agents: <a href="/mcp">MCP</a> · <a href="/cli">CLI</a> ·{' '}
               <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}
-              <a href="/llms.txt">llms.txt</a> · <a href="/crawlstats">Crawler status</a> ·{' '}
-              {/* Here rather than in Browse: a ring is a thing another site
-                  links into and a program reads, and its index page is the
-                  human face of /.well-known/openwebring.json. */}
-              <a href="/ring">Webrings</a>
-            </p>
-            {/* The install command itself, not just a link to it. Somebody who
-                scrolled to the bottom of a feed page is exactly the person who
-                would rather have the directory in their terminal, and making
-                them visit a page to find one line is a step that loses most of
-                them. */}
-            <p className="footer-install">
-              <span>Install the CLI:</span>{' '}
-              {/* One interpolated string rather than three children: React
-                  separates adjacent text nodes with comment markers, and a
-                  command people are meant to select and copy should be one
-                  text node. */}
-              <code>{`curl -fsSL ${siteUrl()}/install.sh | sh`}</code>
+              <a href="/llms.txt">llms.txt</a>
             </p>
           </div>
         </footer>
-        {/* The bottom bar is @profullstack/footer: the same footer, ring nav
-            and copyright every Profullstack site renders, so this site shows
-            up in the ring it hosts exactly like a member does. */}
-        <Footer
-          site="https://rssamplifier.com/"
-          links={[
-            { label: 'About', href: '/about' },
-            { label: 'Advertise', href: '/advertise' },
-            { label: 'Training data', href: '/sales' },
-            { label: 'Contact', href: '/contact' },
-            { label: 'Privacy', href: '/privacy' },
-            { label: 'Terms', href: '/terms' },
-            { label: 'Source on GitHub', href: 'https://github.com/profullstack/rssamplifier.com', rel: 'noopener' },
-          ]}
-        />
 
         {/* The player, in the layout rather than in a page, because that is the
             difference between one that follows you around the directory and one
@@ -377,6 +330,9 @@ export default function RootLayout({ children }) {
          * root layout is a unit on the submit form and on the offline page too.
          */}
         <Script src="https://crawlproof.com/ad.js" strategy="afterInteractive" />
+
+        {/* Last in <body> on every page: the pit.world network footer. */}
+        <PitFooter />
       </body>
     </html>
   );
