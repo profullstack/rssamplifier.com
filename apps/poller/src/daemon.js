@@ -67,7 +67,7 @@ export const CRAWL_STALE_AFTER = '30m';
  *   run: Record<string, () => Promise<unknown>>,
  * }} deps
  */
-export function buildPollerDaemon({ createDaemon = defaultCreateDaemon, store, log, onRun, onStall, config: c, run }) {
+export function buildPollerDaemon({ createDaemon = defaultCreateDaemon, store, redis = null, log, onRun, onStall, config: c, run }) {
   /** @type {Array<{ name: string, every: number, staleAfter?: string, fn: () => Promise<unknown> }>} */
   const jobs = [];
   const add = (name, every, fn, extra = {}) => {
@@ -108,6 +108,9 @@ export function buildPollerDaemon({ createDaemon = defaultCreateDaemon, store, l
 
   const daemon = createDaemon({
     name: 'rssamplifier.com',
+    // BullMQ on the compose `redis` service (scraper-daemon queue `rssamplifier.com`, beside the
+    // write queue). Run records and status stay in Postgres (`store`), where /api/v1/daemon reads them.
+    redis,
     store,
     // Every job may be in flight at once, as every timer could be. Each job is
     // still one run at a time.
