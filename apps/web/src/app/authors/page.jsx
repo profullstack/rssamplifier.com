@@ -3,7 +3,6 @@ import { authors } from '@rssamplifier/db';
 import { db, siteUrl } from '../../lib/db.js';
 import { AD_TEXT } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
-import AdBanner from '../AdBanner.jsx';
 import AuthorLinks from '../AuthorLinks.jsx';
 import { pageNumber } from '../CategoryIndex.jsx';
 import ListFilter from '../ListFilter.jsx';
@@ -190,8 +189,6 @@ export default async function AuthorsPage({ searchParams }) {
         blogs publish an account without naming anybody. Machine-readable:{' '}
         <a href="/api/authors">JSON</a>
       </p>
-
-      <AdBanner />
     </>
   );
 }

@@ -7,7 +7,6 @@ import { AD_TEXT, adPlan } from '../../../lib/ads.js';
 import { IN_BROWSER_KINDS, PLAYABLE_KINDS, groupsWithFeeds } from '../../../lib/topicGroups.js';
 import { shareText } from '../../../lib/share.js';
 import Ad from '../../Ad.jsx';
-import AdBanner from '../../AdBanner.jsx';
 import FollowControls from '../../FollowControls.jsx';
 import ListFilter from '../../ListFilter.jsx';
 import { FILTER_FROM } from '../../../lib/listFilter.js';
@@ -327,8 +326,6 @@ export default async function TopicListing({ topic, counts, group = null, page =
         · <a href={`${base}.json`}>their recent posts, as JSON Feed</a> ·{' '}
         <a href="/topics">all topics</a>
       </p>
-
-      <AdBanner />
     </>
   );
 }
