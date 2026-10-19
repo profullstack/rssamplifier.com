@@ -19,12 +19,17 @@ const NO_STORE = { 'cache-control': 'no-store' };
  */
 export async function GET() {
   try {
-    const res = await db().execute("SELECT value FROM scraper_daemon_state WHERE key = 'status'");
+    // value::text and parse here, so the answer is the same whichever driver
+    // wrote the row or reads it (pg hands jsonb back parsed, Bun's SQL does not).
+    const res = await db().execute("SELECT value::text AS value FROM scraper_daemon_state WHERE key = 'status'");
     const row = res.rows[0];
     if (!row) {
       return Response.json({ error: 'the poller has not reported a status yet' }, { status: 503, headers: NO_STORE });
     }
-    const status = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+    let status = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+    // A row written by scraper-daemon 0.1.0 through Bun's SQL is a jsonb string
+    // holding the JSON text; 0.1.1 unwraps those on init, this reads either.
+    if (typeof status === 'string') status = JSON.parse(status);
     const ageSeconds = status?.writtenAt ? Math.round((Date.now() - status.writtenAt) / 1000) : null;
     return Response.json({ ...status, ageSeconds }, { headers: NO_STORE });
   } catch (err) {

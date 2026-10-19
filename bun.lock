@@ -22,7 +22,7 @@
       "name": "@rssamplifier/poller",
       "version": "0.1.0",
       "dependencies": {
-        "@profullstack/scraper-daemon": "0.1.0",
+        "@profullstack/scraper-daemon": "0.1.1",
         "@rssamplifier/db": "workspace:*",
         "@rssamplifier/discover": "workspace:*",
         "@rssamplifier/feed": "workspace:*",
@@ -357,7 +357,7 @@
 
     "@profullstack/rssamplifier": ["@profullstack/rssamplifier@workspace:apps/cli"],
 
-    "@profullstack/scraper-daemon": ["@profullstack/scraper-daemon@0.1.0", "", { "bin": { "scraper-daemon": "bin/scraper-daemon.js" } }, "sha512-ynBaS4poq34c2fA3V1yLAFuSSS4FLks50jZaUFxrhzHxMHjjnRNO9iQdWO2HwV5fzQo5V/6VW0fI4OAJY2P8Bg=="],
+    "@profullstack/scraper-daemon": ["@profullstack/scraper-daemon@0.1.1", "", { "bin": { "scraper-daemon": "bin/scraper-daemon.js" } }, "sha512-kfVC8eBcnN+oCsE1iAK1fJKJ8ihiA93cREJ2ljlh3gSRW0yDINg74c5VXj+I4tVqz5BL9mvqSiJw+rXFw6M+3w=="],
 
     "@profullstack/submit-feed": ["@profullstack/submit-feed@0.1.1", "", { "dependencies": { "fast-xml-parser": "5.10.1" } }, "sha512-lnBeS1dHEnQS+1pHslwMrc8uhY8yWm4A9x1dTagPAGLVh3vvUf1xO//3bV2c8r1XYYPUnIJdEWyIP7jptbwmPg=="],
 
