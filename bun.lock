@@ -22,6 +22,7 @@
       "name": "@rssamplifier/poller",
       "version": "0.1.0",
       "dependencies": {
+        "@profullstack/scraper-daemon": "0.1.1",
         "@rssamplifier/db": "workspace:*",
         "@rssamplifier/discover": "workspace:*",
         "@rssamplifier/feed": "workspace:*",
@@ -352,6 +353,8 @@
     "@profullstack/player": ["@profullstack/player@0.3.1", "", { "dependencies": { "hls.js": "1.7.1", "mpegts.js": "1.8.2" }, "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "sha512-/BvjRREIQ+WBw+MJXuSUDONreRnivB36wZDiflnzqrTtDhBUZEbkAgsfKF/m67U7GdSYl1uRJMbQoPEw5I9nMA=="],
 
     "@profullstack/rssamplifier": ["@profullstack/rssamplifier@workspace:apps/cli"],
+
+    "@profullstack/scraper-daemon": ["@profullstack/scraper-daemon@0.1.1", "", { "bin": { "scraper-daemon": "bin/scraper-daemon.js" } }, "sha512-kfVC8eBcnN+oCsE1iAK1fJKJ8ihiA93cREJ2ljlh3gSRW0yDINg74c5VXj+I4tVqz5BL9mvqSiJw+rXFw6M+3w=="],
 
     "@profullstack/submit-feed": ["@profullstack/submit-feed@0.1.1", "", { "dependencies": { "fast-xml-parser": "5.10.1" } }, "sha512-lnBeS1dHEnQS+1pHslwMrc8uhY8yWm4A9x1dTagPAGLVh3vvUf1xO//3bV2c8r1XYYPUnIJdEWyIP7jptbwmPg=="],
 
