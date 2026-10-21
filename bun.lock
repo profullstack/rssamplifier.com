@@ -35,7 +35,7 @@
     },
     "apps/web": {
       "name": "@rssamplifier/web",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "dependencies": {
         "@logicsrc/openaccess": "^0.3.0",
         "@profullstack/footer": "latest",
@@ -46,7 +46,7 @@
         "@profullstack/player": "0.15.0",
         "@profullstack/rssamplifier": "workspace:*",
         "@profullstack/submit-feed": "^0.1.1",
-        "@profullstack/x402-gateway": "^0.10.0",
+        "@profullstack/x402-gateway": "^0.11.0",
         "@rssamplifier/auth": "workspace:*",
         "@rssamplifier/db": "workspace:*",
         "@rssamplifier/feed": "workspace:*",
@@ -365,7 +365,7 @@
 
     "@profullstack/x402-client": ["@profullstack/x402-client@0.2.0", "", { "dependencies": { "@noble/curves": "2.4.0", "@noble/hashes": "2.4.0" }, "bin": { "x402": "bin/x402.js" } }, "sha512-kJGAomE9Tf/ruhsCStaKVXpjklCbOh2UFcMGTIfTqcWaSsW2NFWQRaTxJBLvc6r7Iy2+fpAWzfJnerolI6IrRQ=="],
 
-    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.10.0", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-c6JUgP61KhlDvNLWweBaYVBlSA6QHoDsnZNQH1zhsoUG1MPUXBpYhyh4mV4OBQoJ40M9VEbkWRWmuiolc8961w=="],
+    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.11.0", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-Lfrz+SRTwQZfcoCaVtaaMNPJx74Lp/5oyS7vJJAEuJmH1TjBzhE7dWquISkj1p42oc+VW5I9xH9p7YhEKqmr4Q=="],
 
     "@radix-ui/number": ["@radix-ui/number@1.1.3", "", {}, "sha512-Road2bidD0uu/1BGDOWNdPI06g0lIRy6IF9GZcIrDK2KGItfor8IQwQa+yM2ERgHM1MmHxaxpTzk0/Jp42lNfA=="],
 
