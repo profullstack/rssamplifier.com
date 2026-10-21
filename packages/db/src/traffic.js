@@ -29,7 +29,13 @@ import { nowIso } from './client.js';
  * @returns {Promise<number>} how many rows were folded in
  */
 export async function recordTraffic(db, rows) {
-  const wanted = rows.filter((r) => Number(r.hits) > 0);
+  // In key order. Every web worker flushes on the same minute, and two batches
+  // upserting the same rows in different orders deadlock on each other's row
+  // locks; a fixed order makes the second one wait instead.
+  const key = (r) => `${r.hour}\u0000${r.agent}\u0000${r.bucket}\u0000${r.tier}`;
+  const wanted = rows
+    .filter((r) => Number(r.hits) > 0)
+    .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   if (wanted.length === 0) return 0;
 
   await db.batch(

@@ -211,8 +211,13 @@ export async function countStaleSocialFeeds(db, network, multiplier = 3) {
            where social_network = ?
              and status <> 'dead'
              and last_success_at is not null
-             and julianday('now') - julianday(last_success_at)
-                 > (fetch_interval_minutes * ?) / 1440.0`,
+             -- Postgres: no julianday(). last_success_at is ISO-8601 UTC
+             -- text (nowIso), so compare it to "now minus N intervals" in
+             -- the same format rather than casting every row.
+             and last_success_at < to_char(
+                   (now() at time zone 'utc')
+                     - make_interval(secs => fetch_interval_minutes * 60.0 * (?)::float8),
+                   'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
     args: [String(network), Number(multiplier) || 3],
   });
 
