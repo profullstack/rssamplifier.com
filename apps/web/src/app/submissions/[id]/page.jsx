@@ -4,7 +4,8 @@ import { q } from '@rssamplifier/db';
 import AutoRefresh from '../../AutoRefresh.jsx';
 import LiveProgress from '../../LiveProgress.jsx';
 import Toolbar from '../../Toolbar.jsx';
-import AdBanner from '../../AdBanner.jsx';
+import Ad from '../../Ad.jsx';
+import { AD_TEXT } from '../../lib/ads.js';
 import { db } from '../../../lib/db.js';
 import { streamSrc } from '../../../lib/sse.js';
 import { describeSubmittedInput, RAW_INPUT_LINE_LIMIT } from '../../../lib/submitted.js';
@@ -116,7 +117,7 @@ export default async function SubmissionPage({ params }) {
        * is real attention, so it carries one unit, but below the status: the
        * numbers are the reason the page exists.
        */}
-      <AdBanner />
+      <Ad format={AD_TEXT} />
 
       {/* The percentage moved into the bar; this is only the email promise. */}
       {progress.queued > 0 && submission.notify_email && (

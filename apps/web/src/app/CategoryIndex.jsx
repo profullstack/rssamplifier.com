@@ -1,7 +1,7 @@
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../lib/db.js';
-import { AD_TEXT, adPlan } from '../lib/ads.js';
+import { AD_TEXT } from '../lib/ads.js';
 import { CATEGORIES, listHref, viewName } from '../lib/categories.js';
 import Ad from './Ad.jsx';
 import ListFilter from './ListFilter.jsx';
@@ -95,7 +95,6 @@ export default async function CategoryIndex({ kind, page = 1, view = 'shows' }) 
   const hasMore = entries.length > PAGE_SIZE;
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const listed = river ? items : rows;
-  const ads = adPlan(listed.length, { first: 11, every: 24, max: 2 });
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -277,8 +276,7 @@ export default async function CategoryIndex({ kind, page = 1, view = 'shows' }) 
             </article>
           );
 
-          const format = ads.get(i);
-          return format ? [entry, <Ad key={`ad-${i}`} format={format} inFeed />] : [entry];
+          return [entry];
         })
       ) : (
         <div className="feed-list">
@@ -306,8 +304,7 @@ export default async function CategoryIndex({ kind, page = 1, view = 'shows' }) 
               </a>
             );
 
-            const format = ads.get(i);
-            return format ? [row, <Ad key={`ad-${i}`} format={format} inFeed />] : [row];
+            return [row];
           })}
         </div>
       )}

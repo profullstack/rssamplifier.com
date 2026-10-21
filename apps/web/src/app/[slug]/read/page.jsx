@@ -11,7 +11,7 @@ import { readerView } from '../../../lib/reader.js';
 import { thumbSrc } from '../../../lib/thumbs.js';
 import { lanesOffered, trackFor } from '../../../lib/queue.js';
 import { shareText } from '../../../lib/share.js';
-import { AD_MREC } from '../../../lib/ads.js';
+import { AD_TEXT } from '../../../lib/ads.js';
 import Ad from '../../Ad.jsx';
 import Comments from '../../Comments.jsx';
 import EpisodePlayer from '../../EpisodePlayer.jsx';
@@ -650,7 +650,7 @@ export default async function ReaderPage({ params, searchParams }) {
                * strip: the page around it is this summary and this link, the
                * same page the fallback branch below carries a unit on.
                */}
-              <Ad format={AD_MREC} />
+              <Ad format={AD_TEXT} />
             </>
           ) : viewable ? (
             <>
@@ -736,7 +736,7 @@ export default async function ReaderPage({ params, searchParams }) {
                * This branch is different: nothing was framed, so the page is
                * our own summary and our own link out, and it can carry a unit.
                */}
-              <Ad format={AD_MREC} />
+              <Ad format={AD_TEXT} />
             </div>
           )}
         </>

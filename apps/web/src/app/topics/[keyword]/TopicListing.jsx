@@ -3,7 +3,7 @@ import { SYNDICATION_FORMATS } from '@rssamplifier/feed';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
-import { AD_TEXT, adPlan } from '../../../lib/ads.js';
+import { AD_TEXT } from '../../../lib/ads.js';
 import { IN_BROWSER_KINDS, PLAYABLE_KINDS, groupsWithFeeds } from '../../../lib/topicGroups.js';
 import { shareText } from '../../../lib/share.js';
 import Ad from '../../Ad.jsx';
@@ -104,7 +104,6 @@ export default async function TopicListing({ topic, counts, group = null, page =
     : { following: false, alerts: false };
 
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const ads = adPlan(rows.length, { first: 11, every: 24, max: 2 });
   const groups = groupsWithFeeds(counts);
   const what = group ? `the ${group.noun} on this topic` : 'this topic';
 
@@ -288,8 +287,7 @@ export default async function TopicListing({ topic, counts, group = null, page =
             </a>
           );
 
-          const format = ads.get(i);
-          return format ? [row, <Ad key={`ad-${i}`} format={format} inFeed />] : [row];
+          return [row];
         })}
       </div>
 

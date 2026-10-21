@@ -1,4 +1,4 @@
-import { AD_MREC } from '../../lib/ads.js';
+import { AD_TEXT } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
 import Toolbar from '../Toolbar.jsx';
 
@@ -67,7 +67,7 @@ export default function AboutPage() {
           this far is engaged, and nobody arriving at an About page is in a
           hurry to be sold to on the way in. Not at the very end, which would
           press it against the footer. */}
-      <Ad format={AD_MREC} />
+      <Ad format={AD_TEXT} />
 
       <h2>Machine-readable</h2>
       <ul>
