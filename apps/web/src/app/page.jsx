@@ -1,8 +1,6 @@
 import { siteUrl } from '../lib/db.js';
 import { directoryIndex } from '../lib/directory.js';
 import { feedAlternates } from '../lib/subscribe.js';
-import { AD_TEXT, adPlan } from '../lib/ads.js';
-import Ad from './Ad.jsx';
 import SubscribeLinks from './SubscribeLinks.jsx';
 import { Avatar } from './Thumb.jsx';
 import { feedImage } from '../lib/thumbs.js';
@@ -49,11 +47,6 @@ export default async function Home() {
   // URL with a 500 whenever the database was busy — see ../lib/directory.js.
   const { rows, total, byKind } = await directoryIndex();
 
-  // The index is a long scan, so ads go *between* rows rather than around the
-  // list. First one is deep enough that the fold is all directory, and there
-  // are at most two however far the list runs.
-  const ads = adPlan(rows.length, { first: 11, every: 24, max: 2 });
-
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
@@ -96,12 +89,7 @@ export default async function Home() {
         </div>
       </form>
 
-      {/*
-       * Below the submit box, never above it: the form is what this page is
-       * for. A text link is the only format that can sit here at all — it is a
-       * line of type, so it costs the fold 40px rather than a 250px block.
-       */}
-      <Ad format={AD_TEXT} />
+      {/* The homepage carries no ad unit (2026-10-21). */}
 
       {/* The directory itself, as a feed: everything added to it, newest
           first. `/feed.rss` rather than `/.rss`, which is not an address. */}
@@ -169,8 +157,7 @@ export default async function Home() {
               </a>
             );
 
-            const format = ads.get(i);
-            return format ? [row, <Ad key={`ad-${i}`} format={format} inFeed />] : [row];
+            return [row];
           })}
         </div>
       )}

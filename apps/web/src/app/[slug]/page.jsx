@@ -5,6 +5,7 @@ import { socialDisplayTitle, socialPathFor } from '@rssamplifier/social';
 import { db, siteUrl } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { feedAdPlan } from '../../lib/feedAdPlan.js';
+import { AD_TEXT } from '../../lib/ads.js';
 import {
   FEED_QUEUE_LIMIT,
   alreadyQueued,
@@ -205,7 +206,10 @@ export default async function FeedPage({ params, base }) {
   // it was one in twelve starting at the fourth post, and a reader who meets an
   // ad after four posts on the page and after ten in the feed is being told two
   // different things about how heavily this site advertises.
-  const ads = feedAdPlan(posts.length);
+  //
+  // The page shows only the first of those positions, as one low-profile
+  // text_link line: never a box, never a stack of repeats down the list.
+  const firstAd = [...feedAdPlan(posts.length).keys()][0];
 
   const podcast = feed.category === 'podcast';
 
@@ -521,8 +525,7 @@ export default async function FeedPage({ params, base }) {
             </article>
           );
 
-          const format = ads.get(i);
-          return format ? [entry, <Ad key={`ad-${i}`} format={format} />] : [entry];
+          return i === firstAd ? [entry, <Ad key={`ad-${i}`} format={AD_TEXT} />] : [entry];
         })
       )}
 

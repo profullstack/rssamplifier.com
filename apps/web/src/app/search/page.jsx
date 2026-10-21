@@ -2,7 +2,7 @@ import { q } from '@rssamplifier/db';
 
 import { db } from '../../lib/db.js';
 import { feedAlternates } from '../../lib/subscribe.js';
-import { AD_MREC, AD_TEXT, adPlan } from '../../lib/ads.js';
+import { AD_TEXT } from '../../lib/ads.js';
 import { CATEGORIES } from '../../lib/categories.js';
 import { filtersWithHits, searchFilter, searchHref, totalHits } from '../../lib/searchFilters.js';
 import Ad from '../Ad.jsx';
@@ -95,7 +95,6 @@ export default async function SearchPage({ searchParams }) {
   // The query string the feed links carry, so `/search.rss?q=…` asks the same
   // question the page just answered — filter included.
   const searchQuery = `?q=${encodeURIComponent(query)}${filter ? `&kind=${filter.segment}` : ''}`;
-  const postAds = adPlan(posts.length, { first: 8, every: 20, max: 2, formats: [AD_TEXT] });
 
   const filters = query ? filtersWithHits(counts) : [];
   const total = totalHits(counts);
@@ -215,9 +214,6 @@ export default async function SearchPage({ searchParams }) {
         </>
       )}
 
-      {/* Between the two result sets — a natural break, so a box fits here. */}
-      {blogs.length > 0 && posts.length > 0 && <Ad format={AD_MREC} />}
-
       {posts.length > 0 && (
         <>
           <h2>{postsHeading}</h2>
@@ -254,8 +250,7 @@ export default async function SearchPage({ searchParams }) {
               </article>
             );
 
-            const format = postAds.get(i);
-            return format ? [entry, <Ad key={`ad-${i}`} format={format} />] : [entry];
+            return [entry];
           })}
         </>
       )}
