@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { clusterKey, dedupeItems, topicSlug } from '@rssamplifier/feed';
 
 import { newId, nowIso } from './client.js';
@@ -487,11 +489,23 @@ function itemStatement(feedId, items, now) {
   // Undated items sort last rather than being dropped: plenty of the small web
   // publishes no dates at all, and a feed with none would otherwise have its
   // items chosen arbitrarily.
+  //
+  // One row per guid. Postgres refuses a multi-row upsert that names the same
+  // conflict key twice ("ON CONFLICT DO UPDATE command cannot affect row a
+  // second time"), and plenty of real feeds repeat an entry, so one repeated
+  // guid used to fail the whole crawl, every crawl. After the newest-first sort
+  // the first occurrence is the newest copy, and that is the one kept.
+  const seen = new Set();
   const rows = items
     .filter((i) => i.guid)
     .slice()
     .sort((a, b) => published(b) - published(a))
-    .slice(0, ITEMS_PER_CRAWL);
+    .map((i) => ({ ...i, guid: storedGuid(i.guid) }))
+    .filter((i) => (seen.has(i.guid) ? false : (seen.add(i.guid), true)))
+    .slice(0, ITEMS_PER_CRAWL)
+    // Then in key order, so two crawls of the same feed racing each other take
+    // their row locks in the same order and queue instead of deadlocking.
+    .sort((a, b) => (a.guid < b.guid ? -1 : a.guid > b.guid ? 1 : 0));
 
   if (rows.length === 0) return null;
 
@@ -579,6 +593,28 @@ function itemStatement(feedId, items, now) {
     rows: rows.length,
   };
 }
+
+/**
+ * The guid as stored: the publisher's own, unless it is too long to index.
+ *
+ * `feed_items (feed_id, guid)` is a btree, and a btree entry cannot exceed
+ * 2704 bytes, so a feed whose guid is a whole paragraph (4.8 kB seen in
+ * production) failed every crawl with "index row size exceeds btree version 4
+ * maximum". Past MAX_GUID_BYTES the guid is replaced by a hash of itself. It is
+ * deterministic, so every crawl maps the same entry to the same row, and every
+ * lookup by guid goes through here too, so a raw long guid and its stored form
+ * find the same post.
+ *
+ * @param {unknown} guid
+ * @returns {string}
+ */
+export function storedGuid(guid) {
+  const s = String(guid ?? '');
+  if (Buffer.byteLength(s, 'utf8') <= MAX_GUID_BYTES) return s;
+  return `sha256:${createHash('sha256').update(s).digest('hex')}`;
+}
+
+const MAX_GUID_BYTES = 1000;
 
 /**
  * How many items one crawl may write.
@@ -930,7 +966,7 @@ export async function itemByGuid(db, feedId, guid) {
     sql: `select id, guid, url, title, summary, author, image_url, published_at,
                  audio_url, audio_type, audio_seconds
           from feed_items where feed_id = ? and guid = ? limit 1`,
-    args: [feedId, guid],
+    args: [feedId, storedGuid(guid)],
   });
   return rows[0] ?? null;
 }

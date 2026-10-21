@@ -41,6 +41,8 @@ import { forkWorkers, recycleRssMb, workerCount, workerHeapMb } from './src/lib/
 
 const port = Number(process.env.PORT) || 3000;
 const hostname = process.env.HOSTNAME || '0.0.0.0';
+/** How long a request that arrived during startup waits for the first one. */
+const WARMUP_WAIT_MS = 5_000;
 
 // The primary forks and then has nothing to do. It must not go on to stand up
 // Next and bind the port itself: that would put one server too many on the
@@ -86,12 +88,35 @@ async function serve() {
     // which is the one event that means the request is no longer costing us.
     res.once('close', release);
 
-    handle(req, res).catch((err) => {
-      console.error('[web] request failed', err);
-      if (!res.headersSent) res.statusCode = 500;
-      res.end();
-    });
+    run(req, res);
   });
+
+  // The first request runs alone. Next loads the proxy (middleware) bundle
+  // lazily on the first request that matches it, and under Bun a burst of
+  // requests arriving in that window evaluates the chunk concurrently: every
+  // request but the first then sees the half-initialised module and fails
+  // with "TypeError: adapterFn is not a function" (a dozen per deploy). So
+  // requests that arrive before the first one has finished wait for it, with
+  // a ceiling so a slow or streaming first response cannot hold the rest.
+  let warm = null;
+  const run = (req, res) => {
+    const go = () =>
+      handle(req, res).catch((err) => {
+        console.error('[web] request failed', err);
+        if (!res.headersSent) res.statusCode = 500;
+        res.end();
+      });
+    if (warm === true) return go();
+    // Static assets are outside the proxy's matcher, so they would not warm it.
+    if (warm === null && (req.url ?? '').startsWith('/_next/')) return go();
+    if (warm === null) {
+      warm = go().finally(() => {
+        warm = true;
+      });
+      return warm;
+    }
+    return Promise.race([warm, new Promise((r) => setTimeout(r, WARMUP_WAIT_MS))]).then(go);
+  };
 
   server.listen(port, hostname, () => {
     console.log(
