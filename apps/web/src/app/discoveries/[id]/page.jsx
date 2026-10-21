@@ -6,7 +6,7 @@ import AutoRefresh from '../../AutoRefresh.jsx';
 import LiveProgress from '../../LiveProgress.jsx';
 import Toolbar from '../../Toolbar.jsx';
 import Ad from '../../Ad.jsx';
-import { AD_TEXT } from '../../lib/ads.js';
+import { AD_TEXT } from '../../../lib/ads.js';
 import { db } from '../../../lib/db.js';
 import { RUN_ERRORS, explain } from '../../../lib/reasons.js';
 import { streamSrc } from '../../../lib/sse.js';
