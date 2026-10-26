@@ -16,7 +16,7 @@
     "vapid": "node scripts/vapid.js"
   },
   "dependencies": {
-    "@profullstack/notifications": "^0.1.0",
+    "@profullstack/notifications": "^0.1.4",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/mail": "workspace:*"
   }

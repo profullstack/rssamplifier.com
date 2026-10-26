@@ -15,7 +15,7 @@
     "@rssamplifier/ingest": "workspace:*",
     "@rssamplifier/notify": "workspace:*",
     "@rssamplifier/social": "workspace:*",
-    "bullmq": "6.3.17",
-    "ioredis": "5"
+    "bullmq": "6.4.2",
+    "ioredis": "^6.0.0"
   }
 }

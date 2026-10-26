@@ -3,7 +3,7 @@
 #   docker build -f apps/web/Dockerfile .
 # Bun is the package manager and the runtime. Alpine on purpose: dev2's compose
 # healthcheck runs busybox `wget`, which the alpine image already has.
-FROM oven/bun:1.4.2-alpine AS base
+FROM oven/bun:1.4.4-alpine AS base
 
 FROM base AS build
 WORKDIR /repo

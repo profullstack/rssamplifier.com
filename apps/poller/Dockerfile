@@ -12,7 +12,7 @@
 # dependency tree resolving cleanly on the day we ship, for an app we do not
 # develop. Copying their published artifact means our build does no resolution.
 FROM diygod/rsshub:latest AS rsshub
-FROM oven/bun:1.4.2-slim AS bun
+FROM oven/bun:1.4.4-slim AS bun
 
 # Debian trixie and Node 24, because that is exactly what RSSHub's own image is
 # (`node:24-trixie-slim`) and this container has to run their `node_modules`.
