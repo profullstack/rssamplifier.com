@@ -1,8 +1,11 @@
 import { redirect } from 'next/navigation';
 import { accounts, apikeys, dataset, profiles } from '@rssamplifier/db';
+import { profileStore } from '@rssamplifier/auth';
+import { COLUMNS } from '@profullstack/profile';
 
 import Toolbar from '../Toolbar.jsx';
 import { AddPasskey } from '../Passkey.jsx';
+import ProfileForm from './ProfileForm.jsx';
 import { db } from '../../lib/db.js';
 import { currentUser } from '../../lib/auth.js';
 import { topicLabel } from '../../lib/following.js';
@@ -30,7 +33,7 @@ export default async function AccountPage({ searchParams }) {
   const client = db();
   const userId = String(user.id);
 
-  const [follows, credentials, topics, keys, grant, claimed] = await Promise.all([
+  const [follows, credentials, topics, keys, grant, claimed, mine] = await Promise.all([
     accounts.followedFeeds(client, userId),
     accounts.credentialsForUser(client, userId),
     accounts.followedTopics(client, userId),
@@ -39,7 +42,16 @@ export default async function AccountPage({ searchParams }) {
     // The author profiles this account has claimed, so the way back to
     // editing one is here and not only on the page it was claimed from.
     profiles.profilesForUser(client, userId),
+    // The signup profile (@profullstack/profile), not the author pages above.
+    profileStore(client).get(userId),
   ]);
+
+  // Only the six fields cross to the client form, as plain strings.
+  /** @type {Record<string, string|null>} */
+  const profileValues = Object.fromEntries(
+    COLUMNS.map((c) => [c, mine?.[c] == null ? null : String(mine[c])]),
+  );
+  if (!profileValues.email) profileValues.email = String(user.email);
 
   // Only for an account that has one, so the overwhelming majority of readers —
   // who will never license the corpus — do not pay a query to be told they have
@@ -63,6 +75,13 @@ export default async function AccountPage({ searchParams }) {
       )}
 
       {params.revoked && <p className="notice">That passkey has been removed.</p>}
+
+      <h2>Your details</h2>
+      <p className="hint">
+        Your name and, if you like, where you work. Only the email and your name are
+        required.
+      </p>
+      <ProfileForm initial={profileValues} />
 
       {claimed.length > 0 && (
         <>

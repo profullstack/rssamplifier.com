@@ -1,7 +1,9 @@
 import { accounts, nowIso } from '@rssamplifier/db';
 import { sendEmail, emailEnabled } from '@rssamplifier/mail';
+import { saveSignupProfile } from '@profullstack/profile';
 
 import { newToken, hashToken } from './tokens.js';
+import { profileStore } from './profile.js';
 
 /**
  * Sign-in by emailed link.
@@ -44,12 +46,17 @@ export function looksLikeEmail(email) {
  * and there is no reason to hand that out — the caller shows the same "check
  * your email" either way.
  *
+ * `profile` is the signup form's fields, already through validateProfile. It
+ * rides on the link and is saved when the link is followed, because that is
+ * when the account is made.
+ *
  * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} email
  * @param {string} siteUrl
+ * @param {{ profile?: Record<string, string|null>|null }} [opts]
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
-export async function requestSignInLink(db, email, siteUrl) {
+export async function requestSignInLink(db, email, siteUrl, opts = {}) {
   if (!looksLikeEmail(email)) return { ok: false, error: 'invalid-email' };
   if (!emailEnabled()) return { ok: false, error: 'email-not-configured' };
 
@@ -63,6 +70,7 @@ export async function requestSignInLink(db, email, siteUrl) {
     tokenHash: hashToken(token),
     email: normalized,
     expiresAt: nowIso(TOKEN_MS),
+    profile: opts.profile ?? null,
   });
 
   const link = `${String(siteUrl).replace(/\/+$/, '')}/auth/magic?t=${encodeURIComponent(token)}`;
@@ -94,11 +102,23 @@ export async function requestSignInLink(db, email, siteUrl) {
 export async function consumeSignInLink(db, token) {
   if (!token) return { ok: false, error: 'missing-token' };
 
-  const email = await accounts.consumeLoginToken(db, hashToken(token));
+  const spent = await accounts.takeLoginToken(db, hashToken(token));
   // One message for expired, already-used and never-existed alike: they are the
   // same situation from the reader's side — ask for a new link.
-  if (!email) return { ok: false, error: 'invalid-or-expired' };
+  if (!spent) return { ok: false, error: 'invalid-or-expired' };
 
-  const user = await accounts.findOrCreateUser(db, email);
+  const user = await accounts.findOrCreateUser(db, spent.email);
+
+  // A link asked for from /signup carries the form's profile. Saving it is not
+  // allowed to cost the reader the sign-in they proved: the fields can be
+  // filled in again from the account page.
+  if (spent.profile) {
+    try {
+      await saveSignupProfile(profileStore(db), user.id, spent.profile, { email: user.email });
+    } catch (err) {
+      console.error('[auth] signup profile not saved:', err?.message ?? err);
+    }
+  }
+
   return { ok: true, userId: user.id, email: user.email, created: user.created };
 }

@@ -1,7 +1,8 @@
 import { requestSignInLink } from '@rssamplifier/auth';
+import { validateProfile } from '@profullstack/profile';
 
 import { db, siteUrl } from '../../../../lib/db.js';
-import { magicReturnPath } from '../../../../lib/signInForm.js';
+import { magicReturnPath, signupErrorQuery } from '../../../../lib/signInForm.js';
 import { attempt, callerAddress } from '../../../../lib/authThrottle.js';
 
 export const dynamic = 'force-dynamic';
@@ -36,20 +37,46 @@ export async function POST(req) {
   // not answered by a page headed "Sign in". Anything unrecognised falls back
   // to /login rather than being reflected into the Location header.
   let from = '/login';
+  // The signup profile, when this is a signup: the /signup form, or a JSON
+  // body that sends `signup: true` or any profile field beside the address.
+  // Plain sign-in never asks for it.
+  /** @type {FormData|Record<string, unknown>|null} */
+  let signup = null;
+  /** @type {FormData|null} */
+  let form = null;
 
   try {
     if (contentType.includes('application/json')) {
-      email = String((await req.json())?.email ?? '');
+      const body = (await req.json()) ?? {};
+      email = String(body.email ?? '');
+      if (body.signup === true || ['first_name', 'last_name'].some((k) => k in body)) signup = body;
     } else {
-      const form = await req.formData();
+      form = await req.formData();
       email = String(form.get('email') ?? '');
       from = magicReturnPath(form.get('from'));
+      if (from === '/signup') signup = form;
     }
   } catch {
     return json({ ok: false, error: 'bad-request' }, 400);
   }
 
-  const result = await requestSignInLink(db(), email, siteUrl());
+  // Checked before any link is issued, so a refused form never mails anybody.
+  let profile = null;
+  if (signup) {
+    const check = validateProfile(signup);
+    if (!check.ok) {
+      if (form && (req.headers.get('accept') ?? '').includes('text/html')) {
+        return new Response(null, {
+          status: 303,
+          headers: { location: `${from}?${signupErrorQuery(check, form)}` },
+        });
+      }
+      return json({ ok: false, error: 'invalid-profile', errors: check.errors }, 400);
+    }
+    profile = check.profile;
+  }
+
+  const result = await requestSignInLink(db(), email, siteUrl(), { profile });
 
   // Only a misconfigured site or a malformed address is worth reporting back;
   // a rate limit is reported as success for the same reason as above.

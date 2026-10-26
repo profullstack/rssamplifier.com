@@ -6,6 +6,7 @@ import { connectTest } from '@rssamplifier/db/src/testdb.js';
 import { newToken, hashToken, safeEqual } from '../src/tokens.js';
 import { startSession, resolveSession, endSession, sessionCookieOptions } from '../src/session.js';
 import { looksLikeEmail, consumeSignInLink, requestSignInLink } from '../src/magic.js';
+import { profileStore } from '../src/profile.js';
 import { relyingPartyId, expectedOrigins } from '../src/passkey.js';
 
 let db;
@@ -89,6 +90,48 @@ test('a sign-in link creates the account on first use', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.created, true, 'signing in for the first time is the registration');
   assert.equal(result.email, 'brand-new@example.com');
+});
+
+test('a link asked for from the signup form saves its profile on the account', async () => {
+  const token = newToken();
+  await accounts.insertLoginToken(db, {
+    tokenHash: hashToken(token),
+    email: 'ada@acme.com',
+    expiresAt: nowIso(60_000),
+    profile: {
+      email: 'ada@acme.com',
+      first_name: 'Ada',
+      last_name: 'Lovelace',
+      company_domain: 'acme.com',
+      job_title: 'VP Engineering',
+      linkedin_url: 'https://www.linkedin.com/in/ada-lovelace',
+    },
+  });
+
+  const result = await consumeSignInLink(db, token);
+  assert.equal(result.ok, true);
+  assert.equal(result.created, true);
+
+  const saved = await profileStore(db).get(result.userId);
+  assert.equal(saved.email, 'ada@acme.com');
+  assert.equal(saved.first_name, 'Ada');
+  assert.equal(saved.last_name, 'Lovelace');
+  assert.equal(saved.company_domain, 'acme.com');
+  assert.equal(saved.job_title, 'VP Engineering');
+  assert.equal(saved.linkedin_url, 'https://www.linkedin.com/in/ada-lovelace');
+});
+
+test('a plain sign-in link leaves no profile behind', async () => {
+  const token = newToken();
+  await accounts.insertLoginToken(db, {
+    tokenHash: hashToken(token),
+    email: 'plain@example.com',
+    expiresAt: nowIso(60_000),
+  });
+
+  const result = await consumeSignInLink(db, token);
+  assert.equal(result.ok, true);
+  assert.equal(await profileStore(db).get(result.userId), null);
 });
 
 test('a spent or missing link fails the same way', async () => {

@@ -8,6 +8,7 @@ export {
   sessionCookieOptions,
 } from './src/session.js';
 export { requestSignInLink, consumeSignInLink, looksLikeEmail } from './src/magic.js';
+export { profileStore } from './src/profile.js';
 export {
   beginRegistration,
   finishRegistration,
