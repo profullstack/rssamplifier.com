@@ -82,5 +82,50 @@ export function explainSignInError(code, retry) {
     return 'Email is not configured on this deployment, so links cannot be sent. Use a passkey.';
   }
   if (code === 'missing-token') return 'That link was incomplete. Ask for a new one.';
+  if (code === 'invalid-profile') return 'A few of those fields need another look.';
   return 'Something went wrong. Try again.';
+}
+
+/**
+ * The signup fields that travel back to /signup after a refused submit. Not
+ * the email: the form posts a plain HTML redirect, and an address does not
+ * belong in a URL. The reader types it again; everything else stays filled in.
+ */
+const RETURNED_FIELDS = ['first_name', 'last_name', 'company_domain', 'job_title', 'linkedin_url'];
+
+/**
+ * The query string that sends a refused signup back to its form: the error
+ * code, each field's message (`e.<field>`) and what was typed (`v.<field>`).
+ *
+ * @param {{ errors: Record<string, string> }} result from validateProfile
+ * @param {FormData} form what was posted
+ * @returns {string} without the leading "?"
+ */
+export function signupErrorQuery(result, form) {
+  const q = new URLSearchParams({ error: 'invalid-profile' });
+  for (const name of RETURNED_FIELDS) {
+    if (result.errors[name]) q.set(`e.${name}`, String(result.errors[name]));
+    const typed = form.get(name);
+    if (typeof typed === 'string' && typed.trim()) q.set(`v.${name}`, typed.slice(0, 300));
+  }
+  if (result.errors.email) q.set('error', 'invalid-email');
+  return q.toString();
+}
+
+/**
+ * Read signupErrorQuery's output back off the page's search params.
+ *
+ * @param {Record<string, unknown>} params
+ * @returns {{ errors: Record<string, string>, values: Record<string, string> }}
+ */
+export function signupErrorsFromParams(params) {
+  const errors = {};
+  const values = {};
+  for (const name of RETURNED_FIELDS) {
+    const e = params[`e.${name}`];
+    const v = params[`v.${name}`];
+    if (typeof e === 'string' && e) errors[name] = e.slice(0, 200);
+    if (typeof v === 'string' && v) values[name] = v.slice(0, 300);
+  }
+  return { errors, values };
 }

@@ -102,13 +102,23 @@ export async function markUserLoggedIn(db, id) {
 /* ------------------------------------------------------------- sign-in links */
 
 /**
+ * `profile` is what the signup form collected, already validated. The account
+ * does not exist until the link is followed, so it waits here and is saved
+ * then (see consumeSignInLink). A plain sign-in link carries none.
+ *
  * @param {Client} db
- * @param {{ tokenHash: string, email: string, expiresAt: string }} token
+ * @param {{ tokenHash: string, email: string, expiresAt: string, profile?: object|null }} token
  */
 export async function insertLoginToken(db, token) {
   await db.execute({
-    sql: 'insert into login_tokens (id, email, created_at, expires_at) values (?, ?, ?, ?)',
-    args: [token.tokenHash, normalizeEmail(token.email), nowIso(), token.expiresAt],
+    sql: 'insert into login_tokens (id, email, created_at, expires_at, profile) values (?, ?, ?, ?, ?)',
+    args: [
+      token.tokenHash,
+      normalizeEmail(token.email),
+      nowIso(),
+      token.expiresAt,
+      token.profile ? JSON.stringify(token.profile) : null,
+    ],
   });
 }
 
@@ -124,16 +134,43 @@ export async function insertLoginToken(db, token) {
  * @returns {Promise<string|null>} the email it was issued for, or null
  */
 export async function consumeLoginToken(db, tokenHash) {
+  return (await takeLoginToken(db, tokenHash))?.email ?? null;
+}
+
+/**
+ * Spend a sign-in link, as consumeLoginToken, and also hand back the signup
+ * profile it carried, if any.
+ *
+ * @param {Client} db
+ * @param {string} tokenHash
+ * @returns {Promise<{ email: string, profile: Record<string, string|null>|null }|null>}
+ */
+export async function takeLoginToken(db, tokenHash) {
   const now = nowIso();
 
   const { rows } = await db.execute({
     sql: `update login_tokens set consumed_at = ?
           where id = ? and consumed_at is null and expires_at > ?
-          returning email`,
+          returning email, profile`,
     args: [now, tokenHash, now],
   });
 
-  return rows[0]?.email ? String(rows[0].email) : null;
+  if (!rows[0]?.email) return null;
+  return { email: String(rows[0].email), profile: parseProfile(rows[0].profile) };
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {Record<string, string|null>|null}
+ */
+function parseProfile(raw) {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(String(raw));
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

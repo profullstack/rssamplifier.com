@@ -44,6 +44,7 @@
         "@profullstack/openprofile": "^0.1.2",
         "@profullstack/partners": "^0.2.0",
         "@profullstack/player": "0.15.0",
+        "@profullstack/profile": "0.1.1",
         "@profullstack/rssamplifier": "workspace:*",
         "@profullstack/submit-feed": "^0.1.1",
         "@profullstack/x402-gateway": "^0.11.0",
@@ -75,6 +76,7 @@
       "name": "@rssamplifier/auth",
       "version": "0.1.0",
       "dependencies": {
+        "@profullstack/profile": "0.1.1",
         "@rssamplifier/db": "workspace:*",
         "@rssamplifier/mail": "workspace:*",
         "@simplewebauthn/server": "^13.0.0",
@@ -356,6 +358,8 @@
     "@profullstack/partners": ["@profullstack/partners@0.2.0", "", { "dependencies": { "@profullstack/leaderboard": "0.3.1" } }, "sha512-h8Fal+ZMqpR2xixo8OC/Xb/OXfLXmt2BdBIgohC3tK6U3AkAsDrkUyrlf+DEF8Ut8mptDEjCWDz5EV/dIXBRHw=="],
 
     "@profullstack/player": ["@profullstack/player@0.15.0", "", { "dependencies": { "hls.js": "^1.7.1", "mpegts.js": "^1.8.2" }, "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "sha512-vcOuLZ59jpHzTKAGbd1hjdhjYaNxKoAq5D8RCQszVYRYZEwobJCn/LJy1CeZzaBDfVBCRziWR2lwkWlYHVVFCg=="],
+
+    "@profullstack/profile": ["@profullstack/profile@0.1.1", "", { "peerDependencies": { "@libsql/client": ">=0.6.0", "postgres": "^3.4.0", "react": ">=18" }, "optionalPeers": ["@libsql/client", "postgres", "react"], "bin": { "profile": "src/cli.js" } }, "sha512-Y1Ps1hW8k2oMMwPol/DP1bj+sslTQKMdAfe7a557zHp5S0rg5Av4bo4GqEyQy2iIwsVvQ+nE7QlcWDv2kt+Weg=="],
 
     "@profullstack/rssamplifier": ["@profullstack/rssamplifier@workspace:apps/cli"],
 

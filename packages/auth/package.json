@@ -16,8 +16,9 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
+    "@profullstack/profile": "0.1.1",
     "@rssamplifier/db": "workspace:*",
-    "@simplewebauthn/server": "^13.0.0",
-    "@rssamplifier/mail": "workspace:*"
+    "@rssamplifier/mail": "workspace:*",
+    "@simplewebauthn/server": "^13.0.0"
   }
 }

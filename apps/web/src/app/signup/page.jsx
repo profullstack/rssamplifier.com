@@ -2,8 +2,9 @@ import { redirect } from 'next/navigation';
 
 import Toolbar from '../Toolbar.jsx';
 import SignInPanels from '../SignInPanels.jsx';
+import SignupProfileFields from '../SignupProfileFields.jsx';
 import { currentUser } from '../../lib/auth.js';
-import { explainSignInError } from '../../lib/signInForm.js';
+import { explainSignInError, signupErrorsFromParams } from '../../lib/signInForm.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,13 +26,16 @@ export const metadata = {
  * conclude there are no accounts. This is that form. It is the same form, said
  * to somebody who has not been here before.
  *
- * @param {{ searchParams: Promise<{ sent?: string, error?: string }> }} props
+ * @param {{ searchParams: Promise<Record<string, string|undefined>> }} props
  */
 export default async function SignupPage({ searchParams }) {
   const params = await searchParams;
   const user = await currentUser();
 
   if (user) redirect('/account');
+
+  // A refused submit comes back with each field's message and what was typed.
+  const profile = signupErrorsFromParams(params);
 
   return (
     <>
@@ -56,14 +60,17 @@ export default async function SignupPage({ searchParams }) {
         emailButton="Send the link"
         passkeyEyebrow="Already have a passkey?"
         passkeyHint="If you have been here before and added one, use it — you do not need to type your address."
+        profileFields={
+          <SignupProfileFields errors={profile.errors} defaultValues={profile.values} />
+        }
       />
 
       <h2>What happens next</h2>
       <ol>
         <li>We email you a link. Following it proves the address, which is all an account here is.</li>
         <li>
-          The account is made on the spot — nothing else to fill in, no confirmation step to sit
-          through.
+          The account is made on the spot, with the name and details you gave above — no
+          confirmation step to sit through.
         </li>
         <li>
           Add a passkey from your <a href="/account">account page</a> and that becomes the fast way

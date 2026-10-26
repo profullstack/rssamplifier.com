@@ -16,6 +16,7 @@ import { PasskeySignIn } from './Passkey.jsx';
  *   emailButton: string,
  *   passkeyEyebrow: string,
  *   passkeyHint: React.ReactNode,
+ *   profileFields?: React.ReactNode,
  * }} props
  */
 export default function SignInPanels({
@@ -25,6 +26,7 @@ export default function SignInPanels({
   emailButton,
   passkeyEyebrow,
   passkeyHint,
+  profileFields = null,
 }) {
   return (
     <>
@@ -42,6 +44,9 @@ export default function SignInPanels({
           autoComplete="email"
           required
         />
+        {/* /signup only: the profile a new account starts with. /login never
+            asks for it. */}
+        {profileFields}
         <div className="submit-actions">
           <button type="submit">{emailButton}</button>
         </div>

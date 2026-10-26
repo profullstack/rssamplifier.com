@@ -1,7 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import { magicReturnPath, explainSignInError } from '../src/lib/signInForm.js';
+import { validateProfile } from '@profullstack/profile';
+
+import {
+  magicReturnPath,
+  explainSignInError,
+  signupErrorQuery,
+  signupErrorsFromParams,
+} from '../src/lib/signInForm.js';
 
 test('the form comes back to the page it was posted from', () => {
   assert.equal(magicReturnPath('/signup'), '/signup');
@@ -47,4 +54,27 @@ test('an unknown code still produces something a reader can act on', () => {
   const message = explainSignInError('something-new');
   assert.match(message, /try again/i);
   assert.ok(!message.includes('something-new'), 'the raw code is not shown to the reader');
+});
+
+test('a refused signup goes back to its form with messages and what was typed, but not the address', () => {
+  const form = new FormData();
+  form.set('email', 'ada@acme.com');
+  form.set('first_name', 'Ada');
+  form.set('last_name', '');
+  form.set('job_title', 'VP Engineering');
+
+  const check = validateProfile(form);
+  assert.equal(check.ok, false);
+
+  const query = signupErrorQuery(check, form);
+  assert.ok(!query.includes('acme'), 'the email never goes into the URL');
+
+  const params = Object.fromEntries(new URLSearchParams(query));
+  assert.equal(params.error, 'invalid-profile');
+
+  const back = signupErrorsFromParams(params);
+  assert.ok(back.errors.last_name, 'the missing last name is reported against its field');
+  assert.equal(back.values.first_name, 'Ada');
+  assert.equal(back.values.job_title, 'VP Engineering');
+  assert.equal(explainSignInError('invalid-profile'), 'A few of those fields need another look.');
 });
