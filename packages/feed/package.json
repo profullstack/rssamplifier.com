@@ -16,9 +16,9 @@
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
-    "@profullstack/submit-feed": "^0.1.1",
-    "@profullstack/x402-client": "0.2.0",
-    "fast-xml-parser": "^5.2.5",
-    "linkedom": "^0.18.13"
+    "@profullstack/submit-feed": "^0.1.3",
+    "@profullstack/x402-client": "0.3.0",
+    "fast-xml-parser": "^5.11.2",
+    "linkedom": "^0.18.14"
   }
 }

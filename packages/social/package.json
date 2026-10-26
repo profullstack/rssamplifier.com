@@ -16,6 +16,6 @@
   },
   "dependencies": {
     "@rssamplifier/feed": "workspace:*",
-    "linkedom": "^0.18.13"
+    "linkedom": "^0.18.14"
   }
 }
