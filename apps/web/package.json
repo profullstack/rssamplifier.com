@@ -20,7 +20,7 @@
     "@profullstack/profile": "0.1.6",
     "@profullstack/rssamplifier": "workspace:*",
     "@profullstack/submit-feed": "^0.1.3",
-    "@profullstack/x402-gateway": "^0.13.1",
+    "@profullstack/x402-gateway": "^0.16.1",
     "@rssamplifier/auth": "workspace:*",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/feed": "workspace:*",

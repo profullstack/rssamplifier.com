@@ -189,6 +189,16 @@ export const gateway = createGateway({
    * charged like GPTBot: 402 and the offer, a hash instead of a render.
    */
   chargeSpoofedBrowsers: true,
+  /*
+   * gateway 0.16 gives a suspect string 20 pages an hour per address before
+   * the 402. Not here, not everywhere: the rotation above never sent more
+   * than two requests from one address, so a per-address allowance would hand
+   * it the whole directory. Only the front door gets it, so a person or an
+   * agent fetching the homepage once reads it (2026-10-28: a one-shot fetch
+   * of the homepage got 402) while /topics, /authors and the API stay charged
+   * on sight. '/' alone is the homepage, not a prefix.
+   */
+  suspectAllowance: { requests: 20, windowSeconds: 3600, paths: ['/', '/about', '/contact', '/advertise', '/submit', '/terms', '/privacy'] },
   exempt,
   /*
    * What a pass actually buys, printed on the sales page and in every 402.
