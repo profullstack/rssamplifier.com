@@ -5,8 +5,20 @@ export {
   signBody,
   verifySignature,
   checkWebhookUrl,
-  postWebhook,
 } from './src/webhook.js';
+
+export {
+  ALERT_EVENT,
+  EVENT_TYPES,
+  BACKOFF_MS,
+  DISABLE_AFTER,
+  createHooks,
+  legacySecret,
+  legacyHeaders,
+  poolOf,
+  webhooksApi,
+  WebhookError,
+} from './src/hooks.js';
 
 export {
   siteOrigin,

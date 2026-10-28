@@ -2,7 +2,7 @@ import { alerts, nowIso } from '@rssamplifier/db';
 import { sendEmail, emailEnabled } from '@rssamplifier/mail';
 
 import { sendPush, vapidConfig } from './webpush.js';
-import { postWebhook } from './webhook.js';
+import { ALERT_EVENT } from './hooks.js';
 import { alertItem, renderEmail, renderPush, renderWebhook, siteOrigin } from './render.js';
 
 /**
@@ -30,7 +30,10 @@ import { alertItem, renderEmail, renderPush, renderWebhook, siteOrigin } from '.
 /**
  * How each kind of channel is actually delivered to.
  *
- * A seam rather than a plugin system: the three real implementations are right
+ * Webhooks are not here: they go through the hub (`opts.hooks`, see
+ * ./hooks.js), which queues, signs, retries and logs them.
+ *
+ * A seam rather than a plugin system: the two real implementations are right
  * here, and the only caller that ever replaces them is the test, which needs to
  * read what was sent without a mail provider, a push service or a public URL to
  * send it to. Keeping them in one object also makes the shape they share
@@ -45,12 +48,6 @@ const TRANSPORT = {
    * @param {object} vapid
    */
   push: (subscription, payload, vapid) => sendPush(subscription, payload, vapid),
-  /**
-   * @param {string} url
-   * @param {object} payload
-   * @param {{ secret?: string }} opts
-   */
-  webhook: (url, payload, opts) => postWebhook(url, payload, opts),
   /** Whether email can be sent at all. */
   emailEnabled: () => emailEnabled(),
 };
@@ -93,6 +90,7 @@ const TOPICS_PER_PASS = 8;
  *   vapid?: object|null,
  *   now?: () => string,
  *   transport?: typeof TRANSPORT,
+ *   hooks?: { emit: (owner: string, type: string, data: unknown, opts?: { subject?: string }) => Promise<{ queued: number }> }|null,
  * }} [opts]
  * @returns {Promise<{ users: number, alerted: number, items: number, sent: number, failed: number }>}
  */
@@ -106,6 +104,9 @@ export async function deliverAlerts(db, opts = {}) {
     vapid = vapidConfig(),
     now = nowIso,
     transport = TRANSPORT,
+    // The webhooks hub. Absent (tests, a deployment without it), webhooks are
+    // simply not sent; every other channel is unaffected.
+    hooks = null,
   } = opts;
 
   const candidates = await alerts.usersWithAlerts(db, users);
@@ -120,6 +121,7 @@ export async function deliverAlerts(db, opts = {}) {
       vapid,
       now,
       transport,
+      hooks,
     });
 
     if (result.items > 0) totals.alerted += 1;
@@ -387,6 +389,22 @@ async function fanOut(db, user, items, opts) {
     else failed += 1;
   }
 
+  // Every webhook endpoint of the account that subscribes to the event gets
+  // one delivery, queued in the hub's table and sent by the poller's drainer.
+  // Counted as sent once queued: from here the hub owns retries and the log
+  // (GET /api/v1/webhooks/deliveries). A hub that cannot queue is one failed
+  // channel, not a failed pass: the email and the phones still went.
+  if (opts.hooks) {
+    try {
+      const { queued } = await opts.hooks.emit(user.id, ALERT_EVENT, hook, {
+        subject: `${opts.origin}/following`,
+      });
+      sent += queued;
+    } catch {
+      failed += 1;
+    }
+  }
+
   return { sent, failed };
 }
 
@@ -416,11 +434,10 @@ async function deliverToChannel(channel, message) {
     );
   }
 
-  if (channel.kind === 'webhook') {
-    return transport.webhook(channel.target, message.hook, {
-      secret: channel.secret?.['secret'] ? String(channel.secret['secret']) : undefined,
-    });
-  }
+  // Webhooks live in the hub now (migration 20261028120000_webhooks.sql moved
+  // every row). One that slipped in after the migration is skipped rather than
+  // retired, so nothing a reader set up is switched off behind their back.
+  if (channel.kind === 'webhook') return null;
 
   // A kind this build does not know how to deliver. Retired rather than retried:
   // it will not become deliverable by being tried again.

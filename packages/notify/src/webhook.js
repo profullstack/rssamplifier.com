@@ -1,21 +1,14 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /**
- * Webhook delivery.
+ * The pre-hub webhook signature, kept as the reference for receivers.
  *
- * The third channel, and the one that exists because the other two are for
- * people. A reader who wants their own alerts in their own system — a Slack
- * relay, a home dashboard, a script that files them — should not have to scrape
- * an inbox to get them.
- *
- * One POST, one JSON body, one optional signature. Deliberately not a retry
- * queue: the sender already retries by leaving the watermark where it was, and a
- * receiver that is down for an hour is better served by the river at /following
- * than by an hour of queued duplicates arriving at once.
+ * Sending moved to @profullstack/webhooks (see ./hooks.js) on 2026-10-28. The
+ * hub still sends `x-rssamplifier-signature` next to the Standard Webhooks
+ * headers, computed exactly as `signBody` below, so a receiver written against
+ * these functions keeps working. They stay here as that receiver's reference
+ * and as what the tests verify a hub delivery against.
  */
-
-/** How long one delivery may take before it is abandoned. */
-const TIMEOUT_MS = 10_000;
 
 /** The header the signature travels in, when there is one. */
 export const SIGNATURE_HEADER = 'x-rssamplifier-signature';
@@ -100,40 +93,4 @@ export function checkWebhookUrl(raw) {
   if (privateHost) return { ok: false, error: 'private-address' };
 
   return { ok: true, url: url.toString() };
-}
-
-/**
- * Deliver one alert batch to one webhook.
- *
- * @param {string} url
- * @param {unknown} payload
- * @param {{ secret?: string, timeoutMs?: number }} [opts]
- * @returns {Promise<{ ok: boolean, error?: string, gone?: boolean }>}
- */
-export async function postWebhook(url, payload, opts = {}) {
-  const allowed = checkWebhookUrl(url);
-  // A stored URL that no longer passes the check — the rules tightened, or the
-  // row predates them — is retired rather than retried: it will never pass.
-  if (!allowed.ok) return { ok: false, error: allowed.error, gone: true };
-
-  const body = JSON.stringify(payload);
-  const headers = {
-    'content-type': 'application/json; charset=utf-8',
-    'user-agent': 'rssamplifier-alerts/1.0 (+https://rssamplifier.com/alerts)',
-  };
-  if (opts.secret) headers[SIGNATURE_HEADER] = signBody(body, opts.secret);
-
-  const control = AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS);
-
-  try {
-    const res = await fetch(allowed.url, { method: 'POST', headers, body, signal: control });
-
-    if (res.ok) return { ok: true };
-
-    // 410 is the one status a receiver can use to say "stop": it is the same
-    // meaning a push service gives it, so the sender treats it the same way.
-    return { ok: false, gone: res.status === 410, error: `webhook-${res.status}` };
-  } catch (err) {
-    return { ok: false, error: String(err?.message ?? err) };
-  }
 }

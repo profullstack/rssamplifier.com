@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { checkWebhookUrl, signBody, verifySignature, postWebhook } from '../src/webhook.js';
+import { checkWebhookUrl, signBody, verifySignature } from '../src/webhook.js';
 import { alertItem, renderEmail, renderPush, renderWebhook, trim } from '../src/render.js';
 
 /**
@@ -42,13 +42,6 @@ test('a signature covers the exact bytes the receiver gets', () => {
   assert.equal(verifySignature(body, 'other-secret', signature), false);
   assert.equal(verifySignature(`${body} `, 'sh', signature), false);
   assert.equal(verifySignature(body, 'sh', 'sha256=nonsense'), false, 'and a short one does not throw');
-});
-
-test('a refused URL is retired rather than retried', async () => {
-  const result = await postWebhook('http://localhost/x', { hello: true });
-
-  assert.equal(result.ok, false);
-  assert.equal(result.gone, true, 'it will never start passing the check');
 });
 
 /** One row as the alert queries return it. */

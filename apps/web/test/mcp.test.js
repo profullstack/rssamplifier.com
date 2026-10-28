@@ -281,11 +281,21 @@ test('the tools that write say so, and they are the ones a person acts through',
   assert.deepEqual(
     writers.map((t) => t.name),
     // submit_feed adds to the directory; the two profile tools change only the
-    // caller's own claimed profile, behind a credential in the Authorization
-    // header, which their descriptions say.
-    ['update_openprofile', 'claim_openprofile', 'submit_feed'],
+    // caller's own claimed profile, and the webhook tools only the caller's own
+    // endpoints, behind a credential in the Authorization header, which their
+    // descriptions say.
+    [
+      'update_openprofile',
+      'claim_openprofile',
+      'submit_feed',
+      'create_webhook',
+      'update_webhook',
+      'delete_webhook',
+      'test_webhook',
+      'rotate_webhook_secret',
+    ],
   );
-  for (const t of writers.filter((w) => w.name.endsWith('_openprofile'))) {
+  for (const t of writers.filter((w) => w.name !== 'submit_feed')) {
     assert.match(t.description, /Authorization header/);
   }
 });

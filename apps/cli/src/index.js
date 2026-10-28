@@ -20,7 +20,7 @@
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const VERSION = '0.4.0';
+export const VERSION = '0.5.0';
 
 const DEFAULT_API = 'https://rssamplifier.com';
 
@@ -116,6 +116,20 @@ export const COMMANDS = [
       'rssamp profile claim ada-lovelace --token rsa_...',
       'EDITOR=vim rssamp profile edit ada-lovelace',
       'rssamp profile edit ada-lovelace --file profile.md',
+    ],
+  },
+  {
+    name: 'webhooks',
+    usage: 'webhooks [list|add <url>|update <id>|remove <id>|test <id>|rotate <id>|secret <id>|deliveries [id]|retry <delivery>]',
+    summary: 'Get your alerts as signed webhooks',
+    detail:
+      'Your webhook endpoints, over /api/v1/webhooks. Each batch of new posts from what you have 🔔 on is POSTed to every endpoint as a CloudEvents body of type posts.published, signed per Standard Webhooks (webhook-id, webhook-timestamp, webhook-signature) and as x-rssamplifier-signature: sha256=<hex HMAC of the body>. `add` prints the signing secret once; `secret` shows it again and `rotate` replaces it. `test` sends a webhook.test now. `deliveries` is the log. Needs an API key: --token, or RSSAMPLIFIER_TOKEN (from /account).',
+    options: ['--token <key>', '--events <a,b>', '--description <text>', '--url <url>', '--enable', '--disable', '--json'],
+    examples: [
+      'rssamp webhooks',
+      'rssamp webhooks add https://example.com/hooks/rss --description "chat relay"',
+      'rssamp webhooks test wh_abc123',
+      'rssamp webhooks deliveries --json',
     ],
   },
   {
@@ -338,6 +352,35 @@ async function request(url, init) {
     throw new Error(body?.error ? String(body.error) : `${res.status} ${res.statusText}`);
   }
   return body;
+}
+
+/**
+ * A webhooks API answer, for a person.
+ *
+ * @param {string} sub
+ * @param {any} out
+ * @returns {string}
+ */
+export function formatWebhooks(sub, out) {
+  if (out?.endpoints) {
+    if (!out.endpoints.length) return `No webhooks yet. Events: ${(out.event_types ?? []).join(', ')}`;
+    return out.endpoints
+      .map((e) => `${e.id}  ${e.enabled ? 'on ' : 'off'}  ${e.url}  [${e.events.join(',')}]${e.description ? `  ${e.description}` : ''}${e.failures ? `  (${e.failures} failures)` : ''}`)
+      .join('\n');
+  }
+  if (out?.deliveries) {
+    if (!out.deliveries.length) return 'No deliveries yet.';
+    return out.deliveries
+      .map((d) => `${d.id}  ${d.created_at}  ${d.event_type}  ${d.status}${d.last_status ? ` HTTP ${d.last_status}` : ''}${d.attempts > 1 ? ` x${d.attempts}` : ''}${d.last_error && d.status !== 'delivered' ? `  ${d.last_error}` : ''}`)
+      .join('\n');
+  }
+  if (out?.endpoint && out?.secret) return `Added ${out.endpoint.id} -> ${out.endpoint.url}\nSigning secret (shown once): ${out.secret}`;
+  if (out?.secret) return `Signing secret: ${out.secret}`;
+  if (sub === 'test') return out.ok ? `Delivered (HTTP ${out.status}).` : `Failed: ${out.error ?? `HTTP ${out.status}`}`;
+  if (out?.deleted) return 'Removed.';
+  if (out?.id && out?.url) return `${out.id}  ${out.enabled ? 'on' : 'off'}  ${out.url}  [${out.events.join(',')}]`;
+  if (out?.id && out?.status) return `${out.id} ${out.status}`;
+  return JSON.stringify(out, null, 2);
 }
 
 /**
@@ -591,6 +634,83 @@ export async function run(argv, io = {}) {
         });
         if (asJson) log(JSON.stringify(saved, null, 2));
         else log(`Saved. ${saved.url ?? endpoint}`);
+        return 0;
+      }
+
+      case 'webhooks':
+      case 'webhook': {
+        const token =
+          (typeof flags.token === 'string' && flags.token) || process.env['RSSAMPLIFIER_TOKEN'] || '';
+        if (!token) {
+          err(`webhooks: needs an API key. Pass --token, or set RSSAMPLIFIER_TOKEN (from ${base}/account).`);
+          return 1;
+        }
+        const root = `${base}/api/v1/webhooks`;
+        const call = (path, method = 'GET', body) =>
+          request(`${root}${path}`, {
+            method,
+            headers: {
+              authorization: `Bearer ${token}`,
+              ...(body ? { 'content-type': 'application/json' } : {}),
+            },
+            ...(body ? { body: JSON.stringify(body) } : {}),
+          });
+        const sub = args[0] ?? 'list';
+        const id = args[1] ? encodeURIComponent(String(args[1])) : '';
+        const events = typeof flags.events === 'string' ? flags.events.split(',').map((e) => e.trim()).filter(Boolean) : undefined;
+        const needId = () => {
+          if (id) return false;
+          err(`webhooks ${sub}: give an endpoint id (rssamp webhooks lists them)`);
+          return true;
+        };
+
+        let out;
+        if (sub === 'list') out = await call('');
+        else if (sub === 'add' || sub === 'create') {
+          if (!args[1]) {
+            err('webhooks add: give an https URL');
+            return 1;
+          }
+          out = await call('', 'POST', {
+            url: String(args[1]),
+            ...(events ? { events } : {}),
+            ...(typeof flags.description === 'string' ? { description: flags.description } : {}),
+          });
+        } else if (sub === 'update') {
+          if (needId()) return 1;
+          out = await call(`/${id}`, 'PATCH', {
+            ...(typeof flags.url === 'string' ? { url: flags.url } : {}),
+            ...(events ? { events } : {}),
+            ...(typeof flags.description === 'string' ? { description: flags.description } : {}),
+            ...(flags.enable ? { enabled: true } : flags.disable ? { enabled: false } : {}),
+          });
+        } else if (sub === 'remove' || sub === 'delete') {
+          if (needId()) return 1;
+          out = await call(`/${id}`, 'DELETE');
+        } else if (sub === 'test') {
+          if (needId()) return 1;
+          out = await call(`/${id}/test`, 'POST', {});
+        } else if (sub === 'rotate') {
+          if (needId()) return 1;
+          out = await call(`/${id}/rotate`, 'POST', {});
+        } else if (sub === 'secret') {
+          if (needId()) return 1;
+          out = await call(`/${id}/secret`);
+        } else if (sub === 'deliveries') {
+          out = await call(id ? `/${id}/deliveries` : '/deliveries');
+        } else if (sub === 'retry') {
+          if (needId()) return 1;
+          out = await call(`/deliveries/${id}/retry`, 'POST', {});
+        } else {
+          err(`webhooks: unknown subcommand ${sub}`);
+          return 1;
+        }
+
+        if (asJson) {
+          log(JSON.stringify(out, null, 2));
+          return 0;
+        }
+        log(formatWebhooks(sub, out));
         return 0;
       }
 
