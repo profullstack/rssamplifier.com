@@ -215,6 +215,17 @@ test('a Chrome string that cannot answer like Chrome is charged', async () => {
   assert.equal((await gate(request('/authors/somebody', UAS.rotation[2])))?.status, 402);
 });
 
+test('a one-shot fetch of the front door reads it; the directory stays charged on sight', async () => {
+  // 2026-10-28: an agent fetching the homepage once, no cookies, no JS, got
+  // 402. The front door gets gateway 0.16's per-address allowance; /topics,
+  // /authors and the API do not, or the rotation above walks back in.
+  for (const path of ['/', '/about', '/submit']) {
+    assert.equal(await gate(request(path, UAS.rotation[0], { 'x-forwarded-for': '203.0.113.50' })), undefined, path);
+  }
+  assert.equal((await gate(request('/topics/x', UAS.rotation[0], { 'x-forwarded-for': '203.0.113.50' })))?.status, 402);
+  assert.equal((await gate(request('/', UAS.gptbot)))?.status, 402);
+});
+
 test('the same string with the header a browser sends passes', async () => {
   for (const ua of UAS.rotation) {
     assert.equal(await gate(request('/topics/x', ua, { 'sec-fetch-mode': 'navigate' })), undefined, ua);
