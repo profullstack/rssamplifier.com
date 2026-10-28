@@ -12,7 +12,7 @@
     },
     "apps/cli": {
       "name": "@profullstack/rssamplifier",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "bin": {
         "rssamplifier": "./bin/rssamplifier.js",
         "rssamp": "./bin/rssamplifier.js",
@@ -35,7 +35,7 @@
     },
     "apps/web": {
       "name": "@rssamplifier/web",
-      "version": "0.1.8",
+      "version": "0.2.0",
       "dependencies": {
         "@logicsrc/openaccess": "^0.3.1",
         "@profullstack/footer": "latest",
@@ -109,7 +109,7 @@
       "dependencies": {
         "@mozilla/readability": "^0.6.0",
         "@profullstack/submit-feed": "^0.1.3",
-        "@profullstack/x402-client": "0.3.0",
+        "@profullstack/x402-client": "0.4.0",
         "fast-xml-parser": "^5.11.2",
         "linkedom": "^0.18.14",
       },
@@ -131,7 +131,7 @@
     },
     "packages/notify": {
       "name": "@rssamplifier/notify",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
         "@profullstack/notifications": "^0.1.4",
         "@profullstack/webhooks": "0.2.1",
@@ -372,11 +372,13 @@
 
     "@profullstack/scraper-daemon": ["@profullstack/scraper-daemon@0.2.2", "", { "peerDependencies": { "bullmq": ">=6", "ioredis": ">=5" }, "optionalPeers": ["bullmq", "ioredis"], "bin": { "scraper-daemon": "bin/scraper-daemon.js" } }, "sha512-V/+WT7q6VOedkkepYszctkXdfvWGZbmEZMi9Q7nejO35pg8kPVwR0W53GjswdsAXM/AqA+wMCfB5/oQo1Ihifw=="],
 
+    "@profullstack/sealed-secrets": ["@profullstack/sealed-secrets@0.1.0", "", {}, "sha512-6LRa+yUT7PQ5tZNoYEnf3VVxsyw/dqHqAtYpk/aS/bntxf3mQH+2MwNjQoBd7fCqdN97TvZup8qhrpfUcZlfng=="],
+
     "@profullstack/submit-feed": ["@profullstack/submit-feed@0.1.3", "", { "dependencies": { "fast-xml-parser": "^5.2.5" } }, "sha512-RMH294Q1qFJ6L01pU5q/yowshx1Xpu4gfGC2OuNaxyZ5jySqM9FvgqvVuWH+G18711SqzNq+DL8dvbAaBgBIvA=="],
 
     "@profullstack/webhooks": ["@profullstack/webhooks@0.2.1", "", {}, "sha512-QHeSkpu4O44oJ620qhQqxqFlD3u/OhupmXRnBHw4MGKuDTa0R+Y/727nnF7psSHxxSfnbWfNuVl15z3IXuaZiw=="],
 
-    "@profullstack/x402-client": ["@profullstack/x402-client@0.3.0", "", { "dependencies": { "@noble/curves": "^2.4.0", "@noble/hashes": "^2.4.0" }, "bin": { "x402": "bin/x402.js" } }, "sha512-ytKhBrnjXFef2X2vgORw6d25tZfmo1qinxk/1mXlpeVticHP5UxidElFtjdjSt1LcHVlAEQR6m/+p4obmxDzJQ=="],
+    "@profullstack/x402-client": ["@profullstack/x402-client@0.4.0", "", { "dependencies": { "@noble/curves": "^2.4.0", "@noble/hashes": "^2.4.0", "@profullstack/sealed-secrets": "^0.1.0" }, "bin": { "x402": "bin/x402.js" } }, "sha512-WbPFeey61OH23HZc20/Nr3E2EvA7bhrWMFIqtbzGlsJm0cXOxjM2WIyRDGzi5ssfVQtSwVPvhaUYA66nJOOuhQ=="],
 
     "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.13.1", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-V7liSO0tShZRlp8dancuDuUSF/rqrr5YF3bzLoZy9wn6ixf1RIRPYTepe72s36JOdSVzi3wfuhaZFm9y0RpV4w=="],
 
