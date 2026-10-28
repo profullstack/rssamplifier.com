@@ -1,6 +1,6 @@
 {
   "name": "@rssamplifier/notify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Alerts: web push, email digests and webhooks for followed blogs and topics",
   "type": "module",
   "main": "index.js",
@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@profullstack/notifications": "^0.1.4",
-    "@profullstack/webhooks": "0.2.0",
+    "@profullstack/webhooks": "0.2.1",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/mail": "workspace:*"
   }
