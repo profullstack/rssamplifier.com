@@ -26,7 +26,7 @@ import {
 } from '@rssamplifier/ingest';
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 import { findFeedCard } from '@rssamplifier/feed';
-import { createHooks, deliverAlerts, vapidConfig } from '@rssamplifier/notify';
+import { createHooks, deliverAlerts, runNewsletter, vapidConfig } from '@rssamplifier/notify';
 import { createXRuntime, xEnabled } from '@rssamplifier/social';
 
 import { pgStore } from '@profullstack/scraper-daemon';
@@ -231,6 +231,12 @@ const searchIntervalMs = (Number(env['AUTHOR_SEARCH_INTERVAL_SECONDS']) || 900) 
 // number of digests a busy topic produces.
 const alertUsers = Number(env['ALERT_BATCH_SIZE']) || 25;
 const alertIntervalMs = (Number(env['ALERT_INTERVAL_SECONDS']) || 120) * 1000;
+
+// The weekly digest (packages/notify/src/newsletter.js). The pass looks at the
+// clock every ten minutes and does nothing outside its slot (NEWSLETTER_SLOT,
+// default MON 15:00 UTC); NEWSLETTER_BATCH readers per pass, NEWSLETTER_SEND=0
+// to stop it sending.
+const newsletterIntervalMs = (Number(env['NEWSLETTER_INTERVAL_SECONDS']) || 600) * 1000;
 
 // Whether the daemon's log is also written to the database, where /crawlstats
 // can stream it. On by default; an operator debugging against a production
@@ -902,6 +908,26 @@ async function alertTick() {
 }
 
 /**
+ * One pass of the weekly digest. Never overlaps itself; the claim-before-send
+ * in runNewsletter is what keeps two pollers apart.
+ */
+let digesting = false;
+async function newsletterTick() {
+  if (stopping || digesting) return;
+  digesting = true;
+  try {
+    const result = await runNewsletter(db);
+    if (result.status !== 'waiting' && result.status !== 'sent' && result.status !== 'missed-window') {
+      log('newsletter', { ...result, amount: result.sent ?? 0 });
+    }
+  } catch (err) {
+    log('newsletter-error', { message: String(err?.message ?? err) });
+  } finally {
+    digesting = false;
+  }
+}
+
+/**
  * Find out who writes the feeds, one small batch at a time.
  *
  * On its own timer for the reason the cluster backfill is: anything placed
@@ -1190,6 +1216,7 @@ const daemon = buildPollerDaemon({
     cardEnabled,
     cardIntervalMs,
     alertIntervalMs,
+    newsletterIntervalMs,
     authorEnabled,
     authorIntervalMs,
     ringEnabled,
@@ -1216,6 +1243,7 @@ const daemon = buildPollerDaemon({
     clusterBackfill: backfillTick,
     cards: cardTick,
     alerts: alertTick,
+    newsletter: newsletterTick,
     authors: enrichTick,
     rings: ringTick,
     queueSample: queueTick,

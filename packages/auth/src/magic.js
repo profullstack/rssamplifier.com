@@ -1,4 +1,4 @@
-import { accounts, nowIso } from '@rssamplifier/db';
+import { accounts, newsletter, nowIso } from '@rssamplifier/db';
 import { sendEmail, emailEnabled } from '@rssamplifier/mail';
 import { saveSignupProfile } from '@profullstack/profile';
 
@@ -53,7 +53,11 @@ export function looksLikeEmail(email) {
  * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {string} email
  * @param {string} siteUrl
- * @param {{ profile?: Record<string, string|null>|null }} [opts]
+ * `newsletter` is the signup form's weekly-digest checkbox, true or false;
+ * left out for a plain sign-in. Accounts are on the digest by default, so
+ * only an unticked box changes anything.
+ *
+ * @param {{ profile?: Record<string, string|null>|null, newsletter?: boolean }} [opts]
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function requestSignInLink(db, email, siteUrl, opts = {}) {
@@ -71,6 +75,7 @@ export async function requestSignInLink(db, email, siteUrl, opts = {}) {
     email: normalized,
     expiresAt: nowIso(TOKEN_MS),
     profile: opts.profile ?? null,
+    newsletter: opts.newsletter,
   });
 
   const link = `${String(siteUrl).replace(/\/+$/, '')}/auth/magic?t=${encodeURIComponent(token)}`;
@@ -118,6 +123,14 @@ export async function consumeSignInLink(db, token) {
     } catch (err) {
       console.error('[auth] signup profile not saved:', err?.message ?? err);
     }
+  }
+
+  // Only for the account this link made: an old account following a stray
+  // signup link keeps whatever it chose before.
+  if (user.created && spent.newsletter === false) {
+    await newsletter.setSubscribed(db, user.id, false).catch((err) => {
+      console.error('[auth] newsletter choice not saved:', err?.message ?? err);
+    });
   }
 
   return { ok: true, userId: user.id, email: user.email, created: user.created };

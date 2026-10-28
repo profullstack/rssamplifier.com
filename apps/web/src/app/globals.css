@@ -4158,3 +4158,25 @@ html:not([data-dock]) .playlist-hint {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* Footer-snippet panel (ring pages, account) and the signup digest checkbox. */
+.ring-embed h3 {
+  margin: 1.25rem 0 0.25rem;
+  font-size: 1rem;
+}
+.ring-embed .code-block {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.copy-button {
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.check-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.75rem 0;
+  font-size: 0.95rem;
+}

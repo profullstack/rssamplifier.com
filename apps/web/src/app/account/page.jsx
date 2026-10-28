@@ -1,12 +1,14 @@
 import { redirect } from 'next/navigation';
-import { accounts, apikeys, dataset, profiles } from '@rssamplifier/db';
+import { accounts, apikeys, dataset, newsletter, profiles, webrings } from '@rssamplifier/db';
 import { profileStore } from '@rssamplifier/auth';
 import { COLUMNS } from '@profullstack/profile';
 
 import Toolbar from '../Toolbar.jsx';
 import { AddPasskey } from '../Passkey.jsx';
 import ProfileForm from './ProfileForm.jsx';
-import { db } from '../../lib/db.js';
+import { db, siteUrl } from '../../lib/db.js';
+import { embedSite } from '../../lib/ringEmbed.js';
+import RingEmbedPanel from '../ring/RingEmbedPanel.jsx';
 import { currentUser } from '../../lib/auth.js';
 import { topicLabel } from '../../lib/following.js';
 import { ANONYMOUS_HOURLY } from '../../lib/ratelimit.js';
@@ -22,7 +24,7 @@ export const metadata = {
 /**
  * The account page: what you follow, and how you get back in.
  *
- * @param {{ searchParams: Promise<{ welcome?: string, revoked?: string, created?: string, keyRevoked?: string, keyError?: string }> }} props
+ * @param {{ searchParams: Promise<{ welcome?: string, revoked?: string, created?: string, keyRevoked?: string, keyError?: string, newsletter?: string, ringsite?: string }> }} props
  */
 export default async function AccountPage({ searchParams }) {
   const params = await searchParams;
@@ -33,7 +35,7 @@ export default async function AccountPage({ searchParams }) {
   const client = db();
   const userId = String(user.id);
 
-  const [follows, credentials, topics, keys, grant, claimed, mine] = await Promise.all([
+  const [follows, credentials, topics, keys, grant, claimed, mine, onDigest, myRings] = await Promise.all([
     accounts.followedFeeds(client, userId),
     accounts.credentialsForUser(client, userId),
     accounts.followedTopics(client, userId),
@@ -44,7 +46,14 @@ export default async function AccountPage({ searchParams }) {
     profiles.profilesForUser(client, userId),
     // The signup profile (@profullstack/profile), not the author pages above.
     profileStore(client).get(userId),
+    newsletter.subscribed(client, userId).catch(() => null),
+    webrings.ringsForAccount(client, userId).catch(() => []),
   ]);
+
+  // One row per ring, whether owned or joined through a claimed site.
+  const ringRows = [...new Map(myRings.map((r) => [r.slug, r])).values()];
+  const ringSite =
+    embedSite(params.ringsite) ?? embedSite(myRings.find((r) => r.site_url)?.site_url ?? '');
 
   // Only the six fields cross to the client form, as plain strings.
   /** @type {Record<string, string|null>} */
@@ -100,6 +109,51 @@ export default async function AccountPage({ searchParams }) {
               </li>
             ))}
           </ul>
+        </>
+      )}
+
+      <h2 id="newsletter">Weekly digest</h2>
+      {params.newsletter === 'on' && <p className="notice">You are on the weekly digest.</p>}
+      {params.newsletter === 'off' && <p className="notice">You are off the weekly digest.</p>}
+      <p className="hint">
+        One email a week, on Mondays: new feeds in the directory, what the most-followed blogs
+        published, and what happened in the webrings. <a href="/newsletter">See the latest issue</a>.
+      </p>
+      <form method="post" action="/api/v1/me/newsletter" className="submit-box">
+        <input type="hidden" name="subscribed" value={onDigest === false ? '1' : '0'} />
+        <p>
+          You are <strong>{onDigest === false ? 'not on' : 'on'}</strong> the weekly digest.{' '}
+          <button type="submit">{onDigest === false ? 'Send it to me' : 'Stop sending it'}</button>
+        </p>
+      </form>
+
+      <h2 id="webrings">Your webrings</h2>
+      {ringRows.length === 0 ? (
+        <p className="empty">
+          None yet. <a href="/ring/new">Make a ring</a>, or join one from its page: every ring page
+          has the footer snippet under "Join this ring".
+        </p>
+      ) : (
+        <>
+          <p className="hint">
+            The rings you made or your sites belong to:{' '}
+            {ringRows.map((r, i) => (
+              <span key={r.slug}>
+                {i > 0 && ', '}
+                <a href={`/ring/${encodeURIComponent(r.slug)}`}>{r.title}</a>
+                {r.role === 'owner' ? ' (yours)' : ''}
+              </span>
+            ))}
+            . Paste this into your footer for every one of them at once, one row each:
+          </p>
+          <RingEmbedPanel
+            base={siteUrl()}
+            rings={ringRows.map((r) => ({ slug: r.slug, title: r.title }))}
+            site={ringSite}
+            action="/account#webrings"
+            idPrefix="account-embed"
+            siteParam="ringsite"
+          />
         </>
       )}
 

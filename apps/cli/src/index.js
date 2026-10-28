@@ -20,7 +20,7 @@
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const VERSION = '0.5.0';
+export const VERSION = '0.6.0';
 
 const DEFAULT_API = 'https://rssamplifier.com';
 
@@ -131,6 +131,24 @@ export const COMMANDS = [
       'rssamp webhooks test wh_abc123',
       'rssamp webhooks deliveries --json',
     ],
+  },
+  {
+    name: 'newsletter',
+    usage: 'newsletter [status|preview|on|off]',
+    summary: 'The weekly digest: schedule, latest issue, your subscription',
+    detail:
+      'The weekly email every account gets unless it says no: new feeds, what the most-followed blogs published, what readers liked, the webrings. `newsletter` prints the schedule, the next send and the latest issue. `preview` builds this week\'s issue from the directory as it stands, without sending anything. `status`, `on` and `off` read or change your own subscription and need an API key: --token, or RSSAMPLIFIER_TOKEN (from /account).',
+    options: ['--token <key>', '--json'],
+    examples: ['rssamp newsletter', 'rssamp newsletter preview', 'rssamp newsletter off --token rsa_...'],
+  },
+  {
+    name: 'ring',
+    usage: 'ring embed <slug> [<slug> …] [--site <url>] [--styled] [--random]',
+    summary: 'The copy-paste footer row for a webring: << Ring >>',
+    detail:
+      'Prints the HTML a member pastes into its footer: previous, the ring, next, each hop measured from your own homepage (--site). One row per ring, so a site in several rings gets them all at once. Plain links by default; --styled adds inline styles, --random the ⚄ random-site link. No script, no images.',
+    options: ['--site <url>', '--styled', '--random', '--json'],
+    examples: ['rssamp ring embed profullstack --site https://example.com/', 'rssamp ring embed indieweb small-web --site example.com --styled'],
   },
   {
     name: 'submit',
@@ -634,6 +652,67 @@ export async function run(argv, io = {}) {
         });
         if (asJson) log(JSON.stringify(saved, null, 2));
         else log(`Saved. ${saved.url ?? endpoint}`);
+        return 0;
+      }
+
+      case 'newsletter': {
+        const sub = args[0] ?? '';
+        if (sub === 'preview') {
+          const body = await request(`${base}/api/v1/newsletter/preview`);
+          if (asJson) log(JSON.stringify(body, null, 2));
+          else log(body.issue ? `${body.issue.subject}\n\n${body.issue.text}` : 'Nothing to say this week yet.');
+          return 0;
+        }
+        if (sub === 'status' || sub === 'on' || sub === 'off') {
+          const token =
+            (typeof flags.token === 'string' && flags.token) || process.env['RSSAMPLIFIER_TOKEN'] || '';
+          if (!token) {
+            err(`newsletter ${sub}: needs an API key. Pass --token, or set RSSAMPLIFIER_TOKEN (from ${base}/account).`);
+            return 1;
+          }
+          const init =
+            sub === 'status'
+              ? { headers: { authorization: `Bearer ${token}` } }
+              : {
+                  method: 'PUT',
+                  headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+                  body: JSON.stringify({ subscribed: sub === 'on' }),
+                };
+          const body = await request(`${base}/api/v1/me/newsletter`, init);
+          log(asJson ? JSON.stringify(body, null, 2) : body.subscribed ? 'You are on the weekly digest.' : 'You are off the weekly digest.');
+          return 0;
+        }
+        if (sub) {
+          err(`newsletter: unknown subcommand ${sub} (status, preview, on, off)`);
+          return 1;
+        }
+        const body = await request(`${base}/api/v1/newsletter`);
+        if (asJson) {
+          log(JSON.stringify(body, null, 2));
+          return 0;
+        }
+        log(`${body.name}: every ${body.schedule.day} at ${String(body.schedule.hourUtc).padStart(2, '0')}:00 UTC.`);
+        log(`Next send: ${body.nextSend}. On the list: ${body.subscribers}.`);
+        log(body.latest ? `\nLatest (${body.latest.week}): ${body.latest.subject}\n\n${body.latest.text}` : '\nNo issue has gone out yet.');
+        return 0;
+      }
+
+      case 'ring':
+      case 'rings': {
+        if (args[0] !== 'embed' || !args[1]) {
+          err('ring: usage: ring embed <slug> [<slug> …] [--site <url>] [--styled] [--random]');
+          return 1;
+        }
+        const params = new URLSearchParams({ rings: args.slice(1).join(',') });
+        if (typeof flags.site === 'string') params.set('site', flags.site);
+        if (flags.random) params.set('random', '1');
+        if (asJson) {
+          log(JSON.stringify(await request(`${base}/api/v1/rings/embed?${params}`), null, 2));
+          return 0;
+        }
+        params.set('format', 'html');
+        if (flags.styled) params.set('style', 'styled');
+        log((await requestText(`${base}/api/v1/rings/embed?${params}`)).replace(/\n$/, ''));
         return 0;
       }
 

@@ -53,6 +53,7 @@ export const CRAWL_STALE_AFTER = '30m';
  *     clusterBackfill: boolean, clusterIntervalMs: number,
  *     cardEnabled: boolean, cardIntervalMs: number,
  *     alertIntervalMs: number,
+ *     newsletterIntervalMs?: number,
  *     authorEnabled: boolean, authorIntervalMs: number,
  *     ringEnabled: boolean, ringIntervalMs: number,
  *     queueSampleMs: number,
@@ -99,6 +100,9 @@ export function buildPollerDaemon({ createDaemon = defaultCreateDaemon, store, r
   if (c.clusterBackfill) add('cluster-backfill', c.clusterIntervalMs, run.clusterBackfill);
   if (c.cardEnabled) add('cards', c.cardIntervalMs, run.cards);
   add('alerts', c.alertIntervalMs, run.alerts);
+  // The weekly digest: a no-op outside its slot. Optional so callers that build
+  // a daemon without it (tests, older configs) keep working.
+  if (run.newsletter) add('newsletter', c.newsletterIntervalMs ?? 600_000, run.newsletter);
   if (c.authorEnabled) add('authors', c.authorIntervalMs, run.authors);
   if (c.ringEnabled) add('rings', c.ringIntervalMs, run.rings);
   add('queue-sample', c.queueSampleMs, run.queueSample);

@@ -30,7 +30,11 @@ export function emailEnabled() {
  * reply writes back to noreply@. It is omitted from the payload entirely when
  * unset rather than sent as null, because Resend rejects a null there.
  *
- * @param {{ to: string, subject: string, text: string, from?: string, replyTo?: string }} message
+ * `html` and `headers` are for the weekly digest: a list mail needs an HTML
+ * body beside the text one and the List-Unsubscribe headers a mailbox shows
+ * its one-click button for. Both are left out of the payload when unset.
+ *
+ * @param {{ to: string, subject: string, text: string, html?: string, headers?: Record<string, string>, from?: string, replyTo?: string }} message
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function sendEmail(message) {
@@ -48,6 +52,8 @@ export async function sendEmail(message) {
         to: [message.to],
         subject: message.subject,
         text: message.text,
+        ...(message.html ? { html: message.html } : {}),
+        ...(message.headers && Object.keys(message.headers).length ? { headers: message.headers } : {}),
         ...(message.replyTo ? { reply_to: message.replyTo } : {}),
       }),
     });

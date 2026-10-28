@@ -30,3 +30,17 @@ export {
 } from './src/render.js';
 
 export { deliverAlerts, selectBatch, topicVia } from './src/deliver.js';
+
+export {
+  DEFAULT_SLOT,
+  UNSUBSCRIBE_SLOT,
+  isoWeek,
+  slotConfig,
+  slotOfWeek,
+  nextSlot,
+  unsubscribeUrl,
+  listHeaders,
+  renderIssue,
+  personalize,
+  runNewsletter,
+} from './src/newsletter.js';

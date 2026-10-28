@@ -763,6 +763,39 @@ export async function ringsOwnedBy(db, ownerId) {
 }
 
 /**
+ * The rings an account can put in its footer: the ones it owns, and the ones
+ * a site it has claimed (through an author profile) is a member of. Each with
+ * the member site to measure hops from, when there is one.
+ *
+ * @param {Client} db
+ * @param {string} userId
+ * @returns {Promise<Array<{ slug: string, title: string, role: 'owner'|'member', site_url: string|null, member_slug: string|null }>>}
+ */
+export async function ringsForAccount(db, userId) {
+  const { rows } = await db.execute({
+    sql: `select r.slug, r.title, 'owner' as role, null as site_url, null as member_slug, r.updated_at as at
+            from rings r where r.owner_id = ?
+          union all
+          select distinct r.slug, r.title, 'member' as role, m.site_url, m.member_slug, m.joined_at as at
+            from author_profiles p
+            join feed_authors fa on fa.author_id = p.author_id
+            join ring_members m on m.feed_id = fa.feed_id
+            join rings r on r.slug = m.ring_slug
+           where p.owner_user_id = ? and p.claimed_at is not null
+          order by at desc
+          limit 100`,
+    args: [userId, userId],
+  });
+  return rows.map((r) => ({
+    slug: String(r.slug),
+    title: String(r.title),
+    role: r.role === 'owner' ? 'owner' : 'member',
+    site_url: r.site_url ? String(r.site_url) : null,
+    member_slug: r.member_slug ? String(r.member_slug) : null,
+  }));
+}
+
+/**
  * The feed somebody means when they type a site, a feed URL or a directory
  * slug into a ring's member box. Null when it is not in the directory.
  *

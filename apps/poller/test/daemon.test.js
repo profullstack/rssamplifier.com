@@ -16,7 +16,7 @@ import { BOOT_JOBS, buildPollerDaemon, onGrid, primeBootJobs } from '../src/daem
 const RUN_KEYS = [
   'crawl', 'import', 'purge',
   'discoveryKeywords', 'discoveryQueue', 'discoverySources', 'discoveryTopics', 'discoveryNotify', 'topics',
-  'clusterBackfill', 'cards', 'alerts', 'authors', 'rings', 'queueSample', 'statsWarm', 'authorSearch', 'writeTally',
+  'clusterBackfill', 'cards', 'alerts', 'newsletter', 'authors', 'rings', 'queueSample', 'statsWarm', 'authorSearch', 'writeTally',
 ];
 
 function stubs(calls = []) {
@@ -65,6 +65,7 @@ test('every timer the poller had is a job, at its old cadence', async () => {
     'cluster-backfill': 10_000,
     cards: 20_000,
     alerts: 120_000,
+    newsletter: 600_000,
     authors: 60_000,
     rings: 60_000,
     'queue-sample': 600_000,
@@ -84,7 +85,7 @@ test('catch-up mode registers only what the old tick ran above its early return'
     run: stubs(),
   });
   const names = Object.keys(await jobsOf(daemon));
-  assert.deepEqual(names, ['crawl', 'import', 'purge', 'alerts', 'rings', 'queue-sample', 'stats-warm', 'write-tally', 'daemon-status']);
+  assert.deepEqual(names, ['crawl', 'import', 'purge', 'alerts', 'newsletter', 'rings', 'queue-sample', 'stats-warm', 'write-tally', 'daemon-status']);
   // The upload queue a person is watching survives catch-up mode (the bug of
   // 2026-08-19); discovery, which nobody is waiting on, does not.
   assert.ok(names.includes('import'));

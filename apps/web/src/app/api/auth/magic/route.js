@@ -44,17 +44,25 @@ export async function POST(req) {
   let signup = null;
   /** @type {FormData|null} */
   let form = null;
+  // The weekly-digest checkbox, signup only: checked unless the reader unticked it.
+  /** @type {boolean|undefined} */
+  let wantsNewsletter;
 
   try {
     if (contentType.includes('application/json')) {
       const body = (await req.json()) ?? {};
       email = String(body.email ?? '');
       if (body.signup === true || ['first_name', 'last_name'].some((k) => k in body)) signup = body;
+      if (signup) wantsNewsletter = body.newsletter !== false;
     } else {
       form = await req.formData();
       email = String(form.get('email') ?? '');
       from = magicReturnPath(form.get('from'));
-      if (from === '/signup') signup = form;
+      if (from === '/signup') {
+        signup = form;
+        // An unticked checkbox is not sent at all, so absence is the "no".
+        wantsNewsletter = form.has('newsletter');
+      }
     }
   } catch {
     return json({ ok: false, error: 'bad-request' }, 400);
@@ -76,7 +84,7 @@ export async function POST(req) {
     profile = check.profile;
   }
 
-  const result = await requestSignInLink(db(), email, siteUrl(), { profile });
+  const result = await requestSignInLink(db(), email, siteUrl(), { profile, newsletter: wantsNewsletter });
 
   // Only a misconfigured site or a malformed address is worth reporting back;
   // a rate limit is reported as success for the same reason as above.

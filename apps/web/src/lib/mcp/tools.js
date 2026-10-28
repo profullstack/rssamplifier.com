@@ -7,6 +7,8 @@ import { overridesFromBody, profileUrl } from '../openprofile.js';
 import { adminEmails, callerOf, claimVerdict, fetchPage, isOwner, profiles as profileStore } from '../profileAuth.js';
 import { hop, hopUrl, hostEntry, memberEntry, ringFile, ringUrl } from '../openwebring.js';
 import { loadRing } from '../rings.js';
+import { embedDocument, embedSite } from '../ringEmbed.js';
+import { newsletterPreview, newsletterStatus } from '../newsletterApi.js';
 
 import { db, siteUrl } from '../db.js';
 import { readerView } from '../reader.js';
@@ -734,6 +736,61 @@ export const TOOLS = [
         url: target?.site_url ?? null,
         hop: hopUrl(base, loaded.ring.slug, direction, from && 'url' in from ? from.url : null),
       };
+    },
+  },
+
+  {
+    name: 'ring_embed',
+    title: 'Footer snippet for webrings',
+    description:
+      'The copy-paste HTML a site puts in its footer to show it belongs to one or more webrings here: `<< Ring >>` per ring, previous / ring page / next, each hop measured from the member site given as `site` (its homepage). Returns a plain variant (bare links, the page styles them) and a styled one (inline styles), plus the raw links. No script, no images. Rings are slugs from list_rings.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rings: { type: 'array', items: { type: 'string' }, description: 'Ring slugs, in the order the rows should appear.' },
+        site: { type: 'string', description: "The member site's homepage, e.g. https://example.com/. Omit for a placeholder." },
+        random: { type: 'boolean', description: 'Add the random-site link. Default false.' },
+      },
+      required: ['rings'],
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    async run(args) {
+      const slugs = [...new Set((Array.isArray(args?.rings) ? args.rings : [args?.rings]).map((s) => String(s ?? '').trim().toLowerCase()).filter(Boolean))];
+      if (!slugs.length) throw invalid('rings is required: one or more slugs from list_rings');
+      if (slugs.length > 10) throw invalid('at most 10 rings');
+      const site = args?.site ? embedSite(args.site) : null;
+      if (args?.site && !site) throw invalid(`'${args.site}' is not a usable homepage address`);
+      const rings = [];
+      for (const slug of slugs) {
+        const loaded = await loadRing(slug);
+        if (!loaded) throw invalid(`no ring '${slug}': try list_rings`);
+        rings.push({ slug: loaded.ring.slug, title: loaded.ring.title });
+      }
+      return embedDocument({ base: siteUrl(), rings, site, random: Boolean(args?.random) });
+    },
+  },
+
+  {
+    name: 'get_newsletter',
+    title: 'The weekly digest',
+    description:
+      "RSS Amplifier's weekly email: when it goes (day and hour, UTC), the next send, how many accounts are on it, and the latest issue as sent (subject and text). Every account is on it unless it opted out.",
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    async run() {
+      return newsletterStatus();
+    },
+  },
+
+  {
+    name: 'newsletter_preview',
+    title: "Preview this week's digest",
+    description:
+      "This week's digest as it would be built right now from the directory: new feeds, posts from the most-followed blogs, liked posts, webring activity. Read-only: nothing is stored or sent. `issue` is null when there is nothing to say yet.",
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    async run() {
+      return { issue: await newsletterPreview() };
     },
   },
 

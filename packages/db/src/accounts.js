@@ -111,13 +111,15 @@ export async function markUserLoggedIn(db, id) {
  */
 export async function insertLoginToken(db, token) {
   await db.execute({
-    sql: 'insert into login_tokens (id, email, created_at, expires_at, profile) values (?, ?, ?, ?, ?)',
+    sql: 'insert into login_tokens (id, email, created_at, expires_at, profile, newsletter) values (?, ?, ?, ?, ?, ?)',
     args: [
       token.tokenHash,
       normalizeEmail(token.email),
       nowIso(),
       token.expiresAt,
       token.profile ? JSON.stringify(token.profile) : null,
+      // What the signup form said about the weekly digest; null when it said nothing.
+      typeof token.newsletter === 'boolean' ? (token.newsletter ? 1 : 0) : null,
     ],
   });
 }
@@ -143,7 +145,7 @@ export async function consumeLoginToken(db, tokenHash) {
  *
  * @param {Client} db
  * @param {string} tokenHash
- * @returns {Promise<{ email: string, profile: Record<string, string|null>|null }|null>}
+ * @returns {Promise<{ email: string, profile: Record<string, string|null>|null, newsletter: boolean|null }|null>}
  */
 export async function takeLoginToken(db, tokenHash) {
   const now = nowIso();
@@ -151,12 +153,13 @@ export async function takeLoginToken(db, tokenHash) {
   const { rows } = await db.execute({
     sql: `update login_tokens set consumed_at = ?
           where id = ? and consumed_at is null and expires_at > ?
-          returning email, profile`,
+          returning email, profile, newsletter`,
     args: [now, tokenHash, now],
   });
 
   if (!rows[0]?.email) return null;
-  return { email: String(rows[0].email), profile: parseProfile(rows[0].profile) };
+  const newsletter = rows[0].newsletter == null ? null : Number(rows[0].newsletter) === 1;
+  return { email: String(rows[0].email), profile: parseProfile(rows[0].profile), newsletter };
 }
 
 /**

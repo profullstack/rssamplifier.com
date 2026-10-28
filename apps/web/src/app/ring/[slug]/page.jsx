@@ -22,7 +22,9 @@ import {
 import { db, siteUrl } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { loadRing, ownsRing } from '../../../lib/rings.js';
-import { joinSnippet, madeByLabel, ringUrl } from '../../../lib/openwebring.js';
+import { madeByLabel, ringUrl } from '../../../lib/openwebring.js';
+import { embedSite } from '../../../lib/ringEmbed.js';
+import RingEmbedPanel from '../RingEmbedPanel.jsx';
 import { feedImage } from '../../../lib/thumbs.js';
 import { decodeXml } from '../../../lib/opml-scan.js';
 import FollowButton from '../../FollowButton.jsx';
@@ -103,6 +105,8 @@ export default async function RingPage({ params, searchParams }) {
   const base = siteUrl();
   const page = ringUrl(base, ring.slug);
   const path = `/ring/${encodeURIComponent(ring.slug)}`;
+  // `?site=` personalises the footer snippet (the form in "Join this ring").
+  const embedFor = embedSite(Array.isArray(query.site) ? query.site[0] : query.site);
   const active = members.filter((m) => m.status === 'active').length;
   const said = { human: 0, ai: 0, both: 0 };
   for (const m of members) if (m.made_by && m.made_by in said) said[m.made_by] += 1;
@@ -358,9 +362,9 @@ export default async function RingPage({ params, searchParams }) {
       </p>
 
       <Card className="mt-8 gap-0 py-0">
-        <details className="group" id="join">
+        <details className="group" id="join" open={embedFor ? true : undefined}>
           <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4 [&::-webkit-details-marker]:hidden">
-            <h2 className="m-0 font-serif text-lg font-semibold">Join this ring</h2>
+            <h2 className="m-0 font-serif text-lg font-semibold">Join this ring: add it to your footer</h2>
             <ChevronDown className="text-muted-foreground size-4 transition-transform group-open:rotate-180" />
           </summary>
           <div className="border-border border-t px-5 py-4 text-sm [&_p]:my-3">
@@ -368,10 +372,15 @@ export default async function RingPage({ params, searchParams }) {
               Membership is a fact about your site rather than a form. Your feed is listed under{' '}
               <a href={`/topics/${encodeURIComponent(ring.topic_slug ?? ring.slug)}`}>{ring.title}</a>{' '}
               in the directory (<a href="/submit">submit it</a> if it is not), and the ring lists it.
-              To be active, put these links anywhere on your front page, with your own
-              address in <code>from</code>:
+              To be active, put this row anywhere on your front page (the footer is the usual
+              place), with your own address in every link:
             </p>
-            <pre className="code-block">{joinSnippet({ base, ring })}</pre>
+            <RingEmbedPanel
+              base={base}
+              rings={[{ slug: ring.slug, title: ring.title }]}
+              site={embedFor}
+              action={`${path}#join`}
+            />
             <p className="hint">
               Any one link to this ring counts, in any order, with any text. The crawler looks again
               about once a week; to be looked at now, ask here:
