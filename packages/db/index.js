@@ -7,7 +7,7 @@ export {
   warmLiveStatsCache,
   warmPanelCaches,
 } from './src/statsWarmer.js';
-export { migrate } from './src/migrate.js';
+export { migrate, splitStatements } from './src/migrate.js';
 export * as q from './src/queries.js';
 export * as accounts from './src/accounts.js';
 export * as reactions from './src/reactions.js';

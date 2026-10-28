@@ -1,13 +1,14 @@
 import { redirect } from 'next/navigation';
 import { alerts } from '@rssamplifier/db';
 import { emailEnabled } from '@rssamplifier/mail';
-import { SIGNATURE_HEADER } from '@rssamplifier/notify';
+import { ALERT_EVENT, BACKOFF_MS, SIGNATURE_HEADER } from '@rssamplifier/notify';
 
 import Toolbar from '../../Toolbar.jsx';
 import PushToggle from '../PushToggle.jsx';
 import { db } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { topicLabel } from '../../../lib/following.js';
+import { hooks } from '../../../lib/webhooks.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,7 @@ const ERRORS = {
   'unknown-channel': 'That destination was already gone.',
   'no-address': 'This account has no email address on it.',
   'bad-request': 'Something was missing from that.',
+  webhook: 'That webhook was refused.',
 };
 
 /**
@@ -36,7 +38,8 @@ const ERRORS = {
  * The bell beside Follow says *whether* a blog alerts; this says *where* the
  * alerts land, and every follow shares the answer.
  *
- * @param {{ searchParams: Promise<{ added?: string, removed?: string, error?: string }> }} props
+ * @param {{ searchParams: Promise<{ added?: string, removed?: string, error?: string, detail?: string,
+ *   secret?: string, endpoint?: string, rotated?: string, tested?: string }> }} props
  */
 export default async function AlertsPage({ searchParams }) {
   const params = await searchParams;
@@ -47,9 +50,12 @@ export default async function AlertsPage({ searchParams }) {
   const client = db();
   const userId = String(user.id);
 
-  const [channels, following] = await Promise.all([
+  const hub = hooks();
+  const [channels, following, endpoints, deliveries] = await Promise.all([
     alerts.channelsForUser(client, userId),
     alerts.alertingFollows(client, userId),
+    hub.listEndpoints(userId),
+    hub.deliveries(userId, { limit: 10 }),
   ]);
 
   const hasEmail = channels.some((c) => c.kind === 'email');
@@ -71,16 +77,35 @@ export default async function AlertsPage({ searchParams }) {
 
       {params.added === 'email' && <p className="notice">Email alerts are on.</p>}
       {params.added === 'webhook' && <p className="notice">That webhook will get your alerts.</p>}
+      {params.rotated && <p className="notice">New secret below. The old one has stopped working.</p>}
+      {params.secret && (
+        <p className="notice">
+          Signing secret{params.endpoint ? <> for <code>{params.endpoint}</code></> : null}:{' '}
+          <code style={{ wordBreak: 'break-all' }}>{params.secret}</code>
+          <br />
+          Copy it now; this page will not show it again unless you ask.
+        </p>
+      )}
+      {params.tested && (
+        <p className="notice">
+          {params.tested === 'ok' ? 'Test delivered.' : `Test failed: ${params.tested}`}
+        </p>
+      )}
       {params.removed && <p className="notice">That destination has been removed.</p>}
-      {params.error && <p className="notice">{ERRORS[params.error] ?? 'That did not work.'}</p>}
+      {params.error && (
+        <p className="notice">
+          {ERRORS[params.error] ?? 'That did not work.'}
+          {params.detail ? ` ${params.detail}` : ''}
+        </p>
+      )}
 
       <h2>Where they go</h2>
 
-      {channels.length === 0 ? (
+      {channels.length === 0 && endpoints.length === 0 ? (
         <p className="empty">
           Nowhere yet. Nothing will be sent until at least one of the three below is switched on.
         </p>
-      ) : (
+      ) : channels.length === 0 ? null : (
         <dl className="stats">
           {channels.map((channel) => (
             <div key={String(channel.id)}>
@@ -134,19 +159,75 @@ export default async function AlertsPage({ searchParams }) {
         <p className="hint">This deployment has no mail provider configured.</p>
       )}
 
-      <h3>Webhook</h3>
+      <h3>Webhooks</h3>
       <p className="hint">
-        One <code>POST</code> of JSON per batch, to your own address — for a chat relay, a
-        dashboard, or a script that files them. With a secret, the body is signed as{' '}
-        <code>{SIGNATURE_HEADER}: sha256=…</code>, an HMAC of the exact bytes you receive.
+        One signed <code>POST</code> per batch, to your own address: for a chat relay, a dashboard,
+        or a script that files them. The body is a CloudEvents envelope of type{' '}
+        <code>{ALERT_EVENT}</code> with the batch under <code>data</code>, signed per{' '}
+        <a href="https://www.standardwebhooks.com/">Standard Webhooks</a> (
+        <code>webhook-id</code>, <code>webhook-timestamp</code>, <code>webhook-signature</code>) and
+        also as <code>{SIGNATURE_HEADER}: sha256=…</code>, an HMAC of the exact bytes you receive.
+        A failed delivery is tried {BACKOFF_MS.length} more times over the next few minutes. The
+        same endpoints are at <code>/api/v1/webhooks</code> with an{' '}
+        <a href="/account">API key</a>.
       </p>
+      {endpoints.length > 0 && (
+        <dl className="stats">
+          {endpoints.map((e) => (
+            <div key={e.id}>
+              <dt>
+                Webhook · {hostOf(e.url)}
+                {e.description ? ` (${e.description})` : ''}
+              </dt>
+              <dd style={{ fontSize: '0.9rem' }}>
+                {endpointHealth(e)}
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                  {[
+                    ['webhook-test', 'Send a test'],
+                    ['webhook-secret', 'Show secret'],
+                    ['webhook-rotate', 'Rotate secret'],
+                    [e.enabled ? 'webhook-disable' : 'webhook-enable', e.enabled ? 'Pause' : 'Resume'],
+                  ].map(([action, label]) => (
+                    <form key={action} action="/api/alerts/channels" method="post">
+                      <input type="hidden" name="action" value={action} />
+                      <input type="hidden" name="id" value={e.id} />
+                      <button type="submit" className="secondary-button">
+                        {label}
+                      </button>
+                    </form>
+                  ))}
+                  <form action="/api/alerts/channels" method="post">
+                    <input type="hidden" name="action" value="webhook-remove" />
+                    <input type="hidden" name="id" value={e.id} />
+                    <button type="submit">Remove</button>
+                  </form>
+                </div>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
       <form action="/api/alerts/channels" method="post" className="submit-actions">
         <input type="hidden" name="action" value="webhook" />
         <input type="url" name="url" placeholder="https://example.com/hooks/rss" required />
-        <input type="text" name="secret" placeholder="Signing secret (optional)" maxLength={200} />
         <input type="text" name="label" placeholder="What is it? (optional)" maxLength={60} />
         <button type="submit">Add webhook</button>
       </form>
+      {deliveries.length > 0 && (
+        <>
+          <h3>Recent webhook deliveries</h3>
+          <ul className="hint">
+            {deliveries.map((d) => (
+              <li key={d.id}>
+                {formatDate(d.created_at)} · <code>{d.event_type}</code> · {d.status}
+                {d.last_status ? ` (HTTP ${d.last_status})` : ''}
+                {d.status !== 'delivered' && d.last_error ? ` — ${d.last_error}` : ''}
+                {d.attempts > 1 ? ` · ${d.attempts} attempts` : ''}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <h2>What alerts</h2>
       {watching === 0 ? (
@@ -249,6 +330,18 @@ function health(channel) {
   if (channel.last_ok_at) return `Last delivered ${formatDate(channel.last_ok_at)}`;
   if (channel.last_error) return `Not yet delivered — ${String(channel.last_error)}`;
   return 'Nothing sent yet.';
+}
+
+/**
+ * How a webhook endpoint is doing, in a line.
+ *
+ * @param {import('@profullstack/webhooks').PublicEndpoint} e
+ * @returns {string}
+ */
+function endpointHealth(e) {
+  if (!e.enabled) return e.disabled_reason ? `Switched off: ${e.disabled_reason}` : 'Paused.';
+  if (e.failures > 0) return `${e.failures} failed ${e.failures === 1 ? 'attempt' : 'attempts'} in a row.`;
+  return `On, for ${e.events.join(', ')}.`;
 }
 
 /**

@@ -459,6 +459,9 @@ export async function recordChannelResult(db, id, result) {
 /**
  * The accounts with something to be alerted about and somewhere to send it.
  *
+ * "Somewhere" is an enabled alert channel (email, a browser) or an enabled
+ * webhook endpoint in the hub's table (see packages/notify/src/hooks.js).
+ *
  * Both halves are required, and requiring them here is what keeps the sender's
  * per-account work off accounts that would produce nothing: a reader who
  * switched every channel off still has their alert flags, and a reader with a
@@ -478,8 +481,10 @@ export async function usersWithAlerts(db, limit = 50) {
     sql: `select u.id, u.email, s.updated_at
           from users u
           left join alert_state s on s.user_id = u.id
-          where exists (select 1 from alert_channels c
-                        where c.user_id = u.id and c.enabled = 1)
+          where (exists (select 1 from alert_channels c
+                         where c.user_id = u.id and c.enabled = 1)
+              or exists (select 1 from webhook_endpoints w
+                         where w.owner = u.id and w.enabled = 1))
             and (exists (select 1 from follows fo
                          where fo.user_id = u.id and fo.alerts = 1)
               or exists (select 1 from topic_follows tf
@@ -513,8 +518,10 @@ export async function usersWithAlerts(db, limit = 50) {
 export async function alertingAccountCount(db) {
   const { rows } = await db.execute(
     `select count(*) as n from users u
-     where exists (select 1 from alert_channels c
-                   where c.user_id = u.id and c.enabled = 1)
+     where (exists (select 1 from alert_channels c
+                    where c.user_id = u.id and c.enabled = 1)
+         or exists (select 1 from webhook_endpoints w
+                    where w.owner = u.id and w.enabled = 1))
        and (exists (select 1 from follows fo
                     where fo.user_id = u.id and fo.alerts = 1)
          or exists (select 1 from topic_follows tf

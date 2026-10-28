@@ -3,7 +3,11 @@ import { test, beforeEach, after } from 'node:test';
 import { newId, accounts, alerts, authors, q } from '@rssamplifier/db';
 import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
+import { verifySignature as verifyStandard } from '@profullstack/webhooks';
+
 import { deliverAlerts } from '../src/deliver.js';
+import { createHooks, legacySecret } from '../src/hooks.js';
+import { verifySignature as verifyLegacy } from '../src/webhook.js';
 
 /**
  * The sender, end to end, against a real database.
@@ -30,11 +34,24 @@ function recorder(outcomes = {}) {
       sent.push.push({ endpoint: subscription.endpoint, payload: JSON.parse(payload) });
       return outcomes.push ?? { ok: true };
     },
-    webhook: async (url, payload) => {
-      sent.webhook.push({ url, payload });
-      return outcomes.webhook ?? { ok: true };
-    },
   };
+}
+
+/**
+ * The webhooks hub on the test database, with a receiver that records what
+ * arrived instead of a network. `lookup` stands in for DNS so the URL guard
+ * sees a public address without resolving anything.
+ *
+ * @param {{ status?: number }} [opts]
+ */
+function hub(opts = {}) {
+  return createHooks(db, {
+    guard: { lookup: async () => ['93.184.216.34'] },
+    fetchImpl: async (url, init) => {
+      sent.webhook.push({ url: String(url), headers: init.headers, body: String(init.body) });
+      return new Response(null, { status: opts.status ?? 204 });
+    },
+  });
 }
 
 beforeEach(async () => {
@@ -379,26 +396,150 @@ test('every channel gets the batch, in its own shape', async () => {
     target: 'https://push.example.com/abc',
     secret: { p256dh: 'k', auth: 'a' },
   });
-  await alerts.addChannel(db, { userId, kind: 'webhook', target: 'https://hooks.example.com/x' });
+  const hooks = hub();
+  const { secret } = await hooks.createEndpoint(userId, { url: 'https://hooks.example.com/x' });
 
   const blog = await feed({ slug: 'multi', title: 'Multi' });
   await accounts.follow(db, userId, blog);
   await alerts.setFeedAlerts(db, userId, blog, true);
 
-  await run({ vapid: { publicKey: 'p', privateKey: 'k', subject: 'mailto:x@y.z' } });
+  await run({ hooks, vapid: { publicKey: 'p', privateKey: 'k', subject: 'mailto:x@y.z' } });
   await post(blog, { guid: 'one', title: 'Only post', createdAt: future(1) });
 
-  const result = await run({ vapid: { publicKey: 'p', privateKey: 'k', subject: 'mailto:x@y.z' } });
+  const result = await run({ hooks, vapid: { publicKey: 'p', privateKey: 'k', subject: 'mailto:x@y.z' } });
 
-  assert.equal(result.sent, 3);
+  assert.equal(result.sent, 3, 'email, push, and one webhook delivery queued');
   assert.equal(sent.email.length, 1);
 
   assert.equal(sent.push[0].payload.title, 'Only post', 'a single post is its own notification');
   assert.equal(sent.push[0].payload.url, 'https://example.com/one', 'and the tap goes to it');
 
-  assert.equal(sent.webhook[0].payload.version, 1);
-  assert.equal(sent.webhook[0].payload.count, 1);
-  assert.equal(sent.webhook[0].payload.items[0].feed.title, 'Multi');
+  // Queued, not sent: the hub's drainer sends.
+  assert.equal(sent.webhook.length, 0);
+  assert.equal(await hooks.drain(), 1);
+  assert.equal(sent.webhook.length, 1);
+
+  const got = sent.webhook[0];
+  assert.equal(got.url, 'https://hooks.example.com/x');
+  const event = JSON.parse(got.body);
+  assert.equal(event.specversion, '1.0');
+  assert.equal(event.type, 'posts.published');
+  // The pre-hub body, unchanged, under `data`.
+  assert.equal(event.data.version, 1);
+  assert.equal(event.data.count, 1);
+  assert.equal(event.data.items[0].feed.title, 'Multi');
+
+  assert.equal(got.headers['webhook-event'], 'posts.published');
+  assert.ok(verifyStandard({ headers: got.headers, body: got.body, secret }).ok, 'Standard Webhooks verifies');
+  assert.match(got.headers['x-rssamplifier-signature'], /^sha256=[0-9a-f]{64}$/, 'and the old header is still there');
+
+  const [logged] = await hooks.deliveries(userId);
+  assert.equal(logged.status, 'delivered');
+});
+
+test('a receiver written for the old sender still verifies a hub delivery', async () => {
+  // The secret a reader typed into the old form, and the receiver they wrote
+  // against it: `verifySignature(body, secret, header)` from ./webhook.js,
+  // HMAC-SHA256 of the raw body keyed with that string's UTF-8 bytes.
+  const typed = 'whsec_not-really-base64 and spaces ü';
+  const userId = await reader('legacy@example.com');
+  await alerts.addChannel(db, {
+    userId,
+    kind: 'webhook',
+    target: 'https://hooks.example.com/legacy',
+    secret: { secret: typed },
+    label: 'Old relay',
+  });
+  await alerts.addChannel(db, { userId, kind: 'webhook', target: 'https://hooks.example.com/unsigned' });
+
+  // What migration 20261028120000_webhooks.sql does on boot, run again over
+  // the rows just written (every statement in it is safe to repeat).
+  const { readFile } = await import('node:fs/promises');
+  const { splitStatements } = await import('@rssamplifier/db');
+  const sql = await readFile(
+    new URL('../../db/migrations-pg/20261028120000_webhooks.sql', import.meta.url),
+    'utf8',
+  );
+  for (const statement of splitStatements(sql)) await db.execute(statement);
+
+  const channels = await alerts.channelsForUser(db, userId);
+  assert.deepEqual(channels.map((c) => c.kind), ['email'], 'the webhook channels moved out');
+
+  const hooks = hub();
+  const endpoints = await hooks.listEndpoints(userId);
+  assert.equal(endpoints.length, 2);
+  const legacy = endpoints.find((e) => e.url.endsWith('/legacy'));
+  assert.equal(legacy.description, 'Old relay');
+  assert.deepEqual(legacy.events, ['*']);
+
+  const { secret } = await hooks.secret(userId, legacy.id);
+  assert.equal(secret, legacySecret(typed), 'SQL and JS carry the secret over the same way');
+
+  const blog = await feed({ slug: 'legacy-blog', title: 'Legacy' });
+  await accounts.follow(db, userId, blog);
+  await alerts.setFeedAlerts(db, userId, blog, true);
+  await run({ hooks });
+  await post(blog, { guid: 'l1', title: 'Legacy post', createdAt: future(1) });
+  await run({ hooks });
+  await hooks.drain();
+
+  const got = sent.webhook.find((d) => d.url.endsWith('/legacy'));
+  assert.ok(got, 'the migrated endpoint was delivered to');
+  assert.ok(
+    verifyLegacy(got.body, typed, got.headers['x-rssamplifier-signature']),
+    'the old receiver, with the string it always had, accepts the delivery',
+  );
+  assert.equal(got.headers['user-agent'], 'rssamplifier-alerts/1.0 (+https://rssamplifier.com/alerts)');
+  assert.ok(verifyStandard({ headers: got.headers, body: got.body, secret }).ok);
+  assert.ok(sent.webhook.some((d) => d.url.endsWith('/unsigned')), 'an unsigned channel still gets its alerts');
+});
+
+test('an account whose only destination is a webhook is still alerted', async () => {
+  const user = await accounts.findOrCreateUser(db, 'hookonly@example.com');
+  const userId = String(user.id);
+  const hooks = hub();
+  await hooks.createEndpoint(userId, { url: 'https://hooks.example.com/only' });
+
+  const blog = await feed({ slug: 'hook-only' });
+  await accounts.follow(db, userId, blog);
+  await alerts.setFeedAlerts(db, userId, blog, true);
+
+  assert.equal(await alerts.alertingAccountCount(db), 1);
+  await run({ hooks });
+  await post(blog, { guid: 'h1', createdAt: future(1) });
+  const result = await run({ hooks });
+
+  assert.equal(result.sent, 1);
+  await hooks.drain();
+  assert.equal(sent.webhook.length, 1);
+});
+
+test('a failed webhook delivery is retried on the short schedule, then given up', async () => {
+  const userId = await reader('retry@example.com');
+  let clock = Date.parse('2030-01-01T00:00:00Z');
+  const hooks = createHooks(db, {
+    now: () => clock,
+    guard: { lookup: async () => ['93.184.216.34'] },
+    fetchImpl: async (url, init) => {
+      sent.webhook.push({ url: String(url), headers: init.headers, body: String(init.body) });
+      return new Response(null, { status: 503 });
+    },
+  });
+  await hooks.createEndpoint(userId, { url: 'https://hooks.example.com/down' });
+  await hooks.emit(userId, 'posts.published', { count: 0 });
+
+  assert.equal(await hooks.drain(), 1);
+  clock += 30_000;
+  assert.equal(await hooks.drain(), 1, 'second try after 30 s');
+  clock += 120_000;
+  assert.equal(await hooks.drain(), 1, 'third after two more minutes');
+  clock += 24 * 3600_000;
+  assert.equal(await hooks.drain(), 0, 'and no fourth');
+
+  const [logged] = await hooks.deliveries(userId);
+  assert.equal(logged.status, 'failed');
+  assert.equal(logged.attempts, 3);
+  assert.equal(logged.last_status, 503);
 });
 
 test('push is skipped rather than failed when the deployment has no keys', async () => {

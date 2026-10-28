@@ -26,7 +26,7 @@ import {
 } from '@rssamplifier/ingest';
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 import { findFeedCard } from '@rssamplifier/feed';
-import { deliverAlerts, vapidConfig } from '@rssamplifier/notify';
+import { createHooks, deliverAlerts, vapidConfig } from '@rssamplifier/notify';
 import { createXRuntime, xEnabled } from '@rssamplifier/social';
 
 import { pgStore } from '@profullstack/scraper-daemon';
@@ -627,6 +627,19 @@ try {
 }
 
 /**
+ * The webhooks hub (@profullstack/webhooks), started once, here and only here.
+ *
+ * The alert pass queues a delivery per subscribed endpoint; this process's
+ * drainer sends them every few seconds, retries on the short schedule in
+ * packages/notify/src/hooks.js, and prunes the delivery log after 30 days.
+ * The web app builds a hub too, for the API and the settings page, and never
+ * starts it, so exactly one kind of process sends.
+ */
+const hooks = createHooks(db, {
+  log: (message) => log('webhooks', { message }),
+}).start();
+
+/**
  * The X collection runtime, built once and shared by every crawl in this process.
  *
  * Built after the migration, because `hydrate()` reads `x_provider_state` and
@@ -863,7 +876,7 @@ async function alertTick() {
   alerting = true;
 
   try {
-    const result = await deliverAlerts(db, { users: alertUsers });
+    const result = await deliverAlerts(db, { users: alertUsers, hooks });
 
     // Logged whenever there was anybody to consider, and not only when
     // something was sent — which is the opposite of the rule the card pass
@@ -1255,6 +1268,9 @@ log('started', {
 function shutdown(signal) {
   stopping = true;
   clearInterval(keepAlive);
+  // A delivery in flight finishes or is retried after its lease: the hub
+  // records attempts in the database, so a restart loses nothing.
+  hooks.stop();
 
   // Closed gracefully, which for BullMQ means "finish the job in hand, take no
   // more". A write half-applied because the container went away is the one

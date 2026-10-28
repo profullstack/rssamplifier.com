@@ -13,6 +13,7 @@ import { readerView } from '../reader.js';
 import { freshness } from '../freshness.js';
 import { clampRawInput } from '../submitted.js';
 import { clip, plainText } from './text.js';
+import { WEBHOOK_TOOLS } from './webhookTools.js';
 import { clientIp } from '@profullstack/x402-gateway/edge';
 
 /**
@@ -806,6 +807,9 @@ export const TOOLS = [
       };
     },
   }),
+
+  // Account tools: an API key in the Authorization header.
+  ...WEBHOOK_TOOLS,
 ];
 
 /** @type {Map<string, Tool>} */
