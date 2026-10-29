@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { planNext } from '@profullstack/scraper-daemon/cadence';
 
 /**
  * How often a feed is worth re-reading, judged by how often it actually posts.
@@ -36,6 +37,16 @@ import { createHash } from 'node:crypto';
 
 /** Never re-read a feed more often than this, however fast it posts. */
 export const MIN_INTERVAL = 60;
+
+/**
+ * The floor for a feed whose own dates say it posts more often than hourly.
+ *
+ * Dates are the publisher's evidence and the strongest we get, so a feed that
+ * demonstrably posts every half hour is read every fifteen minutes. Undated and
+ * change-log feeds keep MIN_INTERVAL: what we observe ourselves is only as fine
+ * as how often we looked, and they are 44% of the demand.
+ */
+export const DATED_MIN_INTERVAL = 15;
 
 /**
  * The floor for a source we collect through a provider rather than fetch.
@@ -78,34 +89,6 @@ export const MAX_INTERVAL = 129_600; // 90 days
  */
 const SAMPLE = 30;
 
-/**
- * How far past its own rhythm a feed must fall before it counts as having gone
- * quiet, rather than merely being between posts.
- *
- * Three, because a weekly blog that misses a week is still a weekly blog, and
- * one that has missed three has changed. Below this multiple the feed is
- * scheduled on its rhythm; above it, on its silence.
- */
-const QUIET_MULTIPLE = 3;
-
-/**
- * The gap between consecutive posts, in minutes, as a sorted list.
- *
- * @param {number[]} times epoch ms, any order
- * @returns {number[]} ascending gaps in minutes
- */
-function gaps(times) {
-  const sorted = [...times].sort((a, b) => a - b);
-  const out = [];
-  for (let i = 1; i < sorted.length; i += 1) {
-    const gap = (sorted[i] - sorted[i - 1]) / 60_000;
-    // Two posts published in the same instant are one editorial act, not a
-    // rhythm of zero. Dropping them keeps a site that publishes its whole
-    // morning batch at 06:00 from being read as posting continuously.
-    if (gap > 0) out.push(gap);
-  }
-  return out.sort((a, b) => a - b);
-}
 
 /**
  * The dates a document actually carries, cleaned.
@@ -200,7 +183,8 @@ export function newestPublished(items, now = Date.now()) {
 export function intervalFromDates(items, now = Date.now(), floor = MIN_INTERVAL) {
   const times = publishedTimes(items, now);
   if (times.length < 2) return null;
-  return scheduleFrom(times, now, floor);
+  // A per-platform floor (a social source's) is a promise to that platform and stands.
+  return scheduleFrom(times, now, floor === MIN_INTERVAL ? DATED_MIN_INTERVAL : floor);
 }
 
 /**
@@ -218,45 +202,15 @@ export function intervalFromDates(items, now = Date.now(), floor = MIN_INTERVAL)
  * @returns {number} minutes, between MIN_INTERVAL and MAX_INTERVAL
  */
 function scheduleFrom(times, now, floor = MIN_INTERVAL) {
-  const silence = Math.max(0, (now - times[0]) / 60_000);
-
-  // The typical gap, not the mean. A blog that posted forty times during one
-  // conference and monthly otherwise has a mean that describes neither; the
-  // median describes the ordinary week, which is what we are scheduling for.
-  const spacing = gaps(times);
-
-  // Every instant is the same one, or there is only one of them. That is a feed
-  // with a single publishing event, not a feed with a rhythm of zero — an
-  // archive dumped in one go, or a generator that stamps every entry with the
-  // build time. There is no cadence to infer, so schedule it on its silence
-  // alone, which is the only real evidence available.
-  if (spacing.length === 0) return clamp(silence / 4, floor, MAX_INTERVAL);
-
-  const rhythm = median(spacing);
-
-  // Still keeping to its own rhythm: read it at that rhythm. Halved, so a post
-  // is found in the first half of its cycle rather than, on average, halfway
-  // through the next one — the directory's freshness promise is about how long
-  // a post can sit unseen, and this is the term that bounds it.
-  if (silence <= rhythm * QUIET_MULTIPLE) {
-    return clamp(rhythm / 2, floor, MAX_INTERVAL);
-  }
-
-  // Gone quiet relative to its own history. Schedule on the silence instead,
-  // which makes the back-off self-scaling: the longer a feed stays dead the
-  // less often it is asked, without a table of thresholds to maintain and
-  // without ever quite giving up on it.
-  return clamp(silence / 4, floor, MAX_INTERVAL);
-}
-
-/**
- * @param {number[]} sorted ascending
- * @returns {number}
- */
-function median(sorted) {
-  if (sorted.length === 0) return MIN_INTERVAL;
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  // The policy itself is the house one, shared with p0dcasters: between posts a
+  // feed is read four times per rhythm but never sleeps past the point its next
+  // post is due; inside that window it is read 24 times per rhythm (at most six
+  // hours apart), so a weekly show is checked every few hours around release day
+  // instead of every 3.5 days. A feed silent for three rhythms backs off on its
+  // silence, capped at a week; silent 180 days and it is archived, read again in
+  // 90 (MAX_INTERVAL). The floor stays this module's, per source.
+  const plan = planNext(times, { now, floor, revisitEvery: MAX_INTERVAL });
+  return plan ? plan.minutes : clamp(MIN_INTERVAL, floor, MAX_INTERVAL);
 }
 
 /**

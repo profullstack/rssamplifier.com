@@ -146,3 +146,12 @@ test('every state has a label, so the badge can never render undefined', () => {
   for (const s of reached) assert.ok(states.includes(s), `${s} is a known state`);
   assert.equal(reached.size, states.length, 'all five states are reachable');
 });
+
+test('an archived feed reads dormant and says it is checked once a quarter', () => {
+  const archived = { ...live, last_success_at: iso(30 * DAY), fetch_interval_minutes: 90 * 24 * 60 };
+  const f = freshness(archived, iso(200 * DAY), NOW);
+  assert.equal(f.archived, true);
+  assert.equal(f.state, 'dormant');
+  assert.match(f.note, /once a quarter/);
+  assert.equal(freshness({ ...archived, fetch_interval_minutes: 60 }, iso(200 * DAY), NOW).archived, false);
+});

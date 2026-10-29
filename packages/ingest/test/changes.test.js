@@ -125,10 +125,10 @@ test('an undated feed is scheduled on the rhythm we observed', () => {
   // than instants the publisher claimed: half the typical gap while the feed is
   // keeping to it.
   const weekly = intervalFromChanges(log(8, 7, 1), NOW);
-  assert.ok(days(weekly) > 3 && days(weekly) < 4, `weekly -> ${days(weekly).toFixed(1)}d`);
+  assert.equal(days(weekly), 1.75, `weekly -> ${days(weekly).toFixed(2)}d`);
 
   const daily = intervalFromChanges(log(8, 1, 0.2), NOW);
-  assert.ok(days(daily) > 0.4 && days(daily) < 0.6, `daily -> ${days(daily).toFixed(2)}d`);
+  assert.equal(days(daily), 0.25, `daily -> ${days(daily).toFixed(2)}d`);
 });
 
 test('one observation is enough, which a single date never is', () => {
@@ -138,7 +138,7 @@ test('one observation is enough, which a single date never is', () => {
   // since and seen nothing" -- because the looking is ours. So silence measured
   // from it is evidence, and a feed decays on it with no dead-feed classifier.
   assert.equal(intervalFromChanges(log(1, 0, 0), NOW), MIN_INTERVAL, 'just seen, so the floor');
-  assert.ok(days(intervalFromChanges(log(1, 0, 40), NOW)) > 9, 'quiet 40 days -> read every 10');
+  assert.equal(days(intervalFromChanges(log(1, 0, 40), NOW)), 7, 'quiet 40 days -> read weekly');
   assert.equal(intervalFromChanges(log(1, 0, 2000), NOW), MAX_INTERVAL, 'and it stops at the ceiling');
 });
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { nextInterval, publishedTimes, MIN_INTERVAL, MAX_INTERVAL } from '../src/cadence.js';
+import { nextInterval, publishedTimes, MIN_INTERVAL, DATED_MIN_INTERVAL, MAX_INTERVAL } from '../src/cadence.js';
 
 /** A fixed clock, so a test never depends on when it runs. */
 const NOW = Date.parse('2026-08-18T12:00:00.000Z');
@@ -25,18 +25,25 @@ const hours = (minutes) => minutes / 60;
 const days = (minutes) => minutes / 1440;
 
 test('a feed keeping its own rhythm is read at that rhythm', () => {
-  // A weekly blog, posting on time. Half its cycle, so a post is found in the
-  // first half of the week rather than on average halfway through the next one.
+  // A weekly blog the day after a post: a quarter of its cycle.
   const weekly = nextInterval({ items: posts(10, 7, 1), now: NOW });
-  assert.ok(days(weekly) > 3 && days(weekly) < 4, `weekly blog -> ${days(weekly).toFixed(1)}d`);
+  assert.equal(days(weekly), 1.75, `weekly blog -> ${days(weekly).toFixed(2)}d`);
 
-  // A daily paper.
+  // The same blog six days in, when the next post is due: every six hours, not
+  // every 3.5 days, which is what left weekly shows a week stale.
+  const due = nextInterval({ items: posts(10, 7, 6), now: NOW });
+  assert.equal(hours(due), 6, `weekly blog on release day -> ${hours(due)}h`);
+
+  // A daily paper, a few hours after its edition.
   const daily = nextInterval({ items: posts(20, 1, 0.2), now: NOW });
-  assert.ok(hours(daily) > 11 && hours(daily) < 13, `daily paper -> ${hours(daily).toFixed(1)}h`);
+  assert.equal(hours(daily), 6, `daily paper -> ${hours(daily).toFixed(1)}h`);
 
-  // A news site publishing every couple of hours never goes below the floor.
+  // A news site publishing every couple of hours is read every half hour, and a
+  // firehose bottoms out at the dated floor, not below.
   const busy = nextInterval({ items: posts(20, 1 / 12, 0.01), now: NOW });
-  assert.equal(busy, MIN_INTERVAL, 'a firehose is still only read hourly');
+  assert.equal(busy, 30, `every-2h site -> ${busy}m`);
+  const firehose = nextInterval({ items: posts(20, 1 / 72, 0.001), now: NOW });
+  assert.equal(firehose, DATED_MIN_INTERVAL, 'a firehose is read every fifteen minutes');
 });
 
 test('the abandoned podcast that started all this', () => {
@@ -53,20 +60,21 @@ test('backing off is self-scaling, so silence needs no table of thresholds', () 
 
   // Each of these is a weekly blog; only the silence differs.
   // Inside three times its own rhythm the feed is not late, it is between
-  // posts, so the interval does not move at all -- a weekly blog that misses a
-  // week is still a weekly blog.
-  assert.equal(at(3), at(21), 'a fortnight late is still on rhythm');
+  // posts -- a weekly blog that misses a week is still a weekly blog, and one
+  // whose post is overdue is watched closely.
+  assert.equal(hours(at(21)), 6, 'a fortnight late is still on rhythm, and watched');
 
-  const late = at(40);
-  const sixMonths = at(180);
-  const aYear = at(365);
-  const twoYears = at(730);
+  const late = at(25);
+  const quiet = at(40);
+  const halfYear = at(179);
+  const archived = at(181);
 
   assert.ok(at(21) < late, 'past three cycles, the gap starts widening');
-  assert.ok(late < sixMonths, 'and it keeps widening');
-  assert.ok(sixMonths < aYear, 'monotonically, with no cliff');
-  assert.equal(aYear, MAX_INTERVAL, 'reaching the ceiling after about a year of silence');
-  assert.equal(twoYears, MAX_INTERVAL, 'and never exceeding it');
+  assert.ok(late < quiet, 'and it keeps widening');
+  assert.equal(days(quiet), 7, 'up to a week, the longest a live feed waits');
+  assert.equal(halfYear, quiet, 'and stays there');
+  assert.equal(archived, MAX_INTERVAL, 'six months of silence archives it: read again in 90 days');
+  assert.equal(at(730), MAX_INTERVAL, 'and never past that');
 });
 
 test('a feed that comes back is picked up again rather than written off', () => {
@@ -139,8 +147,8 @@ test('posts sharing a timestamp are one editorial act, not a rhythm of zero', ()
     }
   }
   const interval = nextInterval({ items: batched, now: NOW });
-  assert.ok(interval >= MIN_INTERVAL, 'never below the floor');
-  assert.ok(hours(interval) > 5, `same-instant posts do not read as continuous -> ${hours(interval).toFixed(1)}h`);
+  // A rhythm of a day, a day since the last batch: inside the window, so hourly.
+  assert.equal(interval, 60, `same-instant posts do not read as continuous -> ${hours(interval).toFixed(1)}h`);
 });
 
 test('the result is always a whole number of minutes inside the bounds', () => {
@@ -160,7 +168,7 @@ test('the result is always a whole number of minutes inside the bounds', () => {
   for (const input of cases) {
     const n = nextInterval({ ...input, now: NOW });
     assert.ok(Number.isInteger(n), `whole minutes, got ${n} for ${JSON.stringify(input).slice(0, 60)}`);
-    assert.ok(n >= MIN_INTERVAL && n <= MAX_INTERVAL, `within bounds, got ${n}`);
+    assert.ok(n >= DATED_MIN_INTERVAL && n <= MAX_INTERVAL, `within bounds, got ${n}`);
   }
 });
 
