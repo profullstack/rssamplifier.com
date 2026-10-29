@@ -106,6 +106,7 @@ export function makeSalesContact(deps = {}) {
         name: 'use_case',
         type: 'textarea',
         label: 'What do you want the corpus for?',
+        errorLabel: 'Your use case',
         placeholder:
           'What do you want the corpus for?\n\nWhich streams you need, roughly what scale, how often you would pull, and what it is being used to build.',
         rows: 5,
@@ -121,7 +122,8 @@ export function makeSalesContact(deps = {}) {
     verify: async (_body, req) => {
       const since = new Date(Date.now() - WINDOW_MS).toISOString();
       const recent = await store.enquiryCountFrom(client(), ipHashOf(ipOf(req)), since);
-      return recent >= MAX_PER_WINDOW ? TOO_MANY : true;
+      // Answered as a rate limit (429, ?error=limited), the same as the guard's own.
+      return recent >= MAX_PER_WINDOW ? { kind: 'limited', error: TOO_MANY } : true;
     },
     persist: async (s, verdict) => {
       const v = s.values ?? {};

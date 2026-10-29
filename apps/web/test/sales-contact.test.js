@@ -98,7 +98,7 @@ test('a use case under ten characters is refused', async () => {
   assert.equal(res.status, 400);
   assert.deepEqual(await res.json(), {
     ok: false,
-    error: 'What do you want the corpus for? is too short (10 characters at least)',
+    error: 'Your use case is too short (10 characters at least)',
   });
   assert.equal(rows.length, 0);
 });
@@ -106,7 +106,25 @@ test('a use case under ten characters is refused', async () => {
 test('the per-address limit kept in the database still applies', async () => {
   const { form, rows } = harness({ recent: MAX_PER_WINDOW });
   const res = await form.POST(json({ ...answers, fg_token: await token() }));
+  assert.equal(res.status, 429);
   assert.equal((await res.json()).error, TOO_MANY);
+  assert.equal(rows.length, 0);
+});
+
+test('a plain form post over the database limit comes back as ?error=limited with the hour message', async () => {
+  const { form, rows } = harness({ recent: MAX_PER_WINDOW });
+  const body = new URLSearchParams({ ...answers, fg_token: await token() });
+  const res = await form.POST(
+    new Request('http://localhost/api/sales/contact', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': '203.0.113.10' },
+      body,
+    }),
+  );
+  assert.equal(res.status, 303);
+  const location = new URL(res.headers.get('location'), 'http://localhost');
+  assert.equal(location.searchParams.get('error'), 'limited');
+  assert.equal(form.errorMessage(location.searchParams), TOO_MANY);
   assert.equal(rows.length, 0);
 });
 
@@ -129,7 +147,7 @@ test('a plain form post is sent back to the form, with a message the page will s
   assert.equal(location.searchParams.get('field'), 'use_case');
   assert.equal(
     form.errorMessage(location.searchParams),
-    'What do you want the corpus for? is too short (10 characters at least)',
+    'Your use case is too short (10 characters at least)',
   );
 });
 
