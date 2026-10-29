@@ -4,6 +4,8 @@ import { categoryStats } from '../../lib/crawlstats.js';
 import { corpusFigures } from '../../lib/corpus.js';
 import { latestClosedWindow } from '../../lib/datasetWindow.js';
 import Toolbar from '../Toolbar.jsx';
+import { ContactForm } from '@profullstack/contact-form/react';
+import { formErrors, salesContact } from '../../lib/salesContact.js';
 
 export const metadata = {
   title: 'Training data',
@@ -54,7 +56,12 @@ export default async function SalesPage({ searchParams }) {
   const sent = params?.sent === '1';
   const error = typeof params?.error === 'string' ? params.error : null;
 
-  const [stats, corpus] = await Promise.all([categoryStats(), corpusFigures()]);
+  const [stats, corpus, form] = await Promise.all([
+    categoryStats(),
+    corpusFigures(),
+    // The enquiry form's token is minted here, per request; this page is never cached.
+    salesContact.props(),
+  ]);
 
   const feeds = Number(stats?.total ?? 0);
   const posts = (stats?.categories ?? []).reduce((n, c) => n + Number(c.items ?? 0), 0);
@@ -205,64 +212,15 @@ export default async function SalesPage({ searchParams }) {
         volume does. Tell us what you want it for and we will come back with terms.
       </p>
 
-      {/* A plain form posting to /api/*, like every other control on this site:
-          it works with JavaScript off, and the route answers an HTML caller with
-          a 303 back to this anchor and a JSON caller with JSON. */}
-      <form className="submit-box" action="/api/sales/contact" method="post">
-        <p className="eyebrow">Only the email and the last box are required</p>
-        <input
-          name="name"
-          type="text"
-          autoComplete="name"
-          maxLength={120}
-          placeholder="Your name"
-          aria-label="Your name"
-        />
-        <input
-          name="email"
-          type="email"
-          autoComplete="email"
-          maxLength={200}
-          required
-          placeholder="you@example.com"
-          aria-label="Your email address"
-        />
-        <input
-          name="org"
-          type="text"
-          autoComplete="organization"
-          maxLength={160}
-          placeholder="Company or project"
-          aria-label="Company or project"
-        />
-        <textarea
-          name="use_case"
-          rows={5}
-          maxLength={4000}
-          required
-          placeholder={
-            'What do you want the corpus for?\n\nWhich streams you need, roughly what scale, how often you would pull, and what it is being used to build.'
-          }
-          aria-label="What do you want the corpus for?"
-        />
-        <p className="hint">
-          The last box is the one that decides what we can offer, so it is the one worth writing.
-          Rough is fine; vague costs us both a round trip.
+      {/* @profullstack/contact-form, posting to /api/*, like every other control on
+          this site: with JavaScript it sends JSON and answers in place; with it
+          off it is a plain form post, answered with a 303 back to this anchor. */}
+      <ContactForm {...form} className="submit-box sales-form" idPrefix="sales">
+        <p>
+          If you would rather chase it, <a href="mailto:hello@rssamplifier.com">hello@rssamplifier.com</a>{' '}
+          reaches the same people.
         </p>
-
-        {/* The honeypot: no human sees it, no browser fills it, and a bot that
-            completes it gets the same success answer as everyone else — told it
-            failed, it would only try again differently. Hidden from assistive
-            technology as well as from sight, so a screen reader does not
-            announce a field its user must leave alone. */}
-        <p hidden aria-hidden="true">
-          <input name="website" type="text" tabIndex={-1} autoComplete="off" />
-        </p>
-
-        <div className="submit-actions">
-          <button type="submit">Send enquiry</button>
-        </div>
-      </form>
+      </ContactForm>
 
       <p>
         Prefer email? <a href="mailto:hello@rssamplifier.com">hello@rssamplifier.com</a>. For
@@ -280,6 +238,8 @@ export default async function SalesPage({ searchParams }) {
  * @returns {string}
  */
 function errorMessage(code) {
+  // A message from the form's own checks, sent back by a plain form post.
+  if (formErrors().has(code)) return code;
   switch (code) {
     case 'bad-email':
       return 'That does not look like an email address — we would have no way to reply.';
