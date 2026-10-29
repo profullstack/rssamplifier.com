@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { createFormGuard } from '@profullstack/contact-form';
 
-import { MAX_PER_WINDOW, NO_USE_CASE, TOO_MANY, formErrors, makeSalesContact } from '../src/lib/salesContact.js';
+import { MAX_PER_WINDOW, TOO_MANY, makeSalesContact } from '../src/lib/salesContact.js';
 
 const guard = createFormGuard({ secret: 'test-secret-not-used-anywhere-else', binding: 'rssamplifier:sales' });
 
@@ -92,11 +92,14 @@ test('a JSON caller may send useCase', async () => {
   assert.equal(rows[0].useCase, use_case);
 });
 
-test('a use case under ten characters is refused with the old wording', async () => {
+test('a use case under ten characters is refused', async () => {
   const { form, rows } = harness();
   const res = await form.POST(json({ ...answers, use_case: 'data', fg_token: await token() }));
   assert.equal(res.status, 400);
-  assert.deepEqual(await res.json(), { ok: false, error: NO_USE_CASE });
+  assert.deepEqual(await res.json(), {
+    ok: false,
+    error: 'What do you want the corpus for? is too short (10 characters at least)',
+  });
   assert.equal(rows.length, 0);
 });
 
@@ -121,5 +124,18 @@ test('a plain form post is sent back to the form, with a message the page will s
   const location = new URL(res.headers.get('location'), 'http://localhost');
   assert.equal(location.pathname, '/sales');
   assert.equal(location.hash, '#enquire');
-  assert.ok(formErrors(form).has(location.searchParams.get('error')));
+  // Codes, never text: the page rebuilds the message from them.
+  assert.equal(location.searchParams.get('error'), 'invalid');
+  assert.equal(location.searchParams.get('field'), 'use_case');
+  assert.equal(
+    form.errorMessage(location.searchParams),
+    'What do you want the corpus for? is too short (10 characters at least)',
+  );
+});
+
+test('a crafted ?error= shows the form\'s own wording, never the link\'s text', () => {
+  const { form } = harness();
+  assert.equal(form.errorMessage({ error: 'Send your password to evil.example' }), form.errorMessage({ error: 'error' }));
+  assert.equal(form.errorMessage({ error: 'limited' }), TOO_MANY);
+  assert.equal(form.errorMessage({}), null);
 });
