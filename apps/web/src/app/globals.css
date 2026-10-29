@@ -4210,3 +4210,54 @@ html:not([data-dock]) .playlist-hint {
   margin: 0.75rem 0;
   font-size: 0.95rem;
 }
+
+/* The corpus enquiry form on /sales (@profullstack/contact-form). It keeps the
+   look the hand-built form had: placeholders in the boxes, the labels kept for
+   screen readers only, the intro line as an eyebrow and the help as a hint. */
+.sales-form .cf-field {
+  margin-bottom: 0.75rem;
+}
+.sales-form .cf-field > label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.sales-form .cf-section {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: inherit;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+.sales-form .cf-help {
+  font-size: 0.86rem;
+  color: var(--muted);
+  margin: 0.6rem 0 0.9rem;
+}
+.sales-form .cf-error {
+  padding: 0.9rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 0.92rem;
+  margin-bottom: 1rem;
+}
+.sales-form .cf-submit {
+  margin-top: 0.75rem;
+}
+.cf-sent .cf-notice {
+  font-size: 0.92rem;
+}
+/* The honeypot: no human sees it and no browser fills it (a visible one drops
+   the real people who fill it in). */
+.cf-hp {
+  display: none;
+}
