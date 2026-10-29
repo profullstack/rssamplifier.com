@@ -109,6 +109,8 @@ export async function pendingFor(db, week, limit) {
   const { rows } = await db.execute({
     sql: `select u.id, u.email from users u
            where u.newsletter = 1
+             -- A CoinPay-only account has no address yet (coinpay.js).
+             and u.email not like '%@coinpay.invalid'
              and not exists (select 1 from newsletter_sends s where s.week = ? and s.user_id = u.id)
            order by u.created_at asc, u.id asc
            limit ?`,

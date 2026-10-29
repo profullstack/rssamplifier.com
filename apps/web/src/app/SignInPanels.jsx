@@ -1,4 +1,5 @@
 import { PasskeySignIn } from './Passkey.jsx';
+import { coinpayEnabled } from '../lib/coinpay.js';
 
 /**
  * The two ways into an account, as a pair of panels.
@@ -30,6 +31,20 @@ export default function SignInPanels({
 }) {
   return (
     <>
+      {/* CoinPay is the fleet's master account, so it is offered first. It
+          binds to the CoinPay identity, never to a matching address here. */}
+      {coinpayEnabled() && (
+        <div className="submit-box">
+          <p className="eyebrow">Sign in with CoinPay</p>
+          <p className="hint">Use your CoinPay account. No email round trip.</p>
+          <div className="submit-actions">
+            <a className="button" href={`/api/v1/coinpay/oauth/start?next=${encodeURIComponent(next)}`}>
+              Sign in with CoinPay
+            </a>
+          </div>
+        </div>
+      )}
+
       <form className="submit-box" action="/api/auth/magic" method="post">
         <p className="eyebrow">{emailEyebrow}</p>
         {/* Which page the form was on, so the redirect afterwards comes back

@@ -1,4 +1,4 @@
-import { accounts, newsletter, nowIso } from '@rssamplifier/db';
+import { accounts, coinpay, newsletter, nowIso } from '@rssamplifier/db';
 import { sendEmail, emailEnabled } from '@rssamplifier/mail';
 import { saveSignupProfile } from '@profullstack/profile';
 
@@ -112,6 +112,14 @@ export async function consumeSignInLink(db, token) {
   // same situation from the reader's side — ask for a new link.
   if (!spent) return { ok: false, error: 'invalid-or-expired' };
 
+  // A CoinPay-only account asked to use this address: following the link is
+  // the proof, and the address becomes that account's, never another's.
+  if (spent.claimUserId) {
+    const adopted = await coinpay.adoptEmail(db, spent.claimUserId, spent.email);
+    if (!adopted) return { ok: false, error: 'claim-failed' };
+    return { ok: true, userId: spent.claimUserId, email: spent.email, created: false };
+  }
+
   const user = await accounts.findOrCreateUser(db, spent.email);
 
   // A link asked for from /signup carries the form's profile. Saving it is not
@@ -134,4 +142,58 @@ export async function consumeSignInLink(db, token) {
   }
 
   return { ok: true, userId: user.id, email: user.email, created: user.created };
+}
+
+/**
+ * Mail a link that gives a CoinPay-only account the address it was sent to.
+ *
+ * Same token, same table and same limits as a sign-in link; the difference is
+ * only what following it does (see consumeSignInLink). Refused when the account
+ * already has a real address or the address belongs to another account.
+ *
+ * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
+ * @param {string} userId
+ * @param {string} email
+ * @param {string} siteUrl
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+export async function requestEmailClaimLink(db, userId, email, siteUrl) {
+  if (!looksLikeEmail(email) || coinpay.isPlaceholderEmail(email)) return { ok: false, error: 'invalid-email' };
+  if (!emailEnabled()) return { ok: false, error: 'email-not-configured' };
+
+  const user = await accounts.userById(db, userId);
+  if (!user || !coinpay.isPlaceholderEmail(user.email)) return { ok: false, error: 'has-email' };
+
+  const normalized = accounts.normalizeEmail(email);
+  if (await accounts.userByEmail(db, normalized)) return { ok: false, error: 'email-taken' };
+
+  const recent = await accounts.recentLoginTokenCount(db, normalized);
+  if (recent >= MAX_PER_HOUR) return { ok: false, error: 'rate-limited' };
+
+  const token = newToken();
+  await accounts.insertLoginToken(db, {
+    tokenHash: hashToken(token),
+    email: normalized,
+    expiresAt: nowIso(TOKEN_MS),
+    claimUserId: userId,
+  });
+
+  const link = `${String(siteUrl).replace(/\/+$/, '')}/auth/magic?t=${encodeURIComponent(token)}`;
+  const sent = await sendEmail({
+    to: normalized,
+    subject: 'Confirm your RSS Amplifier email',
+    text: [
+      'You signed in to RSS Amplifier with CoinPay and asked to use this address.',
+      '',
+      'Confirm it:',
+      '',
+      link,
+      '',
+      'It works once and expires in 20 minutes.',
+      'If you did not ask for this, you can ignore it — nothing has changed.',
+    ].join('\n'),
+  });
+
+  if (!sent.ok) return { ok: false, error: sent.error ?? 'send-failed' };
+  return { ok: true };
 }

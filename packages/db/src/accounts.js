@@ -107,11 +107,11 @@ export async function markUserLoggedIn(db, id) {
  * then (see consumeSignInLink). A plain sign-in link carries none.
  *
  * @param {Client} db
- * @param {{ tokenHash: string, email: string, expiresAt: string, profile?: object|null }} token
+ * @param {{ tokenHash: string, email: string, expiresAt: string, profile?: object|null, newsletter?: boolean, claimUserId?: string|null }} token
  */
 export async function insertLoginToken(db, token) {
   await db.execute({
-    sql: 'insert into login_tokens (id, email, created_at, expires_at, profile, newsletter) values (?, ?, ?, ?, ?, ?)',
+    sql: 'insert into login_tokens (id, email, created_at, expires_at, profile, newsletter, claim_user_id) values (?, ?, ?, ?, ?, ?, ?)',
     args: [
       token.tokenHash,
       normalizeEmail(token.email),
@@ -120,6 +120,8 @@ export async function insertLoginToken(db, token) {
       token.profile ? JSON.stringify(token.profile) : null,
       // What the signup form said about the weekly digest; null when it said nothing.
       typeof token.newsletter === 'boolean' ? (token.newsletter ? 1 : 0) : null,
+      // A CoinPay-only account asking to use this address (see coinpay.js).
+      token.claimUserId ?? null,
     ],
   });
 }
@@ -145,7 +147,7 @@ export async function consumeLoginToken(db, tokenHash) {
  *
  * @param {Client} db
  * @param {string} tokenHash
- * @returns {Promise<{ email: string, profile: Record<string, string|null>|null, newsletter: boolean|null }|null>}
+ * @returns {Promise<{ email: string, profile: Record<string, string|null>|null, newsletter: boolean|null, claimUserId: string|null }|null>}
  */
 export async function takeLoginToken(db, tokenHash) {
   const now = nowIso();
@@ -153,13 +155,18 @@ export async function takeLoginToken(db, tokenHash) {
   const { rows } = await db.execute({
     sql: `update login_tokens set consumed_at = ?
           where id = ? and consumed_at is null and expires_at > ?
-          returning email, profile, newsletter`,
+          returning email, profile, newsletter, claim_user_id`,
     args: [now, tokenHash, now],
   });
 
   if (!rows[0]?.email) return null;
   const newsletter = rows[0].newsletter == null ? null : Number(rows[0].newsletter) === 1;
-  return { email: String(rows[0].email), profile: parseProfile(rows[0].profile), newsletter };
+  return {
+    email: String(rows[0].email),
+    profile: parseProfile(rows[0].profile),
+    newsletter,
+    claimUserId: rows[0].claim_user_id == null ? null : String(rows[0].claim_user_id),
+  };
 }
 
 /**
