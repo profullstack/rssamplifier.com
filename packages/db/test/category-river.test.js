@@ -184,6 +184,17 @@ test('the window is what makes the query affordable, and it excludes old items',
   assert.ok(wide.some((row) => String(row.feed_slug) === 'ancient-show'));
 });
 
+test('a scheduled episode waits for its date instead of topping the river', async () => {
+  // Seen live on /podcasts 2026-10-29: a show dated its next eight episodes into
+  // December and they sat above everything that had actually come out.
+  await publisher({ slug: 'scheduled-show', kind: 'podcast', dates: [iso(-3), iso(30), iso(60)] });
+
+  const rows = await q.latestItems(db, { kinds: ['podcast'], limit: 50 });
+  const mine = rows.filter((row) => String(row.feed_slug) === 'scheduled-show');
+  assert.equal(mine.length, 1, 'only the episode already out is listed');
+  assert.ok(rows.every((row) => Date.parse(String(row.published_at)) <= Date.now() + 86_400_000));
+});
+
 test('an unknown kind is the whole directory rather than an empty page', async () => {
   // normalizeKinds drops what it does not recognise and null means every kind,
   // so a caller who guessed a category name gets the directory. Worth pinning:

@@ -1364,6 +1364,22 @@ const CATEGORY_RIVER_FEEDS = 400;
 const CATEGORY_RIVER_DAYS = 365;
 
 /**
+ * How far ahead of now a river will show an entry: a day, the same slack
+ * `publishedTimes` gives a feed's own dates for clock skew.
+ *
+ * Without it a show that schedules its next eight episodes, or a feed that
+ * stamps every entry with next year, sits on top of "newest" until the date
+ * arrives, pushing down everything that has actually come out. The entry is
+ * still stored and still on its feed's own page; it joins the river on its date.
+ */
+const RIVER_FUTURE_SLACK_MS = 86_400_000;
+
+/** The newest `published_at` a river shows, as the ISO string the column holds. */
+function riverCeiling() {
+  return new Date(Date.now() + RIVER_FUTURE_SLACK_MS).toISOString();
+}
+
+/**
  * The newest entries published across a whole category, newest first.
  *
  * The category pages list *feeds* — who is in the directory — and that is a
@@ -1423,9 +1439,10 @@ export async function latestItems(db, opts = {}) {
           where i.feed_id in (select id from picked)
             and i.published_at is not null
             and i.published_at >= ?
+            and i.published_at <= ?
           order by i.published_at desc, i.id desc
           limit ? offset ?`,
-    args: [...filter.args, feedCap, since, limit, offset],
+    args: [...filter.args, feedCap, since, riverCeiling(), limit, offset],
   });
 
   return rows;
@@ -1506,16 +1523,16 @@ export async function itemsForTopic(db, slug, opts = {}) {
           -- same page.
           join lateral (
             select * from feed_items x
-            where x.feed_id = p.feed_id and x.published_at >= ?
+            where x.feed_id = p.feed_id and x.published_at >= ? and x.published_at <= ?
             order by x.published_at desc
             limit ?
           ) i on true
           join feeds f on f.id = i.feed_id
           order by i.published_at desc
           limit ?`,
-    // `filter.args` belongs to the `picked` subquery; `since` and the first
-    // `want` to the per-feed range; the last `want` to the page.
-    args: [slug, ...filter.args, feedCap, since, want, want],
+    // `filter.args` belongs to the `picked` subquery; `since`, the ceiling and the
+    // first `want` to the per-feed range; the last `want` to the page.
+    args: [slug, ...filter.args, feedCap, since, riverCeiling(), want, want],
   });
 
   if (!group) return rows;
