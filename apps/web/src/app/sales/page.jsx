@@ -5,7 +5,7 @@ import { corpusFigures } from '../../lib/corpus.js';
 import { latestClosedWindow } from '../../lib/datasetWindow.js';
 import Toolbar from '../Toolbar.jsx';
 import { ContactForm } from '@profullstack/contact-form/react';
-import { formErrors, salesContact } from '../../lib/salesContact.js';
+import { salesContact } from '../../lib/salesContact.js';
 
 export const metadata = {
   title: 'Training data',
@@ -203,7 +203,8 @@ export default async function SalesPage({ searchParams }) {
       ) : null}
       {error ? (
         <p className="notice" role="alert">
-          {errorMessage(error)}
+          {/* Rebuilt from the codes a plain form post comes back with; the URL never carries text. */}
+          {salesContact.errorMessage(params)}
         </p>
       ) : null}
       <p>
@@ -231,25 +232,6 @@ export default async function SalesPage({ searchParams }) {
       <Toolbar />
     </>
   );
-}
-
-/**
- * @param {string} code
- * @returns {string}
- */
-function errorMessage(code) {
-  // A message from the form's own checks, sent back by a plain form post.
-  if (formErrors().has(code)) return code;
-  switch (code) {
-    case 'bad-email':
-      return 'That does not look like an email address — we would have no way to reply.';
-    case 'no-use-case':
-      return 'Please say what you want the corpus for. It is the field that decides what we can offer.';
-    case 'too-many':
-      return 'That is several enquiries in an hour. Email hello@rssamplifier.com directly and we will pick it up there.';
-    default:
-      return 'That did not send. Try again, or email hello@rssamplifier.com.';
-  }
 }
 
 /**

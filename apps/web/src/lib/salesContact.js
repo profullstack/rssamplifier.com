@@ -49,8 +49,8 @@ export const MAX_PER_WINDOW = 3;
 
 export const TOO_MANY =
   'That is several enquiries in an hour. Email hello@rssamplifier.com directly and we will pick it up there.';
-export const NO_USE_CASE =
-  'Please say what you want the corpus for — it is the field that decides what we can offer.';
+/** What any failure the sender cannot fix says, instead of the error itself. */
+export const DID_NOT_SEND = 'That did not send. Try again, or email hello@rssamplifier.com.';
 
 /** The address a request comes from, the way every other limit on this site reads it. */
 const ipOf = (req) => clientIp({ headers: req.headers }) || null;
@@ -111,8 +111,7 @@ export function makeSalesContact(deps = {}) {
         rows: 5,
         maxLength: 4000,
         required: true,
-        pattern: '^[\\s\\S]{10,}$',
-        patternMessage: NO_USE_CASE,
+        minLength: 10,
         help: 'The last box is the one that decides what we can offer, so it is the one worth writing. Rough is fine; vague costs us both a round trip.',
       },
     ],
@@ -153,30 +152,10 @@ export function makeSalesContact(deps = {}) {
       'Thank you — that is recorded and someone will reply to the address you gave.',
     responses: {
       limited: { body: { ok: false, error: TOO_MANY }, status: 429 },
+      error: { body: { ok: false, error: DID_NOT_SEND }, status: 500 },
     },
   });
 }
 
 export const salesContact = makeSalesContact();
 
-/**
- * Every message a plain form post (JavaScript off) can be sent back to /sales
- * with in `?error=`. The page shows one of these or a generic line, never
- * whatever text a link happens to carry.
- */
-export function formErrors(form = salesContact) {
-  const out = new Set([
-    TOO_MANY,
-    'That took too long. Please send it again.',
-    'Too many messages. Please try again later.',
-    'Invalid submission',
-  ]);
-  for (const q of form.questions) {
-    if (q.type === 'section') continue;
-    out.add(`${q.label} is required`);
-    out.add(`${q.label} is too long (${q.maxLength} characters at most)`);
-    if (q.type === 'email') out.add(`${q.label} must be a valid email address`);
-    if (q.patternMessage) out.add(q.patternMessage);
-  }
-  return out;
-}
