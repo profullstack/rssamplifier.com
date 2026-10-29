@@ -5,6 +5,7 @@ import { clusterKey, dedupeItems, topicSlug } from '@rssamplifier/feed';
 import { newId, nowIso } from './client.js';
 import { FeedRemovedError, dropRemoved, isRemovedUrl, removalHost } from './removals.js';
 import { topicLabelSql } from './topicLabel.js';
+import { quotas, tierSql, TIERS } from '@profullstack/scraper-daemon/cadence';
 
 /**
  * Every query the app needs, in one place.
@@ -2697,7 +2698,30 @@ export async function expressFeeds(db, limit = 25) {
 }
 
 /**
- * Feeds whose next_fetch_at has passed, hand-submitted ones first.
+ * A feed's crawl tier, from its interval alone: 0 hot (read at least hourly),
+ * 1 active (daily), 2 slow, 3 dormant (gone quiet, read weekly), 4 archived
+ * (silent six months, read once a quarter). The house cadence
+ * (@profullstack/scraper-daemon/cadence) sets the interval from how often the
+ * feed posts, so the interval already says how much a feed is worth reading
+ * and a tier needs no column of its own: `feeds_due_tier_idx` is built on this
+ * exact expression, which is why it must stay byte-for-byte what tierSql() says.
+ */
+export const TIER_SQL = tierSql('fetch_interval_minutes');
+
+/**
+ * Feeds whose next_fetch_at has passed, hand-submitted ones first, then by tier.
+ *
+ * Oldest-due-first was the whole reason a live weekly show could sit a week
+ * stale: after the crawler stalled for four days (2026-10-24..28) 260k feeds
+ * were due at once, and a show that came due on the 25th waited behind every
+ * dormant blog that came due on the 24th. Now each tier gets its share of the
+ * batch (40% hot, 30% active, 18% slow, 10% dormant, 2% archived), slots a tier
+ * cannot fill are handed down and then back up, and within a tier it is still
+ * oldest due first. Under load the quiet tiers lag, never the live ones; with
+ * room to spare everything due is read. Archived feeds only ever get their 2%
+ * (or what nothing else wanted), so the queue works off live feeds.
+ *
+ * One range read per tier on feeds_due_tier_idx.
  *
  * @param {Client} db
  * @param {number} [limit]
@@ -2707,41 +2731,85 @@ export async function dueFeeds(db, limit = 25) {
   // Bounded rather than unbounded even though the express table is tiny: the
   // point of a reserved share is that it is reserved in both directions.
   const express = await expressFeeds(db, Math.floor(limit * EXPRESS_SHARE));
-  const remaining = limit - express.length;
-  if (remaining <= 0) return express;
+  const room = limit - express.length;
+  if (room <= 0) return express;
 
-  const { rows } = await db.execute({
-    // slug and title are along for the log: a crawler log line that names the
-    // blog and links to its page is worth two columns the crawl itself is
-    // holding the row for anyway. source_kind is what main added, and the
-    // crawl still needs it to know what it is fetching.
-    // item_count comes along so a crawl that stored nothing can pass the number
-    // straight back instead of paying for a count(*) to be told it is unchanged.
-    //
-    // last_published_at is what the crawl compares the document against to
-    // decide whether this publisher has published since we last looked -- the
-    // guard that keeps topics and credits from being rewritten on every crawl of
-    // an unchanged feed. It was missing from this select, so `knownPublished`
-    // read null for every feed the poller crawled and the guard was open in
-    // production the whole time.
-    //
-    // The last four are the conditional-request and change-detection signals
-    // added in 0032: what the server's validators were, what the feed contained,
-    // and when we last saw that change. They are what lets a feed stating no
-    // dates be scheduled on evidence rather than on the doubling ladder.
-    //
+  const now = nowIso();
+  const out = [...express];
+  const exhausted = new Set();
+  const seen = new Set(express.map((r) => String(r.id)));
+
+  const take = async (tier, want) => {
     // The express rows are excluded rather than deduplicated afterwards: they
     // have just been read and are about to be crawled, and handing the same
     // feed to two workers in one tick is two crawls of it.
-    sql: `select ${DUE_COLUMNS}
-          from feeds
-          where status <> 'dead' and next_fetch_at <= ?
-            and not (priority > 0 and last_fetched_at is null)
-          order by next_fetch_at asc limit ?`,
-    args: [nowIso(), remaining],
-  });
+    const { rows } = await db.execute({
+      sql: `select ${DUE_COLUMNS}
+            from feeds
+            where status <> 'dead' and ${TIER_SQL} = ? and next_fetch_at <= ?
+              and not (priority > 0 and last_fetched_at is null)
+            order by next_fetch_at asc limit ?`,
+      args: [TIERS.indexOf(tier), now, want + seen.size],
+    });
+    let got = 0;
+    for (const row of rows) {
+      if (got >= want) break;
+      if (seen.has(String(row.id))) continue;
+      seen.add(String(row.id));
+      out.push(row);
+      got += 1;
+    }
+    if (got < want) exhausted.add(tier);
+    return got;
+  };
 
-  return express.concat(rows);
+  let carry = 0;
+  for (const [tier, quota] of quotas(room)) {
+    const want = quota + carry;
+    carry = want > 0 ? want - (await take(tier, want)) : 0;
+  }
+  for (const tier of TIERS) {
+    if (carry <= 0) break;
+    if (!exhausted.has(tier)) carry -= await take(tier, carry);
+  }
+  return out;
+}
+
+/**
+ * Put a feed at the front of its tier's queue: the refresh button, for a feed
+ * the web process cannot read itself (a social source collected by the poller).
+ * The epoch rather than now(), because a tier is drained oldest due first and
+ * a backlog can be days deep; the express lane is for first crawls only.
+ *
+ * @param {Client} db
+ * @param {string} id
+ */
+export async function requestRefresh(db, id) {
+  await db.execute({
+    sql: `update feeds set next_fetch_at = '1970-01-01T00:00:00.000Z' where id = ? and status <> 'dead'`,
+    args: [id],
+  });
+}
+
+/**
+ * Due feeds per tier, and how late the oldest of each is: the number that says
+ * whether live feeds are being read on time even while the backlog drains.
+ *
+ * @param {Client} db
+ * @returns {Promise<Array<{ tier: string, due: number, oldest: string|null }>>}
+ */
+export async function dueByTier(db) {
+  const now = nowIso();
+  const out = [];
+  for (const [i, tier] of TIERS.entries()) {
+    const { rows } = await db.execute({
+      sql: `select count(*) as due, min(next_fetch_at) as oldest
+            from feeds where status <> 'dead' and ${TIER_SQL} = ? and next_fetch_at <= ?`,
+      args: [i, now],
+    });
+    out.push({ tier, due: Number(rows[0]?.due ?? 0), oldest: rows[0]?.oldest ?? null });
+  }
+  return out;
 }
 
 /**

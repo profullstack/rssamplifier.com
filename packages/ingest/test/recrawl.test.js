@@ -114,7 +114,8 @@ test('a feed is scheduled on its own rhythm rather than on a fixed ladder', asyn
   await crawlFeed(db, feed, { resolve });
 
   const first = Number((await q.feedBySlug(db, 'quiet')).fetch_interval_minutes);
-  assert.ok(first / 1440 > 3 && first / 1440 < 4, `weekly blog -> ${(first / 1440).toFixed(1)} days`);
+  // Six hours on release day up to 1.75 days just after a post, by where in its week it is.
+  assert.ok(first >= 360 && first <= 2520, `weekly blog -> ${(first / 1440).toFixed(2)} days`);
 
   // Crawling it again does not ratchet it anywhere: same document, same answer.
   await crawlFeed(db, await q.feedBySlug(db, 'quiet'), { resolve });
@@ -445,7 +446,7 @@ test('a feed that starts publishing again accelerates on its first new post', as
 
   const revived = await q.feedBySlug(db, 'quiet');
   const back = Number(revived.fetch_interval_minutes) / 1440;
-  assert.ok(back > 3 && back < 4, `back to a weekly rhythm, not ${back.toFixed(0)} days`);
+  assert.equal(back, 1.75, `back to a weekly rhythm, not ${back.toFixed(0)} days`);
 });
 
 test('a scraped source is never asked conditionally', async () => {

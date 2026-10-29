@@ -8,7 +8,7 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "@profullstack/scraper-daemon": "0.2.2",
+    "@profullstack/scraper-daemon": "0.3.0",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/discover": "workspace:*",
     "@rssamplifier/feed": "workspace:*",

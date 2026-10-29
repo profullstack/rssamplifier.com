@@ -1022,6 +1022,11 @@ async function queueTick() {
       cards: backlogs.cardsPending,
       authors,
     });
+
+    // Due feeds per crawl tier and how late the oldest of each is: the line that
+    // says live feeds are being read on time while the quiet tiers drain.
+    const tiers = await q.dueByTier(db);
+    log('tiers', Object.fromEntries(tiers.map((t) => [t.tier, `${t.due} due, oldest ${t.oldest ?? '-'}`])));
   } catch (err) {
     // A missed sample is a gap in a chart, which the chart draws as a gap. It
     // is not a reason to make noise in a log that is read for crawl failures.

@@ -45,6 +45,12 @@ const OVERDUE_MULTIPLE = 2;
 /** Below this, a feed that has not published is called dormant rather than quiet. */
 const DORMANT_DAYS = 365;
 
+/** Past a week between reads, a feed is archived (see @profullstack/scraper-daemon/cadence). */
+const ARCHIVED_AFTER_INTERVAL = 7 * DAY;
+
+/** ...and only once it has been silent this long. */
+const ARCHIVED_AFTER_SILENCE = 180 * DAY;
+
 /**
  * A short, plain interval. "3 minutes", "4 hours", "2 days", "8 months".
  *
@@ -115,6 +121,10 @@ export function freshness(feed = {}, newestPost = null, now = Date.now()) {
     publishedAt: published === null ? null : new Date(published).toISOString(),
     publishedGap: published === null ? null : humanGap(now - published),
     nextCheckAt: next === null ? null : new Date(next).toISOString(),
+    // Archived: silent six months, so the crawler reads it once a quarter rather
+    // than with the live feeds. The house cadence marks that with an interval
+    // past a week (the longest a live feed ever waits), so the interval says it.
+    archived: interval > ARCHIVED_AFTER_INTERVAL && published !== null && now - published > ARCHIVED_AFTER_SILENCE,
   };
 
   // Never successfully read. Distinct from every other state: we are not
@@ -153,6 +163,14 @@ export function freshness(feed = {}, newestPost = null, now = Date.now()) {
   // Read on time, but the publisher has gone quiet. This is the one the reader
   // most needs and is least likely to guess: the data is current, and current
   // means "nothing since 2023".
+  if (base.archived) {
+    return {
+      ...base,
+      state: 'dormant',
+      note: `Archived: nothing published for ${humanGap(now - published)}. Kept for the record and checked once a quarter in case it returns.`,
+    };
+  }
+
   if (published !== null && now - published > DORMANT_DAYS * DAY) {
     return {
       ...base,

@@ -62,6 +62,7 @@ export async function GET(req, { params }) {
         freshness: fresh.state,
         lastPublishedAt: fresh.publishedAt,
         nextCheckAt: fresh.nextCheckAt,
+        archived: fresh.archived,
         page: `${siteUrl()}/${feed.slug}`,
         topics: topics.map((t) => ({
           slug: t.slug,

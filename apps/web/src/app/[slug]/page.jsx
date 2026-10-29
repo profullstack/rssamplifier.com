@@ -23,6 +23,7 @@ import FollowControls from '../FollowControls.jsx';
 import ListFilter from '../ListFilter.jsx';
 import { FILTER_FROM } from '../../lib/listFilter.js';
 import Freshness from '../Freshness.jsx';
+import RefreshFeed from '../RefreshFeed.jsx';
 import PlayButton from '../PlayButton.jsx';
 import QueueAll from '../QueueAll.jsx';
 import QueueButton from '../QueueButton.jsx';
@@ -326,6 +327,7 @@ export default async function FeedPage({ params, base }) {
           lib/freshness.js. The newest post's date comes off the list this page
           has already loaded, so the signal costs no extra query. */}
       <Freshness feed={feed} newestPost={posts[0]?.published_at ?? null} />
+      <RefreshFeed slug={feed.slug} />
 
       {/* Follow and share, side by side, because they are the two things to do
           with a feed you have just found and only one of them needs an
