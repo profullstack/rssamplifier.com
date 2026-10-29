@@ -1,4 +1,4 @@
-import { alerts } from '@rssamplifier/db';
+import { alerts, coinpay } from '@rssamplifier/db';
 import { WebhookError } from '@rssamplifier/notify';
 
 import { db } from '../../../../lib/db.js';
@@ -65,7 +65,8 @@ export async function POST(req) {
  * @returns {Promise<Response>}
  */
 async function addEmail(client, userId, email) {
-  if (!email) return redirect(`${PAGE}?error=no-address`);
+  // A CoinPay-only account has a placeholder, not an address it proved.
+  if (!email || coinpay.isPlaceholderEmail(email)) return redirect(`${PAGE}?error=no-address`);
   if (!(await room(client, userId))) return redirect(`${PAGE}?error=too-many`);
 
   await alerts.addChannel(client, { userId, kind: 'email', target: email, label: 'Email' });

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@logicsrc/openaccess": "^0.3.1",
+    "@profullstack/coinpay-onboard": "0.3.1",
     "@profullstack/contact-form": "0.3.2",
     "@profullstack/footer": "latest",
     "@profullstack/leaderboard": "^0.3.1",

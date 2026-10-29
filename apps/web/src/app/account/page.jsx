@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
-import { accounts, apikeys, dataset, newsletter, profiles, webrings } from '@rssamplifier/db';
-import { profileStore } from '@rssamplifier/auth';
+import { accounts, apikeys, coinpay, dataset, newsletter, profiles, webrings } from '@rssamplifier/db';
+import { hasOtherSignIn, profileStore } from '@rssamplifier/auth';
 import { COLUMNS } from '@profullstack/profile';
 
 import Toolbar from '../Toolbar.jsx';
@@ -13,6 +13,8 @@ import { currentUser } from '../../lib/auth.js';
 import { topicLabel } from '../../lib/following.js';
 import { ANONYMOUS_HOURLY } from '../../lib/ratelimit.js';
 import { latestClosedWindow } from '../../lib/datasetWindow.js';
+import { coinpayEnabled } from '../../lib/coinpay.js';
+import { explainCoinpay } from '../../lib/signInForm.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,7 +26,7 @@ export const metadata = {
 /**
  * The account page: what you follow, and how you get back in.
  *
- * @param {{ searchParams: Promise<{ welcome?: string, revoked?: string, created?: string, keyRevoked?: string, keyError?: string, newsletter?: string, ringsite?: string }> }} props
+ * @param {{ searchParams: Promise<{ coinpay?: string, welcome?: string, revoked?: string, created?: string, keyRevoked?: string, keyError?: string, newsletter?: string, ringsite?: string }> }} props
  */
 export default async function AccountPage({ searchParams }) {
   const params = await searchParams;
@@ -50,6 +52,11 @@ export default async function AccountPage({ searchParams }) {
     webrings.ringsForAccount(client, userId).catch(() => []),
   ]);
 
+  // Sign in with CoinPay: connected or not, and whether it may be dropped.
+  const coinpayIdentity = await coinpay.identityForUser(client, userId).catch(() => null);
+  const placeholder = coinpay.isPlaceholderEmail(user.email);
+  const canDisconnect = coinpayIdentity ? await hasOtherSignIn(client, userId) : false;
+
   // One row per ring, whether owned or joined through a claimed site.
   const ringRows = [...new Map(myRings.map((r) => [r.slug, r])).values()];
   const ringSite =
@@ -60,7 +67,7 @@ export default async function AccountPage({ searchParams }) {
   const profileValues = Object.fromEntries(
     COLUMNS.map((c) => [c, mine?.[c] == null ? null : String(mine[c])]),
   );
-  if (!profileValues.email) profileValues.email = String(user.email);
+  if (!profileValues.email && !placeholder) profileValues.email = String(user.email);
 
   // Only for an account that has one, so the overwhelming majority of readers —
   // who will never license the corpus — do not pay a query to be told they have
@@ -73,10 +80,12 @@ export default async function AccountPage({ searchParams }) {
 
   return (
     <>
-      <p className="eyebrow">Signed in as {String(user.email)}</p>
+      <p className="eyebrow">
+        {placeholder ? 'Signed in with CoinPay' : `Signed in as ${String(user.email)}`}
+      </p>
       <h1>Your account</h1>
 
-      {params.welcome && (
+      {params.welcome === '1' && (
         <p className="notice">
           Welcome. Add a passkey below and you will not need the email link again — though it will
           keep working if you ever lose the device.
@@ -84,6 +93,57 @@ export default async function AccountPage({ searchParams }) {
       )}
 
       {params.revoked && <p className="notice">That passkey has been removed.</p>}
+
+      <h2 id="coinpay">CoinPay</h2>
+      {params.coinpay && <p className="notice">{explainCoinpay(params.coinpay)}</p>}
+      {params.welcome === 'coinpay' && (
+        <p className="notice">
+          Welcome. You signed in with CoinPay. Add an email address below if you want the weekly
+          digest, alerts by email, or the emailed link as a way back in.
+        </p>
+      )}
+      {coinpayIdentity ? (
+        <div className="submit-box">
+          <p>
+            Connected{coinpayIdentity.email ? ` (${String(coinpayIdentity.email)})` : ''}. You can
+            sign in with CoinPay.
+          </p>
+          {canDisconnect ? (
+            <form method="post" action="/api/v1/coinpay/disconnect">
+              <div className="submit-actions">
+                <button type="submit">Disconnect CoinPay</button>
+              </div>
+            </form>
+          ) : (
+            <p className="hint">
+              CoinPay is the only way into this account, so it cannot be disconnected. Add an
+              email address or a passkey first.
+            </p>
+          )}
+        </div>
+      ) : coinpayEnabled() ? (
+        <div className="submit-box">
+          <p className="hint">Connect your CoinPay account to sign in with it.</p>
+          <div className="submit-actions">
+            <a className="button" href="/api/v1/coinpay/oauth/start?link=1&next=%2Faccount">
+              Connect CoinPay
+            </a>
+          </div>
+        </div>
+      ) : null}
+      {placeholder && (
+        <form method="post" action="/api/v1/coinpay/email" className="submit-box">
+          <p className="eyebrow">Add an email address</p>
+          <p className="hint">
+            CoinPay does not confirm addresses, so this account has none yet. We mail a link to the
+            address; following it adds it.
+          </p>
+          <input type="email" name="email" placeholder="you@example.com" aria-label="Your email address" autoComplete="email" required />
+          <div className="submit-actions">
+            <button type="submit">Send the link</button>
+          </div>
+        </form>
+      )}
 
       <h2>Your details</h2>
       <p className="hint">

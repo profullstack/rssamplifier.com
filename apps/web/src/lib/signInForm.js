@@ -83,6 +83,10 @@ export function explainSignInError(code, retry) {
   }
   if (code === 'missing-token') return 'That link was incomplete. Ask for a new one.';
   if (code === 'invalid-profile') return 'A few of those fields need another look.';
+  if (code === 'claim-failed') {
+    return 'That address now belongs to another account, so it was not added. Sign in to that account and connect CoinPay from its account page.';
+  }
+  if (typeof code === 'string' && code.startsWith('coinpay-')) return explainCoinpay(code.slice(8));
   return 'Something went wrong. Try again.';
 }
 
@@ -128,4 +132,56 @@ export function signupErrorsFromParams(params) {
     if (typeof v === 'string' && v) values[name] = v.slice(0, 300);
   }
   return { errors, values };
+}
+
+/**
+ * What a Sign in with CoinPay outcome means, for /login and the account page.
+ *
+ * @param {unknown} code
+ * @returns {string}
+ */
+export function explainCoinpay(code) {
+  switch (code) {
+    case 'bad-state':
+      return 'That CoinPay sign-in did not start in this browser. Start again.';
+    case 'expired':
+      return 'That CoinPay sign-in expired or was already used. Start again.';
+    case 'wrong-session':
+      return 'Sign in to the account you want to connect, then try again.';
+    case 'cancelled':
+      return 'CoinPay sign-in was cancelled.';
+    case 'failed':
+      return 'CoinPay sign-in could not be completed. Try again.';
+    case 'linked-elsewhere':
+      return 'That CoinPay account is already connected to a different RSS Amplifier account.';
+    case 'already-linked':
+      return 'This account is already connected to a different CoinPay account.';
+    case 'no-account':
+      return 'That account no longer exists.';
+    case 'connected':
+      return 'CoinPay connected. You can sign in with it from now on.';
+    case 'disconnected':
+      return 'CoinPay disconnected.';
+    case 'not-linked':
+      return 'CoinPay is not connected.';
+    case 'only-sign-in':
+      return 'CoinPay is the only way into this account, so it stays connected. Add an email address or a passkey first.';
+    case 'last-passkey':
+      return 'That passkey is the only way into this account, so it stays. Connect CoinPay or add an email address first.';
+    case 'email-sent':
+      return 'A link is on its way. Follow it to add the address to this account.';
+    case 'email-invalid-email':
+      return 'That does not look like an email address.';
+    case 'email-email-taken':
+      return 'That address belongs to another account. Sign in to it and connect CoinPay from its account page.';
+    case 'email-has-email':
+      return 'This account already has an email address.';
+    case 'email-rate-limited':
+    case 'too-many':
+      return 'Too many attempts. Try again later.';
+    case 'email-email-not-configured':
+      return 'Email is not configured on this deployment.';
+    default:
+      return 'Something went wrong with CoinPay. Try again.';
+  }
 }

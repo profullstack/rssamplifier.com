@@ -7,7 +7,17 @@ export {
   endSession,
   sessionCookieOptions,
 } from './src/session.js';
-export { requestSignInLink, consumeSignInLink, looksLikeEmail } from './src/magic.js';
+export { requestSignInLink, consumeSignInLink, looksLikeEmail, requestEmailClaimLink } from './src/magic.js';
+export {
+  PENDING_MS as COINPAY_PENDING_MS,
+  safeNext as coinpaySafeNext,
+  savePending as saveCoinpayPending,
+  takeCallback as takeCoinpayCallback,
+  signInWithCoinpay,
+  hasOtherSignIn,
+  disconnectCoinpay,
+  canRemovePasskey,
+} from './src/coinpay.js';
 export { profileStore } from './src/profile.js';
 export {
   beginRegistration,

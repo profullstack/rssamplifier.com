@@ -1,4 +1,5 @@
 import { accounts } from '@rssamplifier/db';
+import { canRemovePasskey } from '@rssamplifier/auth';
 
 import { db } from '../../../../../lib/db.js';
 import { currentUser } from '../../../../../lib/auth.js';
@@ -14,6 +15,10 @@ export const dynamic = 'force-dynamic';
  * Removing the last passkey is allowed: the emailed link always works, so an
  * account can never be locked out by this, and refusing would strand anyone
  * whose only key is on a device they no longer have.
+ *
+ * The one exception is an account made by Sign in with CoinPay that has since
+ * disconnected CoinPay and never proved an address: its last passkey is the
+ * only way in, so it stays.
  *
  * @param {Request} req
  */
@@ -36,6 +41,12 @@ export async function POST(req) {
     }
   } catch {
     return json({ error: 'bad-request' }, 400);
+  }
+
+  if (!(await canRemovePasskey(db(), String(user.id)))) {
+    return wantsHtml
+      ? new Response(null, { status: 303, headers: { location: '/account?coinpay=last-passkey#coinpay' } })
+      : json({ error: 'last-way-in' }, 409);
   }
 
   const removed = await accounts.deleteCredential(db(), id, String(user.id));
