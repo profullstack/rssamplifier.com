@@ -287,22 +287,15 @@ export default function RootLayout({ children }) {
           {children}
         </main>
 
-        {/* Two rows: the machine-readable doors here, then @profullstack/footer
-            with the pages people need, the Profullstack webring and the
-            copyright. Browsing and the network links live in the masthead and
-            in the pit.world footer last in <body>. */}
-        <footer className="site">
-          <div className="wrap">
-            <p>
-              For agents: <a href="/mcp">MCP</a> · <a href="/cli">CLI</a> ·{' '}
-              <a href="/api/feeds">JSON API</a> · <a href="/opml">OPML</a> ·{' '}
-              <a href="/llms.txt">llms.txt</a>
-            </p>
-          </div>
-        </footer>
+        {/* One shared footer includes the human and machine-readable doors. */}
         <Footer
           site="https://rssamplifier.com/"
           links={[
+            { label: 'MCP', href: '/mcp' },
+            { label: 'CLI', href: '/cli' },
+            { label: 'JSON API', href: '/api/feeds' },
+            { label: 'OPML', href: '/opml' },
+            { label: 'llms.txt', href: '/llms.txt' },
             { label: 'About', href: '/about' },
             { label: 'Advertise', href: '/advertise' },
             { label: 'Training data', href: '/sales' },
