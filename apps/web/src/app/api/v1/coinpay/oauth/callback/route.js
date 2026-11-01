@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { finishSignIn } from '@profullstack/coinpay-onboard/oauth';
-import { signInWithCoinpay, startSession, takeCoinpayCallback } from '@rssamplifier/auth';
+import { saveOpenProfileContact } from '@profullstack/profile';
+import { profileStore, signInWithCoinpay, startSession, takeCoinpayCallback } from '@rssamplifier/auth';
 
 import { db } from '../../../../../../lib/db.js';
 import { currentUser, requestMeta, setSessionCookie } from '../../../../../../lib/auth.js';
@@ -44,6 +45,7 @@ export async function GET(req) {
   }
 
   let profile;
+  let openProfileUrl = null;
   try {
     const result = await finishSignIn({
       code,
@@ -54,6 +56,7 @@ export async function GET(req) {
       redirectUri: config.redirectUri,
     });
     profile = { sub: result.sub, email: result.email, name: result.name };
+    openProfileUrl = typeof result.userinfo.openprofile_url === 'string' ? result.userinfo.openprofile_url : null;
   } catch (err) {
     console.error('[coinpay] sign-in failed:', err?.message ?? err);
     return seeOther(linking ? '/account?coinpay=failed#coinpay' : '/login?error=coinpay-failed');
@@ -63,7 +66,13 @@ export async function GET(req) {
   if (!outcome.ok) {
     return seeOther(linking ? `/account?coinpay=${outcome.error}#coinpay` : `/login?error=coinpay-${outcome.error}`);
   }
-  if (linking) return seeOther('/account?coinpay=connected#coinpay');
+  if (linking) {
+    if (openProfileUrl) {
+      try { await saveOpenProfileContact(profileStore(db()), String(outcome.userId), openProfileUrl); }
+      catch { console.warn('[coinpay] OpenProfile import skipped'); }
+    }
+    return seeOther('/account?coinpay=connected#coinpay');
+  }
 
   const meta = await requestMeta();
   const { token } = await startSession(db(), outcome.userId, meta);
