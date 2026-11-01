@@ -19,7 +19,7 @@
     "@profullstack/openprofile": "^0.2.0",
     "@profullstack/partners": "^0.2.0",
     "@profullstack/player": "0.16.0",
-    "@profullstack/profile": "0.1.6",
+    "@profullstack/profile": "0.1.7",
     "@profullstack/rssamplifier": "workspace:*",
     "@profullstack/submit-feed": "^0.1.3",
     "@profullstack/x402-gateway": "^0.16.1",
