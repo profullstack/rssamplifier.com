@@ -1,7 +1,9 @@
 import { normalizeUrl, probePage, readableArticle, reframePage } from '@rssamplifier/feed';
+import { removals } from '@rssamplifier/db';
 import { withPageSlot } from '../../../lib/pageGate.js';
 
-import { siteUrl } from '../../../lib/db.js';
+import { db, siteUrl } from '../../../lib/db.js';
+import { removedPublisherResponse } from '../../../lib/frameRemoval.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -79,6 +81,11 @@ export async function GET(req) {
  * @returns {Promise<Response>}
  */
 async function openPage({ target, site, self, through }) {
+  const removed = await removedPublisherResponse(target, (url) =>
+    removals.isRemovedUrl(db(), url),
+  );
+  if (removed) return removed;
+
   const probe = await probePage(target, { origin: site, wantHtml: 'always' });
   const landed = probe.url ?? target;
 
