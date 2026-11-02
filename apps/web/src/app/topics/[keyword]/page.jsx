@@ -1,9 +1,8 @@
 import { notFound } from 'next/navigation';
-import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../lib/db.js';
 import { feedAlternates } from '../../../lib/subscribe.js';
-import { slugFromUrl } from '../../../lib/topicGroups.js';
+import { resolveTopics, resolveTopicsWithCounts, topicSegment } from '../../../lib/topicSet.js';
 import { pageNumber } from '../../CategoryIndex.jsx';
 import TopicListing from './TopicListing.jsx';
 
@@ -14,14 +13,19 @@ export const dynamic = 'force-dynamic';
  */
 export async function generateMetadata({ params }) {
   const { keyword } = await params;
-  const topic = await q.topicBySlug(db(), slugFromUrl(keyword));
+  const { topic } = await resolveTopics(db(), keyword);
   if (!topic) return { title: 'Not found' };
 
-  const page = `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}`;
+  const page = `${siteUrl()}/topics/${topicSegment(topic.slug)}`;
 
   return {
     title: topic.keyword,
     description: `${topic.feedCount} blogs and podcasts in the RSS Amplifier directory write about ${topic.keyword}.`,
+    // A combined view is every listed topic's feeds again, in another order,
+    // under one of a combinatorial number of URLs. Canonical to itself (it is
+    // its own page, not one of its topics) and out of the index, the same way
+    // the player pages are; the links on it still count.
+    ...(topic.multi ? { robots: { index: false, follow: true } } : {}),
     alternates: {
       canonical: page,
       // Autodiscovery, which is how a browser extension or a reader offers to
@@ -41,13 +45,9 @@ export async function generateMetadata({ params }) {
  */
 export default async function TopicPage({ params, searchParams }) {
   const { keyword } = await params;
-  const slug = slugFromUrl(keyword);
   const client = db();
 
-  const [topic, counts] = await Promise.all([
-    q.topicBySlug(client, slug),
-    q.topicKindCounts(client, slug),
-  ]);
+  const { topic, counts } = await resolveTopicsWithCounts(client, keyword);
   if (!topic) notFound();
 
   return (

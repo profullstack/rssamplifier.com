@@ -4,6 +4,7 @@ import { db } from '../../../lib/db.js';
 import { currentUser } from '../../../lib/auth.js';
 import { PLAYLIST_LIMIT } from '../../../lib/topicFeed.js';
 import { playlistEntry, playerPath, queueRuntime, rawPlaylistPath } from '../../../lib/player.js';
+import { topicQueryArg, topicSegment } from '../../../lib/topicSet.js';
 import PlaylistPlayer from '../../PlaylistPlayer.jsx';
 import QueueAll from '../../QueueAll.jsx';
 
@@ -16,16 +17,16 @@ import QueueAll from '../../QueueAll.jsx';
  * they differ only in the filter, and two copies would drift.
  *
  * @param {{
- *   topic: { slug: string, keyword: string, feedCount: number },
+ *   topic: import('../../../lib/topicSet.js').ResolvedTopic,
  *   group?: { segment: string, kinds: string[], heading: string, item: string }|null,
  * }} props
  */
 export default async function TopicPlayer({ topic, group = null }) {
   const client = db();
-  const slug = encodeURIComponent(topic.slug);
+  const slug = topicSegment(topic.slug);
 
   const [rows, user] = await Promise.all([
-    q.mediaForTopic(client, topic.slug, {
+    q.mediaForTopic(client, topicQueryArg(topic), {
       limit: PLAYLIST_LIMIT,
       kinds: group?.kinds ?? null,
     }),

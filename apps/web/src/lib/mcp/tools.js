@@ -17,6 +17,7 @@ import { clampRawInput } from '../submitted.js';
 import { clip, plainText } from './text.js';
 import { WEBHOOK_TOOLS } from './webhookTools.js';
 import { clientIp } from '@profullstack/x402-gateway/edge';
+import { resolveTopics, topicQueryArg, topicSegment } from '../topicSet.js';
 
 /**
  * What an agent can do with the directory.
@@ -285,11 +286,14 @@ export const TOOLS = [
     name: 'get_topic',
     title: 'Feeds covering a topic',
     description:
-      'Every feed filed under one topic. The keyword is normalised, so "Home Lab", "home lab" and "home-lab" all reach the same topic and you can pass a phrase you read anywhere. Each feed says whether it landed here from the publisher\'s own tag or from a phrase counted across its writing.',
+      'Every feed filed under one topic. The keyword is normalised, so "Home Lab", "home lab" and "home-lab" all reach the same topic and you can pass a phrase you read anywhere. Each feed says whether it landed here from the publisher\'s own tag or from a phrase counted across its writing. A comma-separated list ("business, saas, crypto", up to 10) returns the union: every feed filed under any of them, each once, with `topics` naming the known ones and `unknown` the rest.',
     inputSchema: {
       type: 'object',
       properties: {
-        keyword: { type: 'string', description: 'The topic, in any spelling.' },
+        keyword: {
+          type: 'string',
+          description: 'The topic, in any spelling — or several, separated by commas.',
+        },
         limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Default 100.' },
         offset: { type: 'integer', minimum: 0, description: 'Default 0.' },
       },
@@ -297,28 +301,25 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
     async run(args) {
-      const slug = topicSlug(String(args?.keyword ?? ''));
-      if (!slug) throw invalid('keyword is required');
-
-      const client = db();
-      const topic = await q.topicBySlug(client, slug);
-      if (!topic) throw invalid(`no topic '${args?.keyword}' — try list_topics or search`);
+      const topic = await mcpTopic(args?.keyword);
 
       const limit = bounded(args?.limit, 100, 1, 500);
       const offset = Math.max(Number(args?.offset ?? 0) || 0, 0);
-      const rows = await q.feedsForTopic(client, slug, { limit, offset });
+      const rows = await q.feedsForTopic(db(), topicQueryArg(topic), { limit, offset });
 
       return {
         slug: topic.slug,
         keyword: topic.keyword,
         total: topic.feedCount,
+        ...topicSetFields(topic),
         limit,
         offset,
-        page: `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}`,
+        page: `${siteUrl()}/topics/${topicSegment(topic.slug)}`,
         feeds: rows.map((f) => ({
           ...feed(f),
           source: f.source,
           strength: Number(f.count ?? 0),
+          ...(topic.multi ? { topics: String(f.topics ?? '').split(',').filter(Boolean) } : {}),
         })),
       };
     },
@@ -328,32 +329,31 @@ export const TOOLS = [
     name: 'topic_posts',
     title: 'Recent posts on a topic',
     description:
-      'What the feeds covering a topic have actually published lately, newest first — the river rather than the roster. Note the difference from get_topic, which lists who covers the subject; this lists what they wrote. Drawn from the feeds most strongly filed under the topic, so a very broad keyword is a sample rather than a census.',
+      'What the feeds covering a topic have actually published lately, newest first — the river rather than the roster. Note the difference from get_topic, which lists who covers the subject; this lists what they wrote. Drawn from the feeds most strongly filed under the topic, so a very broad keyword is a sample rather than a census. A comma-separated list ("business, saas, crypto", up to 10) is one river across all of them.',
     inputSchema: {
       type: 'object',
       properties: {
-        keyword: { type: 'string', description: 'The topic, in any spelling.' },
+        keyword: {
+          type: 'string',
+          description: 'The topic, in any spelling — or several, separated by commas.',
+        },
         limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Default 50.' },
       },
       required: ['keyword'],
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
     async run(args) {
-      const slug = topicSlug(String(args?.keyword ?? ''));
-      if (!slug) throw invalid('keyword is required');
-
-      const client = db();
-      const topic = await q.topicBySlug(client, slug);
-      if (!topic) throw invalid(`no topic '${args?.keyword}' — try list_topics or search`);
+      const topic = await mcpTopic(args?.keyword);
 
       const limit = bounded(args?.limit, 50, 1, 200);
-      const rows = await q.itemsForTopic(client, slug, { limit });
+      const rows = await q.itemsForTopic(db(), topicQueryArg(topic), { limit });
 
       return {
         slug: topic.slug,
         keyword: topic.keyword,
+        ...topicSetFields(topic),
         limit,
-        feed: `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}.rss`,
+        feed: `${siteUrl()}/topics/${topicSegment(topic.slug)}.rss`,
         posts: rows.map(post),
       };
     },
@@ -1023,6 +1023,52 @@ function boundedFloat(raw, fallback, min, max) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(Math.max(n, min), max);
+}
+
+/**
+ * The topic a tool's `keyword` names: one, in any spelling, or a comma list.
+ *
+ * A keyword without a comma resolves exactly as before (topicSlug, then
+ * topicBySlug). A list goes through the same resolver the pages and the JSON
+ * endpoint use, so `get_topic` with "business, saas" is /api/topics/business,saas.
+ *
+ * @param {unknown} keyword
+ * @returns {Promise<import('../topicSet.js').ResolvedTopic>}
+ */
+async function mcpTopic(keyword) {
+  const raw = String(keyword ?? '');
+
+  if (!raw.includes(',')) {
+    const slug = topicSlug(raw);
+    if (!slug) throw invalid('keyword is required');
+    const topic = await q.topicBySlug(db(), slug);
+    if (!topic) throw invalid(`no topic '${raw}' — try list_topics or search`);
+    return topic;
+  }
+
+  const found = await resolveTopics(db(), encodeURIComponent(raw));
+  if (found.error === 'too-many') throw invalid(`at most ${found.max} topics at once`);
+  if (!found.topic) throw invalid(`no topic in '${raw}' — try list_topics or search`);
+  return found.topic;
+}
+
+/**
+ * The fields a combined topic adds to a tool's answer; nothing for one topic.
+ *
+ * @param {import('../topicSet.js').ResolvedTopic} topic
+ * @returns {Record<string, unknown>}
+ */
+function topicSetFields(topic) {
+  if (!topic.multi) return {};
+  return {
+    topics: (topic.topics ?? []).map((t) => ({
+      slug: t.slug,
+      keyword: t.keyword,
+      feedCount: t.feedCount,
+      page: `${siteUrl()}/topics/${encodeURIComponent(t.slug)}`,
+    })),
+    unknown: topic.unknown ?? [],
+  };
 }
 
 /**

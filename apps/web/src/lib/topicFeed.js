@@ -10,6 +10,7 @@ import { db, siteUrl } from './db.js';
 import { fetchFeedAds } from './feedAds.js';
 import { playerPath, wantsPlayer } from './player.js';
 import { slugFromUrl, topicGroup } from './topicGroups.js';
+import { parseTopicList, resolveTopics, topicQueryArg, topicSegment } from './topicSet.js';
 
 /** How many items a topic feed carries by default, and at most. */
 const DEFAULT_LIMIT = 50;
@@ -47,6 +48,10 @@ export const PLAYLIST_LIMIT = DEFAULT_LIMIT;
  * — the topic page, and `/api/topics/:slug` as JSON — and the two answer
  * different questions. A reader subscribing to `/topics/physics.rss` wants to be
  * told when somebody writes about physics, not to be handed a directory.
+ *
+ * Several topics — `/topics/business,saas,crypto.rss` — are one river drawn
+ * from all of them, newest first, each topic contributing its own strongest
+ * feeds (see pickedTopicFeeds in the db package for the cap).
  *
  * @param {{
  *   keyword: string,
@@ -102,17 +107,29 @@ export async function topicFeed({
   // being given are genuinely different resources, and 303 is the status that
   // says so without implying the playlist has moved.
   if (spec.media && wantsPlayer(req)) {
+    const { slugs, list } = parseTopicList(keyword);
     return Response.redirect(
-      `${siteUrl()}${playerPath(slug, group?.segment ?? null)}`,
+      `${siteUrl()}${playerPath(list ? slugs.join(',') : slug, group?.segment ?? null)}`,
       303,
     );
   }
 
   const client = db();
-  const topic = await q.topicBySlug(client, slug);
+  const found = await resolveTopics(client, keyword);
+
+  if (found.error === 'too-many') {
+    return fail(format, 400, 'too many topics', `Combine at most ${found.max}.`);
+  }
+
+  const topic = found.topic;
 
   if (!topic) {
-    return fail(format, 404, `no such topic: ${slug}`, `Browse ${siteUrl()}/topics`);
+    return fail(
+      format,
+      404,
+      `no such topic: ${found.unknown.join(',') || slug}`,
+      `Browse ${siteUrl()}/topics`,
+    );
   }
 
   // A playlist can only carry files, so it is drawn from a different query than
@@ -120,12 +137,12 @@ export async function topicFeed({
   const kinds = group?.kinds ?? null;
   const [rows, counts] = await Promise.all([
     spec.media
-      ? q.mediaForTopic(client, slug, { limit, kinds })
-      : q.itemsForTopic(client, slug, { limit, kinds }),
-    group ? q.topicKindCounts(client, slug) : Promise.resolve({}),
+      ? q.mediaForTopic(client, topicQueryArg(topic), { limit, kinds })
+      : q.itemsForTopic(client, topicQueryArg(topic), { limit, kinds }),
+    group ? q.topicKindCounts(client, topicQueryArg(topic)) : Promise.resolve({}),
   ]);
 
-  const base = `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}`;
+  const base = `${siteUrl()}/topics/${topicSegment(topic.slug)}`;
   const page = group ? `${base}/${group.segment}` : base;
   const subject = group ? `${topic.keyword} (${group.noun})` : topic.keyword;
 

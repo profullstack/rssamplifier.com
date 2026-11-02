@@ -1,9 +1,9 @@
 import { notFound } from 'next/navigation';
-import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../lib/db.js';
 import { feedAlternates } from '../../../../lib/subscribe.js';
-import { slugFromUrl, topicGroup } from '../../../../lib/topicGroups.js';
+import { topicGroup } from '../../../../lib/topicGroups.js';
+import { resolveTopicsWithCounts, topicSegment } from '../../../../lib/topicSet.js';
 import { pageNumber } from '../../../CategoryIndex.jsx';
 import TopicListing from '../TopicListing.jsx';
 
@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic';
  *
  * @param {{ params: Promise<{ keyword: string, group: string }> }} props
  * @returns {Promise<{
- *   topic: { slug: string, keyword: string, feedCount: number },
+ *   topic: import('../../../../lib/topicSet.js').ResolvedTopic,
  *   counts: Record<string, number>,
  *   group: NonNullable<ReturnType<typeof topicGroup>>,
  *   total: number,
@@ -31,12 +31,7 @@ async function resolve({ params }) {
   if (!group) return null;
 
   const client = db();
-  const slug = slugFromUrl(keyword);
-
-  const [topic, counts] = await Promise.all([
-    q.topicBySlug(client, slug),
-    q.topicKindCounts(client, slug),
-  ]);
+  const { topic, counts } = await resolveTopicsWithCounts(client, keyword);
   if (!topic) return null;
 
   const total = group.kinds.reduce((sum, kind) => sum + (counts[kind] ?? 0), 0);
@@ -58,12 +53,14 @@ export async function generateMetadata(props) {
   if (!found) return { title: 'Not found' };
 
   const { topic, group, total } = found;
-  const page = `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}/${group.segment}`;
+  const page = `${siteUrl()}/topics/${topicSegment(topic.slug)}/${group.segment}`;
   const heading = `${topic.keyword}: ${group.heading.toLowerCase()}`;
 
   return {
     title: heading,
     description: `${total} ${group.noun} in the RSS Amplifier directory cover ${topic.keyword}.`,
+    // Out of the index for a combined view; see the whole-topic page.
+    ...(topic.multi ? { robots: { index: false, follow: true } } : {}),
     alternates: {
       canonical: page,
       types: feedAlternates(page, heading),

@@ -28,12 +28,16 @@ const RAW_PARAM = 'dl';
  * not to read a directory of feeds. It is also the redirect target below, and a
  * redirect wants somewhere honest to land.
  *
- * @param {string} slug the topic slug, unencoded
+ * @param {string} slug the topic slug, unencoded; or several joined by commas
  * @param {string|null} [segment] the sub-group segment, if this is one category
  * @returns {string}
  */
 export function playerPath(slug, segment = null) {
-  const topic = `/topics/${encodeURIComponent(slug)}`;
+  // Commas left readable, so a combined view (business,saas) plays at the
+  // address it is browsed at. A single slug never contains one.
+  // (Inline rather than topicSet.js's topicSegment: this module is imported by
+  // a client component, and topicSet pulls in the database package.)
+  const topic = `/topics/${String(slug).split(',').map(encodeURIComponent).join(',')}`;
   return segment ? `${topic}/${segment}/play` : `${topic}/play`;
 }
 
