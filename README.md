@@ -236,6 +236,7 @@ All send `access-control-allow-origin: *` and need no key.
 | `/api/discoveries/{id}` | Progress of one keyword run |
 | `/api/crawlstats` | Crawler health, including the two discovery queues |
 | `/api/topics/{keyword}` | The feeds on a topic, its category breakdown, `?group=` to narrow |
+| `/api/topics/{a},{b},{c}` | Several topics (up to 10) as one: the union, each feed once, tagged-under-any first then strength summed across them; adds `topics` and `unknown`. Works on every topic surface: `/topics/a,b`, `/topics/a,b/blogs`, `/topics/a,b.rss`, the player, and the MCP `get_topic`/`topic_posts` |
 | `/topics/{keyword}/{group}.rss` | One category of a topic, as a feed — also `.atom`, `.json`, `.m3u`, `.pls` |
 | `/mcp` | MCP endpoint — and the documentation page, in a browser |
 | `/api/authors` | The people behind the feeds; `?feed={url}` finds the people behind one feed |

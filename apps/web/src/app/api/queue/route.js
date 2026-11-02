@@ -93,7 +93,10 @@ export async function POST(req) {
     const group = body.group ? topicGroup(body.group) : null;
     if (body.group && !group) return wantsHtml ? redirect(back) : json({ error: 'not-found' }, 404);
 
-    const rows = await q.mediaForTopic(client, String(body.topic ?? ''), {
+    // A combined view (business,saas) posts its slugs joined by commas, the
+    // same form its address uses; a single topic is a one-element list, which
+    // is the single-topic query unchanged.
+    const rows = await q.mediaForTopic(client, String(body.topic ?? '').split(','), {
       limit: PLAYLIST_LIMIT,
       kinds: group?.kinds ?? null,
     });

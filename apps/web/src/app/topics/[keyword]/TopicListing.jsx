@@ -14,6 +14,7 @@ import Share from '../../Share.jsx';
 import { Avatar } from '../../Thumb.jsx';
 import { feedImage } from '../../../lib/thumbs.js';
 import { jsonLdScript } from '../../../lib/jsonld.js';
+import { topicQueryArg, topicSegment } from '../../../lib/topicSet.js';
 
 /** Feeds per page. Matches the category pages. */
 export const PAGE_SIZE = 60;
@@ -71,8 +72,13 @@ function formatTitle(ext, what) {
  * moment one of them grew a feature, and the sub-groups exist precisely because
  * there are now eight of them per topic.
  *
+ * A combined view (/topics/business,saas,crypto) is the same page over the
+ * union of its topics — see lib/topicSet.js. What it adds is a link to each
+ * topic it combines and a note naming any that do not exist; what it leaves
+ * out is everything keyed on one topic's slug (following it, its webring).
+ *
  * @param {{
- *   topic: { slug: string, keyword: string, feedCount: number },
+ *   topic: import('../../../lib/topicSet.js').ResolvedTopic,
  *   counts: Record<string, number>,
  *   group?: import('../../../lib/topicGroups.js').TOPIC_GROUPS[number]|null,
  *   page?: number,
@@ -80,7 +86,8 @@ function formatTitle(ext, what) {
  */
 export default async function TopicListing({ topic, counts, group = null, page = 1 }) {
   const client = db();
-  const slug = encodeURIComponent(topic.slug);
+  const slug = topicSegment(topic.slug);
+  const multi = Boolean(topic.multi);
 
   const base = group ? `/topics/${slug}/${group.segment}` : `/topics/${slug}`;
   const total = group
@@ -88,7 +95,7 @@ export default async function TopicListing({ topic, counts, group = null, page =
     : topic.feedCount;
 
   const [rows, user] = await Promise.all([
-    q.feedsForTopic(client, topic.slug, {
+    q.feedsForTopic(client, topicQueryArg(topic), {
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE,
       kinds: group?.kinds ?? null,
@@ -99,7 +106,7 @@ export default async function TopicListing({ topic, counts, group = null, page =
   // Only asked once we know there is someone to ask about. A signed-out visitor
   // still gets the button — the endpoint sends them to sign in and back here —
   // so this decides what it says rather than whether it appears.
-  const follow = user
+  const follow = user && !multi
     ? await alerts.topicFollowState(client, String(user.id), topic.slug, group?.segment ?? '')
     : { following: false, alerts: false };
 
@@ -154,14 +161,39 @@ export default async function TopicListing({ topic, counts, group = null, page =
       <p className="eyebrow">
         {group ? (
           <>
-            <a href="/topics">Topic</a> · <a href={`/topics/${slug}`}>{topic.keyword}</a>
+            <a href="/topics">{multi ? 'Topics' : 'Topic'}</a> ·{' '}
+            <a href={`/topics/${slug}`}>{topic.keyword}</a>
           </>
         ) : (
-          <a href="/topics">Topic</a>
+          <a href="/topics">{multi ? 'Topics' : 'Topic'}</a>
         )}
       </p>
       <h1>{heading}</h1>
       <p className="lede">{lede}</p>
+
+      {/* What this combined view is made of, each topic on its own page, and
+          what was asked for that does not exist — said rather than silently
+          dropped, so a typo in one of five topics is visible. */}
+      {multi && (
+        <p className="topic-set">
+          Every feed filed under any of:{' '}
+          {(topic.topics ?? []).map((t, i) => (
+            <span key={t.slug}>
+              {i > 0 && ' · '}
+              <a href={`/topics/${encodeURIComponent(t.slug)}${group ? `/${group.segment}` : ''}`}>
+                {t.keyword}
+              </a>{' '}
+              <span className="count">({t.feedCount})</span>
+            </span>
+          ))}
+          {(topic.unknown ?? []).length > 0 && (
+            <>
+              {' '}
+              — no topic called {(topic.unknown ?? []).map((u) => `"${u}"`).join(', ')}.
+            </>
+          )}
+        </p>
+      )}
 
       {/* The topic's other categories. Shown on the sub-group pages too, so
           moving between them never costs a trip back through the topic — which
@@ -230,17 +262,19 @@ export default async function TopicListing({ topic, counts, group = null, page =
             form underneath, so it works with JavaScript off; with JavaScript it
             flips in place rather than reloading a page of sixty feeds to change
             two words on one button. */}
-        <FollowControls
-          endpoint="/api/follows/topics"
-          kind="topic"
-          slug={topic.slug}
-          segment={group?.segment ?? ''}
-          following={follow.following}
-          alerts={follow.alerts}
-          signedIn={Boolean(user)}
-          next={base}
-          label="Follow this topic"
-        />
+        {!multi && (
+          <FollowControls
+            endpoint="/api/follows/topics"
+            kind="topic"
+            slug={topic.slug}
+            segment={group?.segment ?? ''}
+            following={follow.following}
+            alerts={follow.alerts}
+            signedIn={Boolean(user)}
+            next={base}
+            label="Follow this topic"
+          />
+        )}
 
         <Share
           url={pageUrl}
@@ -251,12 +285,16 @@ export default async function TopicListing({ topic, counts, group = null, page =
 
         {/* The same feeds as a webring: hops, an OPML, and a viewer that frames
             them one at a time. Both pages exist; this is the door between them. */}
-        <a className="button" href={`/ring/${encodeURIComponent(topic.slug)}`}>
-          Webring
-        </a>
-        <a className="button" href={`/view/${encodeURIComponent(topic.slug)}`}>
-          View webring
-        </a>
+        {!multi && (
+          <>
+            <a className="button" href={`/ring/${encodeURIComponent(topic.slug)}`}>
+              Webring
+            </a>
+            <a className="button" href={`/view/${encodeURIComponent(topic.slug)}`}>
+              View webring
+            </a>
+          </>
+        )}
       </div>
 
       <Ad format={AD_TEXT} />
@@ -283,6 +321,7 @@ export default async function TopicListing({ topic, counts, group = null, page =
                 <span>
                   {f.item_count} {f.category === 'podcast' ? 'episodes' : 'posts'}
                 </span>
+                {multi && f.topics && <span>{String(f.topics).split(',').join(', ')}</span>}
               </div>
             </a>
           );

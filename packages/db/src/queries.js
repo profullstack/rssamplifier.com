@@ -1244,6 +1244,91 @@ export async function topicBySlug(db, slug) {
 }
 
 /**
+ * A topic argument as a list of distinct slugs.
+ *
+ * Every topic query takes either one slug (a string) or several (an array),
+ * the second being a combined view such as /topics/business,saas,crypto. A
+ * one-element array is the single topic, so the caller never has to special-case
+ * a list that happened to have one known topic left in it.
+ *
+ * @param {string|string[]} slug
+ * @returns {string[]}
+ */
+export function topicSlugList(slug) {
+  const list = Array.isArray(slug) ? slug : [slug];
+  return [...new Set(list.map((s) => String(s ?? '')).filter(Boolean))];
+}
+
+/**
+ * A `k.slug in (…)` fragment for a list of two or more topics.
+ *
+ * Placeholders for the same reason as kindFilter: the slugs are normalised by
+ * the time they get here, but a list of URL segments is still user input.
+ *
+ * @param {string[]} slugs
+ * @param {string} [column]
+ * @returns {string}
+ */
+function slugIn(slugs, column = 'k.slug') {
+  return `${column} in (${slugs.map(() => '?').join(', ')})`;
+}
+
+/**
+ * Which of several topics exist, with their names and sizes, plus how many
+ * distinct feeds the union of them covers.
+ *
+ * The combined topic views (/topics/a,b,c) need both: the per-topic rows to
+ * link each topic and to say which of the asked-for ones are unknown, and the
+ * union count because a feed filed under two of the topics is still one feed.
+ * Two statements in one round trip each, run side by side.
+ *
+ * @param {Client} db
+ * @param {string[]} slugs
+ * @returns {Promise<{ topics: Array<{ slug: string, keyword: string, feedCount: number }>, feedCount: number }>}
+ */
+export async function topicsBySlugs(db, slugs) {
+  const list = topicSlugList(slugs);
+  if (list.length === 0) return { topics: [], feedCount: 0 };
+
+  const [per, union] = await Promise.all([
+    db.execute({
+      sql: `select k.slug,
+                   ${topicLabelSql('k.slug')} as keyword,
+                   count(*) as feed_count
+            from feed_keywords k
+            join feeds f on f.id = k.feed_id and f.status <> 'dead'
+            where ${slugIn(list)}
+            group by k.slug`,
+      args: list,
+    }),
+    db.execute({
+      sql: `select count(distinct k.feed_id) as n
+            from feed_keywords k
+            join feeds f on f.id = k.feed_id and f.status <> 'dead'
+            where ${slugIn(list)}`,
+      args: list,
+    }),
+  ]);
+
+  const bySlug = new Map(
+    per.rows.map((row) => [
+      String(row.slug),
+      {
+        slug: String(row.slug),
+        keyword: String(row.keyword ?? row.slug),
+        feedCount: Number(row.feed_count ?? 0),
+      },
+    ]),
+  );
+
+  return {
+    // In the order they were asked for, which is the order the page names them.
+    topics: list.map((slug) => bySlug.get(slug)).filter(Boolean),
+    feedCount: Number(union.rows[0]?.n ?? 0),
+  };
+}
+
+/**
  * The feeds filed under one topic, strongest first.
  *
  * A feed's own categories rank above a keyword counted out of its prose: the
@@ -1253,13 +1338,47 @@ export async function topicBySlug(db, slug) {
  * rather than everything about physics. See `normalizeKinds`.
  *
  * @param {Client} db
- * @param {string} slug
+ * @param {string|string[]} slug one topic, or several for their union
  * @param {{ limit?: number, offset?: number, kinds?: string[]|null }} [opts]
  * @returns {Promise<object[]>}
  */
 export async function feedsForTopic(db, slug, opts = {}) {
   const { limit = 60, offset = 0, kinds = null } = opts;
   const filter = kindFilter(normalizeKinds(kinds));
+  const slugs = topicSlugList(slug);
+
+  // Several topics at once: the union, each feed once. A feed's place in it is
+  // the single-topic rule applied across the set: tagged by its publisher under
+  // ANY of the topics ranks it with the tagged ones, and its strength is the
+  // SUM of its counts across the topics, so a feed that covers business and
+  // saas outranks one that covers only business as strongly. `topics` says
+  // which of the asked-for topics it was filed under; `keyword` is the spelling
+  // of its strongest one.
+  if (slugs.length > 1) {
+    const { rows } = await db.execute({
+      sql: `with k as (
+              select feed_id,
+                     min(case source when 'category' then 0 else 1 end) as tagged,
+                     sum(count) as count,
+                     string_agg(slug, ',' order by slug) as topics,
+                     (array_agg(keyword order by case source when 'category' then 0 else 1 end,
+                                count desc, slug))[1] as keyword
+              from feed_keywords
+              where ${slugIn(slugs, 'slug')}
+              group by feed_id
+            )
+            select f.slug, f.title, f.description, f.site_url, f.feed_url, f.category, f.item_count,
+                   f.image_url, f.card_url, k.keyword, k.count, k.topics,
+                   case k.tagged when 0 then 'category' else 'content' end as source
+            from k
+            join feeds f on f.id = k.feed_id
+            where f.status <> 'dead'${filter.sql}
+            order by k.tagged, k.count desc, f.title asc
+            limit ? offset ?`,
+      args: [...slugs, ...filter.args, limit, offset],
+    });
+    return rows;
+  }
 
   const { rows } = await db.execute({
     sql: `select f.slug, f.title, f.description, f.site_url, f.feed_url, f.category, f.item_count,
@@ -1269,7 +1388,7 @@ export async function feedsForTopic(db, slug, opts = {}) {
           where k.slug = ? and f.status <> 'dead'${filter.sql}
           order by case k.source when 'category' then 0 else 1 end, k.count desc, f.title asc
           limit ? offset ?`,
-    args: [slug, ...filter.args, limit, offset],
+    args: [slugs[0] ?? '', ...filter.args, limit, offset],
   });
   return rows;
 }
@@ -1286,18 +1405,36 @@ export async function feedsForTopic(db, slug, opts = {}) {
  * "nothing here".
  *
  * @param {Client} db
- * @param {string} slug
+ * @param {string|string[]} slug one topic, or several for their union
  * @returns {Promise<Record<string, number>>}
  */
 export async function topicKindCounts(db, slug) {
-  const { rows } = await db.execute({
-    sql: `select f.category, count(*) as n
-          from feed_keywords k
-          join feeds f on f.id = k.feed_id and f.status <> 'dead'
-          where k.slug = ?
-          group by f.category`,
-    args: [slug],
-  });
+  const slugs = topicSlugList(slug);
+
+  // For several topics a feed filed under two of them is counted once, so the
+  // groups add up to the union's feedCount from topicsBySlugs. `count(distinct)`
+  // over the slug-index join rather than `f.id in (subquery)`: measured on
+  // production (business,saas,crypto) the semi-join walked all 560k feeds by
+  // category index, 0.3-2 s; this drives from feed_keywords_slug_idx, ~0.1 s.
+  const { rows } = await db.execute(
+    slugs.length > 1
+      ? {
+          sql: `select f.category, count(distinct f.id) as n
+                from feed_keywords k
+                join feeds f on f.id = k.feed_id and f.status <> 'dead'
+                where ${slugIn(slugs)}
+                group by f.category`,
+          args: slugs,
+        }
+      : {
+          sql: `select f.category, count(*) as n
+                from feed_keywords k
+                join feeds f on f.id = k.feed_id and f.status <> 'dead'
+                where k.slug = ?
+                group by f.category`,
+          args: [slugs[0] ?? ''],
+        },
+  );
 
   /** @type {Record<string, number>} */
   const counts = {};
@@ -1449,6 +1586,57 @@ export async function latestItems(db, opts = {}) {
 }
 
 /**
+ * The `picked` CTE a topic river draws its feeds from, for one topic or several.
+ *
+ * One topic is the original statement, unchanged: its `feedCap` strongest feeds.
+ *
+ * Several topics are not "the strongest feedCap across the union", because one
+ * large topic would then fill the whole cap and a combined river of
+ * business,saas,crypto would be a business river. Each topic contributes its
+ * own strongest `perTopic` feeds instead, ranked by the same rule, and a feed
+ * strong in two of them is picked once. `perTopic` keeps the total near twice
+ * the single-topic cap whatever the list length (200 each for two topics, 134
+ * for three, never fewer than 50), so the per-feed index seeks stay bounded.
+ *
+ * @param {string[]} slugs
+ * @param {{ sql: string, args: string[] }} filter
+ * @param {number} feedCap
+ * @returns {{ sql: string, args: unknown[] }}
+ */
+function pickedTopicFeeds(slugs, filter, feedCap) {
+  if (slugs.length <= 1) {
+    return {
+      sql: `picked as materialized (
+            select k.feed_id from feed_keywords k
+            join feeds f on f.id = k.feed_id and f.status <> 'dead'
+            where k.slug = ?${filter.sql}
+            order by case k.source when 'category' then 0 else 1 end, k.count desc
+            limit ?
+          )`,
+      args: [slugs[0] ?? '', ...filter.args, feedCap],
+    };
+  }
+
+  const perTopic = Math.max(50, Math.ceil((feedCap * 2) / slugs.length));
+  return {
+    sql: `ranked as (
+            select k.feed_id,
+                   row_number() over (
+                     partition by k.slug
+                     order by case k.source when 'category' then 0 else 1 end, k.count desc
+                   ) as rn
+            from feed_keywords k
+            join feeds f on f.id = k.feed_id and f.status <> 'dead'
+            where ${slugIn(slugs)}${filter.sql}
+          ),
+          picked as materialized (
+            select distinct feed_id from ranked where rn <= ?
+          )`,
+    args: [...slugs, ...filter.args, Math.min(perTopic, feedCap)],
+  };
+}
+
+/**
  * Recent posts from across a topic, newest first.
  *
  * This is the topic as a *river* — what the feeds filed under it have published
@@ -1462,7 +1650,7 @@ export async function latestItems(db, opts = {}) {
  * who wrote what without it.
  *
  * @param {Client} db
- * @param {string} slug
+ * @param {string|string[]} slug one topic, or several for their union
  * @param {{
  *   limit?: number,
  *   feedCap?: number,
@@ -1498,14 +1686,10 @@ export async function itemsForTopic(db, slug, opts = {}) {
   // key would be run over every row it returns.
   const want = group ? Math.min(limit * 3, 600) : limit;
 
+  const picked = pickedTopicFeeds(topicSlugList(slug), filter, feedCap);
+
   const { rows } = await db.execute({
-    sql: `with picked as materialized (
-            select k.feed_id from feed_keywords k
-            join feeds f on f.id = k.feed_id and f.status <> 'dead'
-            where k.slug = ?${filter.sql}
-            order by case k.source when 'category' then 0 else 1 end, k.count desc
-            limit ?
-          )
+    sql: `with ${picked.sql}
           select i.guid, i.url, i.title, i.summary, i.author, i.image_url, i.published_at,
                  i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds, i.cluster_key,
                  f.slug as feed_slug, f.title as feed_title, f.feed_url, f.category,
@@ -1532,7 +1716,7 @@ export async function itemsForTopic(db, slug, opts = {}) {
           limit ?`,
     // `filter.args` belongs to the `picked` subquery; `since`, the ceiling and the
     // first `want` to the per-feed range; the last `want` to the page.
-    args: [slug, ...filter.args, feedCap, since, riverCeiling(), want, want],
+    args: [...picked.args, since, riverCeiling(), want, want],
   });
 
   if (!group) return rows;
@@ -1554,7 +1738,7 @@ export async function itemsForTopic(db, slug, opts = {}) {
  * which cuts the row count enough to stay inside a couple of seconds.
  *
  * @param {Client} db
- * @param {string} slug
+ * @param {string|string[]} slug one topic, or several for their union
  * @param {{ limit?: number, feedCap?: number }} [opts]
  * @returns {Promise<object[]>}
  */
@@ -1562,14 +1746,10 @@ export async function mediaForTopic(db, slug, opts = {}) {
   const { limit = 100, feedCap = TOPIC_RIVER_FEEDS, kinds = null } = opts;
   const filter = kindFilter(normalizeKinds(kinds));
 
+  const picked = pickedTopicFeeds(topicSlugList(slug), filter, feedCap);
+
   const { rows } = await db.execute({
-    sql: `with picked as materialized (
-            select k.feed_id from feed_keywords k
-            join feeds f on f.id = k.feed_id and f.status <> 'dead'
-            where k.slug = ?${filter.sql}
-            order by case k.source when 'category' then 0 else 1 end, k.count desc
-            limit ?
-          )
+    sql: `with ${picked.sql}
           select i.id as item_id, i.guid, i.url, i.title, i.summary, i.author, i.image_url,
                  i.published_at,
                  i.audio_url, i.audio_type, i.audio_bytes, i.audio_seconds,
@@ -1584,7 +1764,7 @@ export async function mediaForTopic(db, slug, opts = {}) {
           join feeds f on f.id = i.feed_id
           order by i.published_at desc nulls last, i.created_at desc
           limit ?`,
-    args: [slug, ...filter.args, feedCap, limit, limit],
+    args: [...picked.args, limit, limit],
   });
   return rows;
 }

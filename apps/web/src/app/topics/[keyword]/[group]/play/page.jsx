@@ -1,8 +1,8 @@
 import { notFound } from 'next/navigation';
-import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../../lib/db.js';
-import { slugFromUrl, topicGroup } from '../../../../../lib/topicGroups.js';
+import { topicGroup } from '../../../../../lib/topicGroups.js';
+import { resolveTopicsWithCounts, topicSegment } from '../../../../../lib/topicSet.js';
 import TopicPlayer from '../../TopicPlayer.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic';
  *
  * @param {{ params: Promise<{ keyword: string, group: string }> }} props
  * @returns {Promise<{
- *   topic: { slug: string, keyword: string, feedCount: number },
+ *   topic: import('../../../../../lib/topicSet.js').ResolvedTopic,
  *   group: NonNullable<ReturnType<typeof topicGroup>>,
  * }|null>}
  */
@@ -34,12 +34,7 @@ async function resolve({ params }) {
   if (!group?.player) return null;
 
   const client = db();
-  const slug = slugFromUrl(keyword);
-
-  const [topic, counts] = await Promise.all([
-    q.topicBySlug(client, slug),
-    q.topicKindCounts(client, slug),
-  ]);
+  const { topic, counts } = await resolveTopicsWithCounts(client, keyword);
   if (!topic) return null;
 
   // An empty sub-group is a 404 here for the same reason it is one on the
@@ -59,7 +54,7 @@ export async function generateMetadata(props) {
   if (!found) return { title: 'Not found' };
 
   const { topic, group } = found;
-  const path = `/topics/${encodeURIComponent(topic.slug)}/${group.segment}/play`;
+  const path = `/topics/${topicSegment(topic.slug)}/${group.segment}/play`;
 
   return {
     title: `${topic.keyword}: ${group.heading.toLowerCase()} — playing`,

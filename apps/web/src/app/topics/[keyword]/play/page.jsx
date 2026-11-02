@@ -1,8 +1,7 @@
 import { notFound } from 'next/navigation';
-import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../lib/db.js';
-import { slugFromUrl } from '../../../../lib/topicGroups.js';
+import { resolveTopics, topicSegment } from '../../../../lib/topicSet.js';
 import TopicPlayer from '../TopicPlayer.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -19,7 +18,7 @@ export const dynamic = 'force-dynamic';
  */
 async function resolve({ params }) {
   const { keyword } = await params;
-  const topic = await q.topicBySlug(db(), slugFromUrl(keyword));
+  const { topic } = await resolveTopics(db(), keyword);
 
   return topic ? { topic } : null;
 }
@@ -36,7 +35,7 @@ export async function generateMetadata(props) {
   return {
     title: `${topic.keyword} — playing`,
     description: `Play the recent podcast episodes and tracks on ${topic.keyword} in your browser.`,
-    alternates: { canonical: `${siteUrl()}/topics/${encodeURIComponent(topic.slug)}/play` },
+    alternates: { canonical: `${siteUrl()}/topics/${topicSegment(topic.slug)}/play` },
     // Deliberately out of the index. This page is the topic's own listing with
     // a transport on it, and there is one per topic and per category of one —
     // tens of thousands of pages whose text is a heading and a list of episode

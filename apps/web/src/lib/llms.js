@@ -166,6 +166,7 @@ export async function llmsTxt(opts = {}) {
     `- [Search, JSON](${base}/api/search?q=): full-text over posts and blogs; add &mode=any to match any term rather than all of them`,
     `- [Topics, JSON](${base}/api/topics): shared topics; ?q= searches them, ?min=10 for the well-covered ones`,
     `- [One topic, JSON](${base}/api/topics/{keyword}): the feeds filed under it, plus which categories it has; \`?group=\` narrows it to one`,
+    `- [Several topics, JSON](${base}/api/topics/business,saas,crypto): up to 10, comma-separated, as one union (each feed once) in the same shape; the same list works on /topics/{a},{b}, its sub-groups and its .rss/.atom/.json feeds`,
     `- [One topic, as a feed](${base}/topics/{keyword}.json): what those feeds published — also .rss, .atom, .m3u, .pls`,
     `- [Authors, JSON](${base}/api/authors): the people behind the feeds and where else they publish; ?network=email|fediverse|bluesky|github|website|linktree, ?q= searches names, ?min= sets the confidence floor`,
     `- [One author, JSON](${base}/api/authors/{slug}): their links and everything they publish here; ?feed=<url> on /api/authors finds the people behind one feed`,
