@@ -68,7 +68,7 @@ const ALLOWED_ATTRS = {
  * a data URL can carry an HTML document, and a link to one runs it on our
  * origin. Protocol-relative and relative URLs are resolved against the post's
  * own site before they get here, so anything still relative is dropped rather
- * than pointed at rssamplifier.com.
+ * than pointed at rssamp.com.
  */
 const SAFE_SCHEME = /^(https?:|mailto:)/i;
 

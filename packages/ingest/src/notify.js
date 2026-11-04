@@ -22,11 +22,11 @@ export { emailEnabled };
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function sendSubmissionEmail(params) {
-  const site = process.env['SITE_URL'] || 'https://rssamplifier.com';
+  const site = process.env['SITE_URL'] || 'https://rssamp.com';
   const statusUrl = `${site}/submissions/${params.submissionId}`;
 
   const lines = [
-    `Your submission to RSS Amplifier has finished crawling.`,
+    `Your submission to RSSAmp has finished crawling.`,
     ``,
     `  Blogs added:   ${params.crawled}`,
     `  Not reachable: ${params.failed}`,
@@ -49,13 +49,13 @@ export async function sendSubmissionEmail(params) {
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function sendDiscoveryEmail(params) {
-  const site = process.env['SITE_URL'] || 'https://rssamplifier.com';
+  const site = process.env['SITE_URL'] || 'https://rssamp.com';
   const statusUrl = `${site}/discoveries/${params.runId}`;
   const shown = params.keywords.slice(0, 5).join(', ');
   const more = params.keywords.length > 5 ? ` and ${params.keywords.length - 5} more` : '';
 
   const lines = [
-    `Your keyword search on RSS Amplifier has finished.`,
+    `Your keyword search on RSSAmp has finished.`,
     ``,
     `  Keywords:     ${shown}${more}`,
     `  Sites checked: ${params.checked}`,

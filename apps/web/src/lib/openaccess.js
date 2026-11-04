@@ -4,13 +4,13 @@ import { OpenAccessApp } from '@logicsrc/openaccess/client';
  * OpenAccess (openaccess.logicsrc.com): OAuth 2.1 with a grant you can carry.
  *
  * The descriptor at /.well-known/openaccess.json names the scopes this site
- * honours; an access token the hub minted for `rssamplifier.com` is verified
+ * honours; an access token the hub minted for `rssamp.com` is verified
  * here offline against the hub's published keys, and its `scope` decides what
  * the caller may do. That is how a person's own agent edits their profile
  * from anywhere without holding a session cookie for this site.
  */
 export const HUB = 'https://openaccess.logicsrc.com';
-export const CLIENT_ID = 'rssamplifier.com';
+export const CLIENT_ID = 'rssamp.com';
 
 /** Edit the OpenProfile.md of an author the principal has claimed. */
 export const SCOPE_PROFILE_EDIT = 'openprofile:edit';

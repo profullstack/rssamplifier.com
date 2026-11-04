@@ -190,17 +190,17 @@ export function renderIssue(data, { week, origin = siteOrigin() }) {
   if (!sections.length) return null;
 
   const subject = data.newFeedCount
-    ? `RSS Amplifier this week: ${data.newFeedCount.toLocaleString('en-US')} new feeds`
-    : 'RSS Amplifier this week';
+    ? `RSSAmp this week: ${data.newFeedCount.toLocaleString('en-US')} new feeds`
+    : 'RSSAmp this week';
 
   const footerText = [
-    'You get this because your RSS Amplifier account is on the weekly digest.',
+    'You get this because your RSSAmp account is on the weekly digest.',
     `Unsubscribe in one click: ${UNSUBSCRIBE_SLOT}`,
     `Settings: ${origin}/account`,
   ];
 
   const text = [
-    `RSS Amplifier, week ${week}`,
+    `RSSAmp, week ${week}`,
     '',
     ...sections.flatMap((s) => [
       s.title.toUpperCase(),
@@ -215,7 +215,7 @@ export function renderIssue(data, { week, origin = siteOrigin() }) {
 
   const html = `<!doctype html><html><body style="margin:0;background:#f7f6f2;padding:28px 14px;font:16px/1.55 Georgia,'Times New Roman',serif;color:#1d1c1a">
 <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e3e0d6;border-radius:12px;padding:26px">
-<p style="margin:0 0 4px;font:700 19px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">RSS Amplifier</p>
+<p style="margin:0 0 4px;font:700 19px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">RSSAmp</p>
 <p style="margin:0 0 22px;color:#6d6a61;font-size:14px">The week of ${esc(week)}</p>
 ${sections
   .map(
@@ -232,7 +232,7 @@ ${s.items
   .join('\n')}
 <p style="margin:24px 0 0"><a href="${esc(origin)}/following" style="color:#1f5fa8">Your follows, all in one place</a></p>
 <hr style="border:0;border-top:1px solid #e3e0d6;margin:24px 0 14px">
-<p style="margin:0;color:#6d6a61;font-size:13px">You get this because your RSS Amplifier account is on the weekly digest.
+<p style="margin:0;color:#6d6a61;font-size:13px">You get this because your RSSAmp account is on the weekly digest.
 <a href="${UNSUBSCRIBE_SLOT}" style="color:#6d6a61">Unsubscribe in one click</a> &middot; <a href="${esc(origin)}/account" style="color:#6d6a61">Settings</a></p>
 </div></body></html>`;
 

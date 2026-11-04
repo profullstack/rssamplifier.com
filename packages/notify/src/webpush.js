@@ -61,7 +61,7 @@ export function vapidConfig(env = process.env) {
     ...keys,
     // A contact address, so a push service with a problem has somewhere to
     // complain to. Required by RFC 8292; the default is the site's own.
-    subject: env['VAPID_SUBJECT'] || 'mailto:hello@rssamplifier.com',
+    subject: env['VAPID_SUBJECT'] || 'mailto:hello@rssamp.com',
   };
 }
 

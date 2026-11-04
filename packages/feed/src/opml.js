@@ -18,7 +18,7 @@ export { parseOpml } from '@profullstack/submit-feed/core';
  * @param {string} [title]
  * @returns {string} OPML 2.0 document
  */
-export function buildOpml(feeds, title = 'RSS Amplifier') {
+export function buildOpml(feeds, title = 'RSSAmp') {
   const rows = feeds.map((f) => opmlOutline(f)).join('\n');
   return `${opmlHead(title)}${rows}\n${opmlFoot()}`;
 }
@@ -33,7 +33,7 @@ export function buildOpml(feeds, title = 'RSS Amplifier') {
  * @param {string} [title]
  * @returns {string}
  */
-export function opmlHead(title = 'RSS Amplifier') {
+export function opmlHead(title = 'RSSAmp') {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
   <head>

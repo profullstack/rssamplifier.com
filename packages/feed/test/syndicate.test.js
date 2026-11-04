@@ -20,10 +20,10 @@ import {
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@' });
 
 const channel = {
-  title: 'physics — RSS Amplifier',
+  title: 'physics — RSSAmp',
   description: 'Recent posts from the 128 feeds that cover physics.',
-  link: 'https://rssamplifier.com/topics/physics',
-  selfUrl: 'https://rssamplifier.com/topics/physics.rss',
+  link: 'https://rssamp.com/topics/physics',
+  selfUrl: 'https://rssamp.com/topics/physics.rss',
 };
 
 const items = [
@@ -62,8 +62,8 @@ test('rss is well-formed and carries the channel, items and enclosure', () => {
   const doc = parser.parse(buildRss(channel, items));
   const rss = doc.rss.channel;
 
-  assert.equal(rss.title, 'physics — RSS Amplifier');
-  assert.equal(rss.link, 'https://rssamplifier.com/topics/physics');
+  assert.equal(rss.title, 'physics — RSSAmp');
+  assert.equal(rss.link, 'https://rssamp.com/topics/physics');
   assert.equal(rss['atom:link']['@href'], channel.selfUrl);
   assert.equal(rss['atom:link']['@rel'], 'self');
 
@@ -89,7 +89,7 @@ test('atom gives every entry an id and an updated, even undated ones', () => {
 
   // A bare integer is not an IRI, so it is namespaced under the feed rather
   // than emitted as an invalid id.
-  assert.equal(entry.id, 'https://rssamplifier.com/topics/physics#12345');
+  assert.equal(entry.id, 'https://rssamp.com/topics/physics#12345');
   assert.equal(entry.updated, '2026-08-16T00:00:00.000Z');
   assert.equal(entry.published, undefined);
 });
@@ -122,7 +122,7 @@ test('json feed is valid 1.1 with attachments', () => {
   assert.equal(doc.items[0]._rssamplifier.feed_title, 'Quantum Notes');
   assert.equal(
     doc.items[0]._rssamplifier.feed_page,
-    'https://rssamplifier.com/quantum-notes',
+    'https://rssamp.com/quantum-notes',
   );
 
   assert.deepEqual(doc.items[1].attachments, [
@@ -139,7 +139,7 @@ test('m3u lists only the playable items, titled by publication', () => {
   const lines = buildM3u(channel, items).trim().split('\n');
 
   assert.equal(lines[0], '#EXTM3U');
-  assert.equal(lines[1], '#PLAYLIST:physics — RSS Amplifier');
+  assert.equal(lines[1], '#PLAYLIST:physics — RSSAmp');
   assert.equal(lines[2], '#EXTINF:3661,The Physics Hour - Episode 7');
   assert.equal(lines[3], 'https://cdn.example.org/ep7.mp3');
   // The post with no audio contributes nothing.
@@ -302,8 +302,8 @@ test('a post picture rides along in every format that can carry one', () => {
 test('markdown carries the river as prose, with the channel above it', () => {
   const doc = buildMarkdown(channel, items);
 
-  assert.match(doc, /^# physics — RSS Amplifier\n/);
-  assert.ok(doc.includes('Feed: <https://rssamplifier.com/topics/physics.rss>'));
+  assert.match(doc, /^# physics — RSSAmp\n/);
+  assert.ok(doc.includes('Feed: <https://rssamp.com/topics/physics.rss>'));
   // The link is in the heading, so a reader skimming headings can open one
   // without hunting for a URL underneath it.
   assert.ok(doc.includes('## [Entanglement, briefly](https://example.com/posts/1)'));

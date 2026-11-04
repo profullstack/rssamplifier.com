@@ -385,7 +385,7 @@ export default function DockPlayer() {
       navigator.mediaSession.metadata = new window.MediaMetadata({
         title: track.title,
         artist: track.show,
-        album: 'RSS Amplifier',
+        album: 'RSSAmp',
         artwork: track.image ? [{ src: track.image }] : [],
       });
     } catch {

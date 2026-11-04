@@ -115,7 +115,7 @@ const ringIntervalMs = (Number(env['RING_SECONDS']) || 60) * 1000;
 const ringRecheckDays = Number(env['RING_RECHECK_DAYS']) || 7;
 const ringTopics = Number(env['RING_TOPICS']) || 20;
 const ringSeedMs = (Number(env['RING_SEED_SECONDS']) || 21_600) * 1000;
-const ringBase = (env['SITE_URL'] || 'https://rssamplifier.com').replace(/\/+$/, '');
+const ringBase = (env['SITE_URL'] || 'https://rssamp.com').replace(/\/+$/, '');
 
 // Items keyed for grouping per tick. Each one is a title hashed in process and
 // a single-column update, so the batch is bounded by the write round trip
@@ -1183,7 +1183,7 @@ if (writeWorker) {
  * The functions above are the jobs, unchanged; src/daemon.js says which run
  * and how often. Its state lives beside ours in Postgres
  * (scraper_daemon_runs, scraper_daemon_state), and its status document is what
- * https://rssamplifier.com/api/v1/daemon serves.
+ * https://rssamp.com/api/v1/daemon serves.
  */
 const daemonStore = pgStore((text, params) => db.execute(text, params));
 

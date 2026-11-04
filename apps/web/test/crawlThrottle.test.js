@@ -117,7 +117,7 @@ test('a declared crawler is one caller across every address it uses', () => {
   // The reason this file exists in the shape it does: Meta crawled from 70
   // addresses at a per-address rate no sane limit would ever catch.
   const meta = (ip) =>
-    new Request('https://rssamplifier.com/login', {
+    new Request('https://rssamp.com/login', {
       headers: {
         'user-agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 (compatible; meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler))',
@@ -135,7 +135,7 @@ test('a declared crawler is one caller across every address it uses', () => {
 
 test('an undeclared caller is metered per address', () => {
   const browser = (ip) =>
-    new Request('https://rssamplifier.com/', {
+    new Request('https://rssamp.com/', {
       headers: {
         'user-agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
@@ -152,10 +152,10 @@ test('an undeclared caller is metered per address', () => {
 });
 
 test('a forged first forwarded address buys no new allowance', () => {
-  const a = new Request('https://rssamplifier.com/', {
+  const a = new Request('https://rssamp.com/', {
     headers: { 'x-forwarded-for': '1.1.1.1, 203.0.113.9', 'x-real-ip': '203.0.113.9' },
   });
-  const b = new Request('https://rssamplifier.com/', {
+  const b = new Request('https://rssamp.com/', {
     headers: { 'x-forwarded-for': '2.2.2.2, 203.0.113.9', 'x-real-ip': '203.0.113.9' },
   });
   assert.equal(callerAddress(a), '203.0.113.9');

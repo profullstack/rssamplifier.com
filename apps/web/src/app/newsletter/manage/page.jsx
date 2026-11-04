@@ -36,8 +36,8 @@ export default async function ManageNewsletter({ searchParams }) {
       <h1>{user.subscribed ? 'You are on the weekly digest' : 'You are unsubscribed'}</h1>
       <p className="lede">
         {user.subscribed
-          ? `${user.email} gets the RSS Amplifier digest every Monday.`
-          : `${user.email} will not get the weekly RSS Amplifier digest again. Nothing else changes: your account and follows are as they were.`}
+          ? `${user.email} gets the RSSAmp digest every Monday.`
+          : `${user.email} will not get the weekly RSSAmp digest again. Nothing else changes: your account and follows are as they were.`}
       </p>
       {done === 'on' && <p className="notice">Welcome back.</p>}
       <form method="post" action={user.subscribed ? `/newsletter/unsubscribe?u=${encodeURIComponent(u)}&t=${encodeURIComponent(t)}` : '/newsletter/resubscribe'}>

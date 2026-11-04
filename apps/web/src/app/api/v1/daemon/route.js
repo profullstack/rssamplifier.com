@@ -15,7 +15,7 @@ const NO_STORE = { 'cache-control': 'no-store' };
  * the one fact a cached copy would hide.
  *
  * Same shape as every other site on @profullstack/scraper-daemon, so
- * `npx @profullstack/scraper-daemon status https://rssamplifier.com` reads it.
+ * `npx @profullstack/scraper-daemon status https://rssamp.com` reads it.
  */
 export async function GET() {
   try {

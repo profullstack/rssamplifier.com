@@ -10,7 +10,7 @@ import { salesContact } from '../../lib/salesContact.js';
 export const metadata = {
   title: 'Training data',
   description:
-    'License the RSS Amplifier directory as a training corpus: independent blogs, podcasts and video feeds, sliced on a four-hour clock and streamed as gzipped NDJSON.',
+    'License the RSSAmp directory as a training corpus: independent blogs, podcasts and video feeds, sliced on a four-hour clock and streamed as gzipped NDJSON.',
 };
 
 // Rendered per request, for exactly the reason /advertise is. Left alone, Next
@@ -74,7 +74,7 @@ export default async function SalesPage({ searchParams }) {
     <>
       <h1>Training data</h1>
       <p className="lede">
-        RSS Amplifier crawls {fmt(feeds)} independent feeds — blogs, podcasts and video channels
+        RSSAmp crawls {fmt(feeds)} independent feeds — blogs, podcasts and video channels
         that publish on their own sites rather than inside a platform. The whole directory is
         available as a licensed corpus, sliced on a {dataset.WINDOW_HOURS}-hour clock and streamed
         as gzipped NDJSON, so a training pipeline can pull the new rows every{' '}
@@ -184,7 +184,7 @@ export default async function SalesPage({ searchParams }) {
       </p>
       <p>
         A publisher may be excluded from the corpus while staying in the directory, by writing to{' '}
-        <a href="mailto:hello@rssamplifier.com">hello@rssamplifier.com</a>. It is a separate ask
+        <a href="mailto:hello@rssamp.com">hello@rssamp.com</a>. It is a separate ask
         from removal on purpose — “list my blog, but do not sell my writing to a model” is a
         coherent position and nobody should have to leave the directory to hold it. Excluded feeds,
         and every post and article belonging to them, are absent from every stream, and the reader
@@ -197,7 +197,7 @@ export default async function SalesPage({ searchParams }) {
       {sent ? (
         <p className="notice" role="status">
           Thank you — that is recorded and someone will reply to the address you gave. If you would
-          rather chase it, <a href="mailto:hello@rssamplifier.com">hello@rssamplifier.com</a>{' '}
+          rather chase it, <a href="mailto:hello@rssamp.com">hello@rssamp.com</a>{' '}
           reaches the same people.
         </p>
       ) : null}
@@ -218,13 +218,13 @@ export default async function SalesPage({ searchParams }) {
           off it is a plain form post, answered with a 303 back to this anchor. */}
       <ContactForm {...form} className="submit-box sales-form" idPrefix="sales">
         <p>
-          If you would rather chase it, <a href="mailto:hello@rssamplifier.com">hello@rssamplifier.com</a>{' '}
+          If you would rather chase it, <a href="mailto:hello@rssamp.com">hello@rssamp.com</a>{' '}
           reaches the same people.
         </p>
       </ContactForm>
 
       <p>
-        Prefer email? <a href="mailto:hello@rssamplifier.com">hello@rssamplifier.com</a>. For
+        Prefer email? <a href="mailto:hello@rssamp.com">hello@rssamp.com</a>. For
         anything that is not about the corpus, <a href="/contact">the contact page</a> routes to the
         right mailbox.
       </p>

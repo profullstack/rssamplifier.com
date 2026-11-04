@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic';
 export function GET() {
   const base = siteUrl();
 
-  const body = `# RSS Amplifier
+  const body = `# RSSAmp
 
 An open directory of independent blogs, podcasts, music, video and comic feeds.
 No account, no API key, no paywall. Every endpoint below is public and

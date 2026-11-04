@@ -105,7 +105,7 @@ export async function fetchFacebookSource(feed, opts) {
         feedUrl: feed.feed_url,
         feed: {
           title: `${scraped.displayName ?? display} on Facebook`,
-          description: `Posts from the ${display} Page on Facebook, mirrored by RSS Amplifier.`,
+          description: `Posts from the ${display} Page on Facebook, mirrored by RSSAmp.`,
           siteUrl: String(feed.feed_url),
           language: null,
           imageUrl: null,
@@ -160,7 +160,7 @@ export async function fetchFacebookSource(feed, opts) {
       feedUrl: feed.feed_url,
       feed: {
         title: `${display} on Facebook`,
-        description: `Posts from the ${display} Page on Facebook, mirrored by RSS Amplifier.`,
+        description: `Posts from the ${display} Page on Facebook, mirrored by RSSAmp.`,
         siteUrl: String(feed.feed_url),
         language: null,
         imageUrl: null,

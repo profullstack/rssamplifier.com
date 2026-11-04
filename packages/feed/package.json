@@ -1,7 +1,7 @@
 {
   "name": "@rssamplifier/feed",
   "version": "0.1.0",
-  "description": "Feed discovery, parsing and OPML handling for rssamplifier.com",
+  "description": "Feed discovery, parsing and OPML handling for rssamp.com",
   "type": "module",
   "main": "index.js",
   "exports": {

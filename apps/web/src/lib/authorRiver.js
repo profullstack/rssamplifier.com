@@ -46,11 +46,11 @@ export async function authorRiver({ slug: rawSlug, format: rawFormat, limit: raw
   );
 
   const channel = {
-    title: `${author.name} — RSS Amplifier`,
+    title: `${author.name} — RSSAmp`,
     description:
       feeds.length > 1
-        ? `Everything ${author.name} publishes, across ${feeds.length} feeds in the RSS Amplifier directory.`
-        : `Everything ${author.name} publishes, via the RSS Amplifier directory.`,
+        ? `Everything ${author.name} publishes, across ${feeds.length} feeds in the RSSAmp directory.`
+        : `Everything ${author.name} publishes, via the RSSAmp directory.`,
     link: page,
     selfUrl: `${page}.${format}`,
   };

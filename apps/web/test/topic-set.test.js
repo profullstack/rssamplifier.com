@@ -68,7 +68,7 @@ after(async () => {
 });
 
 const api = async (keyword, query = '') => {
-  const res = await apiRoute.GET(new Request(`https://rssamplifier.com/api/topics/${keyword}${query}`), {
+  const res = await apiRoute.GET(new Request(`https://rssamp.com/api/topics/${keyword}${query}`), {
     params: Promise.resolve({ keyword }),
   });
   return { status: res.status, body: await res.json() };
@@ -118,7 +118,7 @@ test('a list answers in the same shape, for the union, each feed once', async ()
   assert.equal(body.keyword, 'business, saas, crypto');
   // 2 + 2 + 1 feeds, `both` counted once.
   assert.equal(body.total, 4);
-  assert.equal(body.page, 'https://rssamplifier.com/topics/business,saa,crypto');
+  assert.equal(body.page, 'https://rssamp.com/topics/business,saa,crypto');
   assert.deepEqual(
     body.topics.map((t) => [t.slug, t.feedCount]),
     [
@@ -172,7 +172,7 @@ test('a list that names one topic is that topic, not a copy of it', async () => 
 
 test('the feed of a list is one river across all of its topics', async () => {
   const res = await feedRoute.GET(
-    new Request('https://rssamplifier.com/api/topics/business,saas,crypto/feed/json'),
+    new Request('https://rssamp.com/api/topics/business,saas,crypto/feed/json'),
     { params: Promise.resolve({ keyword: 'business,saas,crypto', format: 'json' }) },
   );
   assert.equal(res.status, 200);

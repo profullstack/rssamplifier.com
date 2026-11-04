@@ -120,6 +120,6 @@ function titleFor(spec) {
 
 function descriptionFor(spec) {
   return spec.mode === 'user'
-    ? `Posts from @${spec.username} on Instagram, mirrored by RSS Amplifier.`
-    : `Instagram posts tagged #${spec.tag}, mirrored by RSS Amplifier.`;
+    ? `Posts from @${spec.username} on Instagram, mirrored by RSSAmp.`
+    : `Instagram posts tagged #${spec.tag}, mirrored by RSSAmp.`;
 }

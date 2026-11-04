@@ -48,9 +48,9 @@ export const WINDOW_MS = 60 * 60 * 1000;
 export const MAX_PER_WINDOW = 3;
 
 export const TOO_MANY =
-  'That is several enquiries in an hour. Email hello@rssamplifier.com directly and we will pick it up there.';
+  'That is several enquiries in an hour. Email hello@rssamp.com directly and we will pick it up there.';
 /** What any failure the sender cannot fix says, instead of the error itself. */
-export const DID_NOT_SEND = 'That did not send. Try again, or email hello@rssamplifier.com.';
+export const DID_NOT_SEND = 'That did not send. Try again, or email hello@rssamp.com.';
 
 /** The address a request comes from, the way every other limit on this site reads it. */
 const ipOf = (req) => clientIp({ headers: req.headers }) || null;
@@ -71,10 +71,10 @@ export function makeSalesContact(deps = {}) {
 
   return createContactForm({
     binding: 'rssamplifier:sales',
-    brandTerms: ['rss amplifier', 'rssamplifier'],
+    brandTerms: ['rssamp', 'rssamplifier'],
     // Read through a non-literal property access: Next inlines `process.env.FOO`
     // at build time.
-    to: process.env['SALES_EMAIL'] || 'hello@rssamplifier.com',
+    to: process.env['SALES_EMAIL'] || 'hello@rssamp.com',
     action: '/api/sales/contact',
     // A plain form post (JavaScript off) comes back to the form's anchor.
     redirect: '/sales#enquire',

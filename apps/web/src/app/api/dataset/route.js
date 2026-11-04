@@ -118,7 +118,7 @@ export function GET() {
         source:
           'Public feeds their publishers chose to syndicate. The directory is open and anyone may submit to it.',
         optOut:
-          'A publisher may be excluded from the corpus while staying in the directory, on request to hello@rssamplifier.com. Excluded feeds and every post and article belonging to them are absent from every dataset above.',
+          'A publisher may be excluded from the corpus while staying in the directory, on request to hello@rssamp.com. Excluded feeds and every post and article belonging to them are absent from every dataset above.',
         openApi: `Nothing here is a restriction on the open API: ${base}/api/feeds, /api/search, /opml and the MCP server all answer without an account.`,
       },
     },

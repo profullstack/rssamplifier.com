@@ -94,7 +94,7 @@ let board = null;
  */
 export function leaderboard() {
   board ??= createLeaderboard({
-    siteName: 'RSS Amplifier',
+    siteName: 'RSSAmp',
     siteUrl: siteUrl(),
     basePath: '/leaderboard',
     store: projectionStore({ events, badges }),

@@ -16,10 +16,10 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const rings = await webrings.listRings(db());
   const body = {
-    ...hostFile({ base: siteUrl(), siteName: 'RSS Amplifier', rings }),
+    ...hostFile({ base: siteUrl(), siteName: 'RSSAmp', rings }),
     // The rings this site is itself a member of, beside the ones it hosts.
     made_by: 'both',
-    rings: [{ ring: 'https://rssamplifier.com/ring/profullstack', slug: 'rssamplifier-com' }],
+    rings: [{ ring: 'https://rssamp.com/ring/profullstack', slug: 'rssamplifier-com' }],
   };
 
   return new Response(JSON.stringify(body, null, 2), {

@@ -3,7 +3,7 @@ import { siteUrl } from '../../lib/db.js';
 export const dynamic = 'force-dynamic';
 
 /**
- * The installer, for `curl -fsSL https://rssamplifier.com/install.sh | sh`.
+ * The installer, for `curl -fsSL https://rssamp.com/install.sh | sh`.
  *
  * Generated rather than static so the URLs in it are this deployment's own:
  * an installer served from a preview or a local run should install that

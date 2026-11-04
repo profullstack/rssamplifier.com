@@ -26,7 +26,7 @@ export async function generateMetadata({ searchParams }) {
     // episodes and different shows, so collapsing them would ask crawlers to
     // drop everything but the first sixty rows of one of them.
     alternates: { canonical: `${siteUrl()}${listHref(CATEGORY.path, view, page)}` },
-    openGraph: { title, description: `Podcasts on RSS Amplifier — ${what}.` },
+    openGraph: { title, description: `Podcasts on RSSAmp — ${what}.` },
   };
 }
 

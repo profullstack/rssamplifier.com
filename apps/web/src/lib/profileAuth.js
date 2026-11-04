@@ -243,7 +243,7 @@ export function adminEmails() {
 }
 
 /** How the claim check names itself to the site it reads. */
-export const PROFILE_USER_AGENT = 'rssamplifier-openprofile/1 (+https://rssamplifier.com/about)';
+export const PROFILE_USER_AGENT = 'rssamplifier-openprofile/1 (+https://rssamp.com/about)';
 
 /**
  * A small fetch for the linkback check: one page, an eight-second deadline,

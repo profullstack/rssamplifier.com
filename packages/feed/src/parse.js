@@ -844,7 +844,7 @@ function htmlImage(html) {
  *
  * Feeds carry relative `src` attributes far more often than they should, and a
  * relative URL stored here would resolve against *our* origin when the listing
- * renders it — a 404 on rssamplifier.com for an image that exists on the
+ * renders it — a 404 on rssamp.com for an image that exists on the
  * publisher's site.
  *
  * Anything that is not http(s) after resolution is dropped rather than passed

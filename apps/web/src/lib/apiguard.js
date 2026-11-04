@@ -79,7 +79,7 @@ export async function guard(req) {
  */
 function refuse(status, error) {
   return Response.json(
-    { error, docs: 'https://rssamplifier.com/about' },
+    { error, docs: 'https://rssamp.com/about' },
     { status, headers: { 'access-control-allow-origin': '*' } },
   );
 }
@@ -94,7 +94,7 @@ function tooMany(verdict) {
       error: 'rate limit exceeded',
       limit: verdict.limit,
       // Said plainly, because the alternative is that they guess and retry.
-      hint: 'Create a free API key for a higher limit: https://rssamplifier.com/account',
+      hint: 'Create a free API key for a higher limit: https://rssamp.com/account',
       retryAfter: verdict.retryAfter,
     },
     {

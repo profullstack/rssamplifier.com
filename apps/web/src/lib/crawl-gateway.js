@@ -51,7 +51,7 @@ const env = process.env;
 
 /** `SITE_URL` without a trailing slash, as lib/db.js reads it. */
 function siteUrl() {
-  return (env['SITE_URL'] || 'https://rssamplifier.com').replace(/\/+$/, '');
+  return (env['SITE_URL'] || 'https://rssamp.com').replace(/\/+$/, '');
 }
 
 /**
@@ -170,7 +170,7 @@ export function exempt(request) {
 
 export const gateway = createGateway({
   siteUrl: siteUrl(),
-  siteName: 'RSS Amplifier',
+  siteName: 'RSSAmp',
   coinpay: { apiKey: env['COINPAY_X402_KEY'] },
   payTo: env['CRAWL_PAY_TO'],
   openPaths: OPEN_PATHS,

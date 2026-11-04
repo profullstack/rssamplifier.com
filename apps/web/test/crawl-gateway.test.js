@@ -55,7 +55,7 @@ const UAS = {
 const BROWSER = { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document', 'sec-fetch-site': 'none' };
 
 const request = (path, ua, headers = {}) =>
-  new Request(`https://rssamplifier.com${path}`, { headers: { 'user-agent': ua, ...headers } });
+  new Request(`https://rssamp.com${path}`, { headers: { 'user-agent': ua, ...headers } });
 
 /**
  * robots.txt as a crawler reads it: one record per `User-agent` group.
@@ -120,9 +120,9 @@ test('robots.txt still welcomes the retrieval crawlers, by name', async () => {
 test('robots.txt keeps the sitemap and the entry points it used to advertise', async () => {
   const body = await robots().text();
 
-  assert.match(body, /^Sitemap: https:\/\/rssamplifier\.com\/sitemap\.xml$/m);
+  assert.match(body, /^Sitemap: https:\/\/rssamp\.com\/sitemap\.xml$/m);
   for (const path of ['/llms.txt', '/skill.md', '/api/feeds', '/opml', '/mcp', '/crawl']) {
-    assert.match(body, new RegExp(`^#.*https://rssamplifier\\.com${path.replace('.', '\\.')}`, 'm'), `${path} is advertised`);
+    assert.match(body, new RegExp(`^#.*https://rssamp\\.com${path.replace('.', '\\.')}`, 'm'), `${path} is advertised`);
   }
 });
 
@@ -139,7 +139,7 @@ test('a training crawler asking for a page is answered 402 with the offer', asyn
   // No CoinPay key in this process: nothing for sale, but nothing given away.
   assert.deepEqual(offer.accepts, []);
   assert.equal(offer.pass.header, 'x-crawl-pass');
-  assert.equal(offer.pass.buy, 'https://rssamplifier.com/crawl');
+  assert.equal(offer.pass.buy, 'https://rssamp.com/crawl');
 
   // Asked for HTML, it gets the sales page instead of JSON.
   const page = await gate(request('/feeds/anything', UAS.gptbot, { accept: 'text/html,*/*' }));
@@ -208,7 +208,7 @@ test('a Chrome string that cannot answer like Chrome is charged', async () => {
     const answer = await gate(request('/topics/x', ua, { 'x-forwarded-for': '203.0.113.9' }));
     assert.equal(answer?.status, 402, ua);
     const offer = await answer.json();
-    assert.equal(offer.pass.buy, 'https://rssamplifier.com/crawl');
+    assert.equal(offer.pass.buy, 'https://rssamp.com/crawl');
   }
   // Same string, on the API and author pages it walked.
   assert.equal((await gate(request('/api/topics/x', UAS.rotation[0])))?.status, 402);
@@ -313,7 +313,7 @@ test('the matcher lets the gate see what a crawler is after', () => {
 
 test('gateway 0.10: verified crawlers and AI chat fetchers are exempt, copied search-engine strings are charged', async () => {
   const { exempt, gateway } = await import('../src/lib/crawl-gateway.js');
-  const at = (ua, ip) => new Request('https://rssamplifier.com/topics/x', { headers: { 'user-agent': ua, 'x-real-ip': ip } });
+  const at = (ua, ip) => new Request('https://rssamp.com/topics/x', { headers: { 'user-agent': ua, 'x-real-ip': ip } });
   const apple = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15 (Applebot/0.1; +http://www.apple.com/go/applebot)';
   assert.equal(exempt(at(apple, '17.241.75.1')), true, 'Applebot from 17/8');
   assert.equal(exempt(at(apple, '203.0.113.9')), false, 'Applebot string elsewhere');

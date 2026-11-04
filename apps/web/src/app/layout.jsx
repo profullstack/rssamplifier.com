@@ -21,16 +21,16 @@ export const revalidate = 3600;
 export const metadata = {
   metadataBase: new URL(siteUrl()),
   title: {
-    default: 'RSS Amplifier — an open directory of blogs, built for agents',
-    template: '%s · RSS Amplifier',
+    default: 'RSSAmp — an open directory of blogs, built for agents',
+    template: '%s · RSSAmp',
   },
   description:
     'Submit a URL, a list of URLs or an OPML file. Every blog gets its own page, and the whole directory is available as JSON, OPML and plain text for AI agents.',
-  applicationName: 'RSS Amplifier',
+  applicationName: 'RSSAmp',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
-    title: 'RSS Amplifier',
+    title: 'RSSAmp',
     statusBarStyle: 'default',
   },
   icons: {
@@ -90,7 +90,7 @@ export const metadata = {
   },
   openGraph: {
     type: 'website',
-    siteName: 'RSS Amplifier',
+    siteName: 'RSSAmp',
   },
 };
 
@@ -132,7 +132,7 @@ function siteJsonLd() {
       {
         '@type': 'WebSite',
         '@id': `${url}/#website`,
-        name: 'RSS Amplifier',
+        name: 'RSSAmp',
         description:
           'An open, agent-friendly directory of independent blogs, podcasts, music and video feeds.',
         url,
@@ -217,7 +217,7 @@ export default function RootLayout({ children }) {
                   contrast, so there is no dark variant to swap in and no
                   <picture> wrapper to resolve — which also means nothing here
                   needs rechecking when the theme changes. */}
-              <img src="/logo.png" alt="RSS Amplifier" width="1256" height="192" />
+              <img src="/logo.png" alt="RSSAmp" width="1256" height="192" />
             </a>
 
             {/* A checkbox rather than a button, so the menu opens with no
@@ -289,7 +289,7 @@ export default function RootLayout({ children }) {
 
         {/* One shared footer includes the human and machine-readable doors. */}
         <Footer
-          site="https://rssamplifier.com/"
+          site="https://rssamp.com/"
           links={[
             { label: 'MCP', href: '/mcp' },
             { label: 'CLI', href: '/cli' },

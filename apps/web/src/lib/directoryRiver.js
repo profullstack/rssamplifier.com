@@ -85,8 +85,8 @@ export async function directoryRiver({
       format,
       spec,
       channel: {
-        title: `New ${category.item} — RSS Amplifier`,
-        description: `The newest ${category.item} across every ${category.one} in the RSS Amplifier directory.`,
+        title: `New ${category.item} — RSSAmp`,
+        description: `The newest ${category.item} across every ${category.one} in the RSSAmp directory.`,
         link: page,
         selfUrl: `${page}.${format}`,
       },
@@ -117,10 +117,10 @@ export async function directoryRiver({
   const rows = await q.listFeeds(client, { limit, kind });
 
   const channel = {
-    title: category ? `New ${category.noun} — RSS Amplifier` : 'New in RSS Amplifier',
+    title: category ? `New ${category.noun} — RSSAmp` : 'New in RSSAmp',
     description: category
-      ? `${category.heading} as they are added to the RSS Amplifier directory, newest first.`
-      : 'Blogs, podcasts and other feeds as they are added to the RSS Amplifier directory, newest first.',
+      ? `${category.heading} as they are added to the RSSAmp directory, newest first.`
+      : 'Blogs, podcasts and other feeds as they are added to the RSSAmp directory, newest first.',
     link: page,
     selfUrl: category ? `${page}.${format}` : `${siteUrl()}/feed.${format}`,
   };

@@ -21,7 +21,7 @@ export default function SignupProfileFields({ errors, defaultValues }) {
       {/* On by default (the owner's call); unticked, the account starts off the list. */}
       <label className="check-row" htmlFor="signup-newsletter">
         <input id="signup-newsletter" type="checkbox" name="newsletter" value="1" defaultChecked />{' '}
-        Send me the weekly RSS Amplifier digest (new feeds, top posts, webrings). One click to stop.
+        Send me the weekly RSSAmp digest (new feeds, top posts, webrings). One click to stop.
       </label>
     </>
   );

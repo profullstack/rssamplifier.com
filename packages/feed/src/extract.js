@@ -138,7 +138,7 @@ export const MAX_HTML_BYTES = 2 * 1024 * 1024;
  * Readability resolves relative URLs against the document's own base, and a
  * document parsed from a string has none — so every `/images/hero.jpg` stays
  * relative, and the sanitizer drops relative URLs on purpose (they would
- * otherwise point at rssamplifier.com). Without this the article renders with
+ * otherwise point at rssamp.com). Without this the article renders with
  * its images and links stripped, which reads as a broken extraction rather
  * than a missing base tag.
  *

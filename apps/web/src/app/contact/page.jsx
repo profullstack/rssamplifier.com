@@ -1,7 +1,7 @@
 export const metadata = {
   title: 'Contact',
   description:
-    'How to reach the people who run RSS Amplifier: general questions, corrections to a listing, privacy requests and security reports.',
+    'How to reach the people who run RSSAmp: general questions, corrections to a listing, privacy requests and security reports.',
 };
 
 /**
@@ -26,7 +26,7 @@ export default function ContactPage() {
     <>
       <h1>Contact</h1>
       <p className="lede">
-        RSS Amplifier is built and run by{' '}
+        RSSAmp is built and run by{' '}
         <a href="https://profullstack.com">Profullstack, Inc.</a> There is no support queue and no
         account system; the addresses below reach people.
       </p>
@@ -38,7 +38,7 @@ export default function ContactPage() {
       </p>
       <p>
         If an entry about your site is wrong, or you would like it removed, email{' '}
-        <a href="mailto:hello@rssamplifier.com">hello@rssamplifier.com</a> with the address of the
+        <a href="mailto:hello@rssamp.com">hello@rssamp.com</a> with the address of the
         page. We only index public feeds, and we remove on request without asking why.
       </p>
 
@@ -55,13 +55,13 @@ export default function ContactPage() {
       <p>
         For access, correction or deletion requests, or any question about{' '}
         <a href="/privacy">the privacy policy</a>, email{' '}
-        <a href="mailto:privacy@rssamplifier.com">privacy@rssamplifier.com</a>.
+        <a href="mailto:privacy@rssamp.com">privacy@rssamp.com</a>.
       </p>
 
       <h2>Security</h2>
       <p>
         To report a vulnerability, email{' '}
-        <a href="mailto:security@rssamplifier.com">security@rssamplifier.com</a>. Machine-readable
+        <a href="mailto:security@rssamp.com">security@rssamp.com</a>. Machine-readable
         details are at <a href="/.well-known/security.txt">/.well-known/security.txt</a>. Please
         give us a chance to fix it before publishing.
       </p>

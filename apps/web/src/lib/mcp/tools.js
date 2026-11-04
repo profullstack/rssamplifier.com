@@ -774,7 +774,7 @@ export const TOOLS = [
     name: 'get_newsletter',
     title: 'The weekly digest',
     description:
-      "RSS Amplifier's weekly email: when it goes (day and hour, UTC), the next send, how many accounts are on it, and the latest issue as sent (subject and text). Every account is on it unless it opted out.",
+      "RSSAmp's weekly email: when it goes (day and hour, UTC), the next send, how many accounts are on it, and the latest issue as sent (subject and text). Every account is on it unless it opted out.",
     inputSchema: { type: 'object', properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false },
     async run() {
@@ -799,7 +799,7 @@ export const TOOLS = [
   // here. Only `run` is this directory's: the ledger, the express lane and
   // the status page are its own.
   submitFeedTool({
-    directory: 'RSS Amplifier',
+    directory: 'RSSAmp',
     maxUrls: 200,
     async run(args, ctx) {
       const urls = (Array.isArray(args?.urls) ? args.urls : [args?.urls])

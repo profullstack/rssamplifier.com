@@ -9,7 +9,7 @@
 export async function removedPublisherResponse(url, isRemovedUrl) {
   if (!(await isRemovedUrl(url))) return null;
 
-  return new Response('This publisher has been removed from RSS Amplifier.', {
+  return new Response('This publisher has been removed from RSSAmp.', {
     status: 410,
     headers: {
       'cache-control': 'no-store',

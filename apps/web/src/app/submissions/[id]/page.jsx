@@ -179,7 +179,7 @@ export default async function SubmissionPage({ params }) {
 
       <h2>For agents</h2>
       <p>The same status as JSON, safe to poll:</p>
-      <pre className="snippet">{`curl https://rssamplifier.com/api/submissions/${id}`}</pre>
+      <pre className="snippet">{`curl https://rssamp.com/api/submissions/${id}`}</pre>
 
       {/*
        * This page had nothing of the sort: an import was watched by reloading

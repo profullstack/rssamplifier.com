@@ -190,7 +190,7 @@ export default async function DiscoveryPage({ params }) {
 
       <h2>For agents</h2>
       <p>The same status as JSON, safe to poll:</p>
-      <pre className="snippet">{`curl https://rssamplifier.com/api/discoveries/${id}`}</pre>
+      <pre className="snippet">{`curl https://rssamp.com/api/discoveries/${id}`}</pre>
 
       {/*
        * The stream carries the bar and the log; this is only what fills in the

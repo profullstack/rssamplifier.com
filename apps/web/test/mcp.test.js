@@ -91,7 +91,7 @@ test('a base64-encoded header value is compared decoded', () => {
 });
 
 test('a resource read mirrors the uri, not a name', () => {
-  const uri = 'https://rssamplifier.com/llms.txt';
+  const uri = 'https://rssamp.com/llms.txt';
   const { message, ctx } = modern('resources/read', { uri });
   assert.equal(checkHeaders(message, ctx.header), null);
 });

@@ -139,7 +139,7 @@ export default async function ViewPage({ params, searchParams }) {
 
       <div className="flex h-dvh flex-col">
         <div className="bg-background/95 border-border flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-3 py-1.5 backdrop-blur">
-          <a href="/" className="font-serif text-sm font-bold no-underline" title="RSS Amplifier">
+          <a href="/" className="font-serif text-sm font-bold no-underline" title="RSSAmp">
             RSS<span className="text-primary">Amplifier</span>
           </a>
 

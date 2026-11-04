@@ -32,7 +32,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = {
   title: 'Crawler status',
   description:
-    'Live status of the RSS Amplifier crawler: how many feeds are due, what was fetched in the last hour, and which feeds are failing.',
+    'Live status of the RSSAmp crawler: how many feeds are due, what was fetched in the last hour, and which feeds are failing.',
   robots: { index: true, follow: true },
 };
 

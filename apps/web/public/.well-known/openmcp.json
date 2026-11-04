@@ -1,9 +1,9 @@
 {
   "openmcp": "0.1",
-  "mcp": "https://rssamplifier.com/api/mcp",
-  "name": "RSS Amplifier",
+  "mcp": "https://rssamp.com/api/mcp",
+  "name": "RSSAmp",
   "description": "An open directory of independent blogs, podcasts and feeds: search, topics, read a post.",
-  "url": "https://rssamplifier.com",
+  "url": "https://rssamp.com",
   "auth": {
     "kind": "none"
   },

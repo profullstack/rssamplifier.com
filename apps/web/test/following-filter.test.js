@@ -116,22 +116,22 @@ test('the personal feed URL carries the filter it was copied under', () => {
   // A reader who narrows to podcasts and then takes the feed away should get
   // the podcasts, not everything.
   assert.equal(
-    followingFeedUrl('https://rssamplifier.com', 'tok', 'rss', ['podcast']),
-    'https://rssamplifier.com/following.rss?t=tok&kind=podcast',
+    followingFeedUrl('https://rssamp.com', 'tok', 'rss', ['podcast']),
+    'https://rssamp.com/following.rss?t=tok&kind=podcast',
   );
   assert.equal(
-    followingFeedUrl('https://rssamplifier.com', 'tok', 'rss'),
-    'https://rssamplifier.com/following.rss?t=tok',
+    followingFeedUrl('https://rssamp.com', 'tok', 'rss'),
+    'https://rssamp.com/following.rss?t=tok',
   );
   assert.equal(
-    followingFeedUrl('https://rssamplifier.com', 'tok', 'json', null),
-    'https://rssamplifier.com/following.json?t=tok',
+    followingFeedUrl('https://rssamp.com', 'tok', 'json', null),
+    'https://rssamp.com/following.json?t=tok',
   );
 });
 
 test('a token that needs escaping still escapes', () => {
   assert.equal(
-    followingFeedUrl('https://rssamplifier.com', 'a b+c', 'rss'),
-    'https://rssamplifier.com/following.rss?t=a+b%2Bc',
+    followingFeedUrl('https://rssamp.com', 'a b+c', 'rss'),
+    'https://rssamp.com/following.rss?t=a+b%2Bc',
   );
 });

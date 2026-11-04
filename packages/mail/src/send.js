@@ -41,7 +41,7 @@ export async function sendEmail(message) {
   const key = process.env['RESEND_API_KEY'];
   if (!key) return { ok: false, error: 'email-not-configured' };
 
-  const from = message.from || process.env['EMAIL_FROM'] || 'RSS Amplifier <noreply@rssamplifier.com>';
+  const from = message.from || process.env['EMAIL_FROM'] || 'RSSAmp <noreply@rssamp.com>';
 
   try {
     const res = await fetch(ENDPOINT, {

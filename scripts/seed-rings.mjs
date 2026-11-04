@@ -33,7 +33,7 @@ const topics = Number(flag('topics') ?? env['RING_TOPICS']) || 20;
 const limit = Number(flag('limit')) || webrings.DEFAULT_RING_LIMIT;
 const one = flag('topic');
 const verify = args.includes('--verify');
-const base = (env['SITE_URL'] || 'https://rssamplifier.com').replace(/\/+$/, '');
+const base = (env['SITE_URL'] || 'https://rssamp.com').replace(/\/+$/, '');
 
 const db = connect();
 await migrate(db);

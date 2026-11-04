@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = {
   title: 'The weekly digest',
   description:
-    'One email a week from RSS Amplifier: new feeds in the directory, what the most-followed blogs published, and the webrings.',
+    'One email a week from RSSAmp: new feeds in the directory, what the most-followed blogs published, and the webrings.',
 };
 
 /**

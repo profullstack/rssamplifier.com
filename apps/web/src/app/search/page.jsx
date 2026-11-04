@@ -33,7 +33,7 @@ export async function generateMetadata({ searchParams }) {
     title: query ? `${query} · Search` : 'Search',
     description: 'Full-text search across every blog, podcast, channel and post in the directory.',
     ...(query
-      ? { alternates: { types: feedAlternates('/search', `${query} — RSS Amplifier`, suffix) } }
+      ? { alternates: { types: feedAlternates('/search', `${query} — RSSAmp`, suffix) } }
       : {}),
   };
 }

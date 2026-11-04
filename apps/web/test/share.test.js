@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { clamp, plainText, shareText } from '../src/lib/share.js';
 
-const URL = 'https://rssamplifier.com/webfive/read?p=3504d80b-b4bf-4196-923b-7ed8b60caec9';
+const URL = 'https://rssamp.com/webfive/read?p=3504d80b-b4bf-4196-923b-7ed8b60caec9';
 
 test('a summary made of markup is copied as words', () => {
   assert.equal(

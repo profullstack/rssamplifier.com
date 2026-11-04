@@ -97,7 +97,7 @@ export function partners() {
   const secret = process.env['PARTNER_VERIFY_SECRET'];
   if (!secret) return null;
   program = createPartners({
-    siteName: 'RSS Amplifier',
+    siteName: 'RSSAmp',
     siteUrl: siteUrl(),
     basePath: '/sell',
     store,

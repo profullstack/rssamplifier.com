@@ -66,7 +66,7 @@ export default async function SubmitPage({ searchParams }) {
 
       <h2>For agents</h2>
       <p>Same endpoint, JSON in and JSON out:</p>
-      <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/submit \\
+      <pre className="snippet">{`curl -X POST https://rssamp.com/api/submit \\
   -H 'content-type: application/json' \\
   -d '{"urls":["example.com","another.blog"]}'`}</pre>
 
@@ -74,16 +74,16 @@ export default async function SubmitPage({ searchParams }) {
         A catalogue too large to post in one request goes in the same way the uploader sends it —
         open a submission, add batches of feeds to it, then close it:
       </p>
-      <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/submit/begin \\
+      <pre className="snippet">{`curl -X POST https://rssamp.com/api/submit/begin \\
   -H 'content-type: application/json' \\
   -d '{"kind":"opml","sample":"<opml>…"}'
 # → {"submissionId":"…","maxEntriesPerBatch":5000}
 
-curl -X POST https://rssamplifier.com/api/submit/batch \\
+curl -X POST https://rssamp.com/api/submit/batch \\
   -H 'content-type: application/json' \\
   -d '{"submissionId":"…","offset":0,"entries":[{"url":"example.com/feed.xml"}]}'
 
-curl -X POST https://rssamplifier.com/api/submit/finish \\
+curl -X POST https://rssamp.com/api/submit/finish \\
   -H 'content-type: application/json' \\
   -d '{"submissionId":"…"}'`}</pre>
 

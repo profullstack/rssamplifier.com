@@ -476,7 +476,7 @@ function html(seed, issuedAt, difficulty, target) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>One moment · RSS Amplifier</title>
+<title>One moment · RSSAmp</title>
 <style>
 :root { color-scheme: light dark; }
 body { margin: 0; min-height: 100vh; display: grid; place-items: center;

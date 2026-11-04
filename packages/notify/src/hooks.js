@@ -48,7 +48,7 @@ export const BACKOFF_MS = [30_000, 120_000];
 export const DISABLE_AFTER = alerts.MAX_CHANNEL_FAILURES * (BACKOFF_MS.length + 1);
 
 /** What the requests say they are, as before. */
-export const USER_AGENT = 'rssamplifier-alerts/1.0 (+https://rssamplifier.com/alerts)';
+export const USER_AGENT = 'rssamplifier-alerts/1.0 (+https://rssamp.com/alerts)';
 
 /**
  * A pre-hub secret in the hub's form, with the same HMAC key bytes.

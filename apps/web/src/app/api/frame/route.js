@@ -36,7 +36,7 @@ export const dynamic = 'force-dynamic';
  *
  * A hole in our origin. The response carries `Content-Security-Policy:
  * sandbox`, which applies however the document is loaded, so somebody else's
- * markup can never run with rssamplifier.com's origin — not in the frame, and
+ * markup can never run with rssamp.com's origin — not in the frame, and
  * not by pasting this URL into the address bar.
  */
 

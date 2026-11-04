@@ -1,4 +1,4 @@
-const SNIPPET_URL = 'https://pit.world/snippets/footer.html?site=rssamplifier.com';
+const SNIPPET_URL = 'https://pit.world/snippets/footer.html?site=rssamp.com';
 
 /**
  * The pit.world global footer: site name, Search, Ring, Publish here — the

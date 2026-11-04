@@ -82,9 +82,9 @@ export async function requestSignInLink(db, email, siteUrl, opts = {}) {
 
   const sent = await sendEmail({
     to: normalized,
-    subject: 'Your RSS Amplifier sign-in link',
+    subject: 'Your RSSAmp sign-in link',
     text: [
-      'Here is your sign-in link for RSS Amplifier:',
+      'Here is your sign-in link for RSSAmp:',
       '',
       link,
       '',
@@ -181,9 +181,9 @@ export async function requestEmailClaimLink(db, userId, email, siteUrl) {
   const link = `${String(siteUrl).replace(/\/+$/, '')}/auth/magic?t=${encodeURIComponent(token)}`;
   const sent = await sendEmail({
     to: normalized,
-    subject: 'Confirm your RSS Amplifier email',
+    subject: 'Confirm your RSSAmp email',
     text: [
-      'You signed in to RSS Amplifier with CoinPay and asked to use this address.',
+      'You signed in to RSSAmp with CoinPay and asked to use this address.',
       '',
       'Confirm it:',
       '',

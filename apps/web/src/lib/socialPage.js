@@ -40,7 +40,7 @@ export function socialMetadata({ feed, canonical, label, network }) {
   if (!feed) {
     return {
       title: label,
-      description: `${label} is not in the RSS Amplifier directory yet.`,
+      description: `${label} is not in the RSSAmp directory yet.`,
       alternates: { canonical: url },
       // Nothing to index until somebody adds it. Without this, every mistyped
       // handle on the internet is a thin page inviting a crawler to keep it.
@@ -52,7 +52,7 @@ export function socialMetadata({ feed, canonical, label, network }) {
 
   return {
     title: name,
-    description: String(feed.description ?? `${name}, mirrored by the RSS Amplifier directory.`),
+    description: String(feed.description ?? `${name}, mirrored by the RSSAmp directory.`),
     alternates: {
       canonical: url,
       // The same four formats the rewrites serve. No playlists: a timeline and

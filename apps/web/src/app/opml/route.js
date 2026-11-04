@@ -172,17 +172,17 @@ export function opmlStream(rows, { title, limit }) {
  * The OPML document's own title, which is what a reader files the import under.
  *
  * Worth naming precisely: several of these imported into one reader are
- * otherwise several folders all called "RSS Amplifier".
+ * otherwise several folders all called "RSSAmp".
  *
  * @param {string|null} topic
  * @param {string|null} kind
  * @returns {string}
  */
 function topicTitle(topic, kind) {
-  if (topic && kind) return `RSS Amplifier — ${topic} (${kind}s)`;
-  if (topic) return `RSS Amplifier — ${topic}`;
-  if (kind) return `RSS Amplifier — ${kind}s`;
-  return 'RSS Amplifier — full directory';
+  if (topic && kind) return `RSSAmp — ${topic} (${kind}s)`;
+  if (topic) return `RSSAmp — ${topic}`;
+  if (kind) return `RSSAmp — ${kind}s`;
+  return 'RSSAmp — full directory';
 }
 
 /**

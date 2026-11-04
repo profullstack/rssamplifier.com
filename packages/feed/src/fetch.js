@@ -6,8 +6,7 @@ import { paidFetch } from './paid.js';
 import { parseFeed } from './parse.js';
 import { findPlaylistLinks } from './playlist.js';
 
-// The short domain, which 302s to the same page with the path kept
-// (rssamp.com/about -> rssamplifier.com/about). A user-agent string is read in
+// The canonical domain. A user-agent string is read in
 // a server log, on a narrow line, next to a hundred others, so the shorter it
 // is the likelier somebody actually follows it.
 //
