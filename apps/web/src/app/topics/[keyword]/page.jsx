@@ -20,7 +20,7 @@ export async function generateMetadata({ params }) {
 
   return {
     title: topic.keyword,
-    description: `${topic.feedCount} blogs and podcasts in the RSS Amplifier directory write about ${topic.keyword}.`,
+    description: `${topic.feedCount} blogs and podcasts in the RSSAmp directory write about ${topic.keyword}.`,
     // A combined view is every listed topic's feeds again, in another order,
     // under one of a combinatorial number of URLs. Canonical to itself (it is
     // its own page, not one of its topics) and out of the index, the same way

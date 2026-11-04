@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
  * A Reddit thread at the address Reddit gives it, on our host.
  *
  * `/r/AskTechnology/comments/1wuoyvc/what_are_the_best/` is what people copy out
- * of Reddit, so swapping the host for rssamp.com or rssamplifier.com is all it
+ * of Reddit, so swapping the host for rssamp.com is all it
  * takes to read the post and every reply without Reddit's app wall. The slug is
  * decoration, as it is on Reddit: any slug, or none, finds the thread.
  *
@@ -29,7 +29,7 @@ export async function generateMetadata({ params }) {
 
   return {
     title: `${post.title} : r/${post.subreddit}`,
-    description: `${post.numComments} comments on r/${post.subreddit}, mirrored by RSS Amplifier.`,
+    description: `${post.numComments} comments on r/${post.subreddit}, mirrored by RSSAmp.`,
     alternates: { canonical: post.redditUrl },
     robots: { index: false, follow: true },
   };

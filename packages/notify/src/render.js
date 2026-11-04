@@ -15,7 +15,7 @@
  * @returns {string}
  */
 export function siteOrigin(env = process.env) {
-  return (env['SITE_URL'] || 'https://rssamplifier.com').replace(/\/+$/, '');
+  return (env['SITE_URL'] || 'https://rssamp.com').replace(/\/+$/, '');
 }
 
 /**

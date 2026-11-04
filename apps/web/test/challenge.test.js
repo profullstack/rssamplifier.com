@@ -45,7 +45,7 @@ function req(path, { ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/145.
   const headers = new Headers({ 'user-agent': ua, 'x-real-ip': ip });
   if (cookie) headers.set('cookie', cookie);
   if (auth) headers.set('authorization', auth);
-  return new Request(`https://rssamplifier.com${path}`, { method, headers });
+  return new Request(`https://rssamp.com${path}`, { method, headers });
 }
 
 const { SHA256_JS, bits, challenge, enabled, hasLeadingZeroBits, seedFor, solved, wouldChallenge } =
@@ -250,7 +250,7 @@ test('junk in the cookie is refused rather than thrown', async () => {
 test('the interstitial is a 503 that no crawler will index as the article', async () => {
   on();
   const request = req('/topics/bing-ai');
-  request.nextUrl = new URL('https://rssamplifier.com/topics/bing-ai');
+  request.nextUrl = new URL('https://rssamp.com/topics/bing-ai');
 
   const res = await challenge(request);
   assert.ok(res, 'a challenge is owed');

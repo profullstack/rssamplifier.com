@@ -155,10 +155,10 @@ export async function topicFeed({
     : topic.feedCount;
 
   const channel = {
-    title: `${subject} — RSS Amplifier`,
+    title: `${subject} — RSSAmp`,
     description: spec.media
-      ? `Playable media from the ${covering} feeds in the RSS Amplifier directory that cover ${topic.keyword}.`
-      : `Recent posts from the ${covering} feeds in the RSS Amplifier directory that cover ${topic.keyword}.`,
+      ? `Playable media from the ${covering} feeds in the RSSAmp directory that cover ${topic.keyword}.`
+      : `Recent posts from the ${covering} feeds in the RSSAmp directory that cover ${topic.keyword}.`,
     link: page,
     selfUrl: `${page}.${format}`,
   };

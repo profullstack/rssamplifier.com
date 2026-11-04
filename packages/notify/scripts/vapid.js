@@ -19,7 +19,7 @@ console.log('Add these to the web service and the poller:');
 console.log('');
 console.log(`VAPID_PUBLIC_KEY=${keys.publicKey}`);
 console.log(`VAPID_PRIVATE_KEY=${keys.privateKey}`);
-console.log('VAPID_SUBJECT=mailto:hello@rssamplifier.com');
+console.log('VAPID_SUBJECT=mailto:hello@rssamp.com');
 console.log('');
 console.log('Both services need the pair: the web app hands the public key to');
 console.log('browsers, and the poller signs with the private one.');

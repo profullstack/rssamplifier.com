@@ -1,7 +1,7 @@
 export const metadata = {
   title: 'Privacy',
   description:
-    'What RSS Amplifier collects, why, how long it is kept, and how to have it deleted.',
+    'What RSSAmp collects, why, how long it is kept, and how to have it deleted.',
 };
 
 /**
@@ -13,7 +13,7 @@ export const metadata = {
  * and the analytics and ad scripts in the root layout are the four things it
  * describes.
  *
- * NOTE: privacy@rssamplifier.com below needs an alias on Forward Email, which
+ * NOTE: privacy@rssamp.com below needs an alias on Forward Email, which
  * carries this domain's mail. A published rights contact that bounces is worse
  * than no policy at all, so that alias is a prerequisite for this page, not a
  * follow-up to it.
@@ -94,12 +94,12 @@ export default function PrivacyPage() {
       </p>
       <p>
         To remove a feed you submitted, to delete an account, or to make any of the requests above,
-        email <a href="mailto:privacy@rssamplifier.com">privacy@rssamplifier.com</a>.
+        email <a href="mailto:privacy@rssamp.com">privacy@rssamp.com</a>.
       </p>
 
       <h2>Who we are</h2>
       <p>
-        RSS Amplifier is operated by <a href="https://profullstack.com">Profullstack, Inc.</a>
+        RSSAmp is operated by <a href="https://profullstack.com">Profullstack, Inc.</a>
       </p>
     </>
   );

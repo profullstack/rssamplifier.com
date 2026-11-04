@@ -15,7 +15,7 @@ import { attempt, reset, LIMITS } from '../src/lib/crawlThrottle.js';
 function req({ cookie, headers = {} } = {}) {
   const h = new Headers(headers);
   if (cookie) h.set('cookie', cookie);
-  const r = new Request('https://rssamplifier.com/topics', { headers: h });
+  const r = new Request('https://rssamp.com/topics', { headers: h });
   return r;
 }
 
@@ -224,7 +224,7 @@ test('a house crawler gets the house rung on the two profile routes and nowhere 
   resetTierCache();
   const ua = 'niche-db/0.1 (+https://nichedb.dev)';
   const at = (path, agent = ua) =>
-    tierFor(new Request(`https://rssamplifier.com${path}`, { headers: agent ? { 'user-agent': agent } : {} })).name;
+    tierFor(new Request(`https://rssamp.com${path}`, { headers: agent ? { 'user-agent': agent } : {} })).name;
   assert.equal(at('/api/openprofiles?limit=500'), 'house');
   assert.equal(at('/authors/ada-lovelace/openprofile.md'), 'house');
   // Same crawler, any other route: free, as before.
@@ -235,7 +235,7 @@ test('a house crawler gets the house rung on the two profile routes and nowhere 
   assert.equal(at('/api/openprofiles', 'curl/8.0'), 'anon');
   assert.equal(at('/api/openprofiles', 'Mozilla/5.0 niche-db/0.1'), 'anon');
   // A session or a key still places the caller by what it carries.
-  const r = new Request('https://rssamplifier.com/api/openprofiles', {
+  const r = new Request('https://rssamp.com/api/openprofiles', {
     headers: { 'user-agent': ua, cookie: 'rsa_session=abc' },
   });
   assert.equal(tierFor(r).name, 'session');

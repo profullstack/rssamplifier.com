@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { reframePage } from '../src/reframe.js';
 
-const SITE = 'https://rssamplifier.com';
+const SITE = 'https://rssamp.com';
 const URL = 'https://blog.example.com/posts/a-post.html';
 const SELF = `${SITE}/api/frame?u=${encodeURIComponent(URL)}`;
 
@@ -32,7 +32,7 @@ test('a link to a site that refuses framing is routed back through the reader', 
 
   assert.match(
     out,
-    /href="https:\/\/rssamplifier\.com\/api\/frame\?u=https%3A%2F%2Fcode\.claude\.com%2Fdocs%2Fen%2Fbest-practices"/,
+    /href="https:\/\/rssamp\.com\/api\/frame\?u=https%3A%2F%2Fcode\.claude\.com%2Fdocs%2Fen%2Fbest-practices"/,
   );
 });
 
@@ -113,7 +113,7 @@ test('a form with no action still goes somewhere real', () => {
 test('a meta refresh bounces through the reader rather than out of it', () => {
   const out = reframe(page('', '<meta http-equiv="refresh" content="3;url=/moved.html">'));
 
-  assert.match(out, /content="3;url=https:\/\/rssamplifier\.com\/api\/frame\?u=/);
+  assert.match(out, /content="3;url=https:\/\/rssamp\.com\/api\/frame\?u=/);
 });
 
 test("the publisher's meta CSP is dropped, because it describes a document that no longer exists", () => {

@@ -19,7 +19,7 @@ export function GET() {
   const expires = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString();
   const base = siteUrl();
 
-  const body = `Contact: mailto:security@rssamplifier.com
+  const body = `Contact: mailto:security@rssamp.com
 Expires: ${expires}
 Preferred-Languages: en
 Canonical: ${base}/.well-known/security.txt

@@ -50,7 +50,7 @@ test('anything else is not', () => {
  * @param {Record<string, string>} headers
  */
 function request(headers) {
-  return new Request('https://rssamplifier.com/api/feeds', { headers });
+  return new Request('https://rssamp.com/api/feeds', { headers });
 }
 
 test('a key is read from an Authorization bearer header', () => {
@@ -72,6 +72,6 @@ test('a request with no key presents none', () => {
 test('a key is never read from the query string', () => {
   // URLs reach access logs, browser history and referrer headers. A credential
   // that can be sent that way will be, and then it leaks by being written down.
-  const req = new Request('https://rssamplifier.com/api/feeds?api_key=rsa_leaky');
+  const req = new Request('https://rssamp.com/api/feeds?api_key=rsa_leaky');
   assert.equal(apiKeyFromRequest(req), null);
 });

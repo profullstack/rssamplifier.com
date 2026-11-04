@@ -4,7 +4,7 @@ import Toolbar from '../Toolbar.jsx';
 
 export const metadata = {
   title: 'About',
-  description: 'What RSS Amplifier is, and why it is deliberately open to AI crawlers.',
+  description: 'What RSSAmp is, and why it is deliberately open to AI crawlers.',
 };
 
 export default function AboutPage() {
@@ -12,7 +12,7 @@ export default function AboutPage() {
     <>
       <h1>About</h1>
       <p className="lede">
-        RSS Amplifier is an open directory of independent blogs. Submit a URL, a list of URLs or an
+        RSSAmp is an open directory of independent blogs. Submit a URL, a list of URLs or an
         OPML file; we find the feed, read it, and give the blog a permanent page.
       </p>
 

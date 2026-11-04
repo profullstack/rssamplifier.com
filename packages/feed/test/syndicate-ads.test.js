@@ -24,10 +24,10 @@ import {
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@' });
 
 const channel = {
-  title: 'physics — RSS Amplifier',
+  title: 'physics — RSSAmp',
   description: 'Recent posts from the feeds that cover physics.',
-  link: 'https://rssamplifier.com/topics/physics',
-  selfUrl: 'https://rssamplifier.com/topics/physics.rss',
+  link: 'https://rssamp.com/topics/physics',
+  selfUrl: 'https://rssamp.com/topics/physics.rss',
 };
 
 const post = (n) => ({

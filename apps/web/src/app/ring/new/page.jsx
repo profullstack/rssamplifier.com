@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = {
   title: 'Make a webring',
   description:
-    'Make your own webring on RSS Amplifier: a title, a line about it, and the sites in it. Published the moment you save it.',
+    'Make your own webring on RSSAmp: a title, a line about it, and the sites in it. Published the moment you save it.',
 };
 
 const FIELD =

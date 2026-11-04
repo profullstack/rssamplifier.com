@@ -101,7 +101,7 @@ function declaredBase(document, url) {
  *
  * This is the tag that makes the page still look like theirs. Without it every
  * relative `/css/site.css` and `/images/hero.jpg` would resolve against
- * rssamplifier.com and 404, and the reader would get the publisher's article
+ * rssamp.com and 404, and the reader would get the publisher's article
  * with none of the publisher's design.
  *
  * @param {Document} document
@@ -221,7 +221,7 @@ function rewriteLink(link, base, self, through) {
  * Submit forms in a real tab, on the publisher's own site.
  *
  * A search box is the common case, and a relative action would post it to
- * rssamplifier.com, which has no idea what to do with it. Sending it out to a
+ * rssamp.com, which has no idea what to do with it. Sending it out to a
  * tab keeps it working, keeps the reader's place, and avoids the reader
  * becoming a relay for someone else's POST.
  *

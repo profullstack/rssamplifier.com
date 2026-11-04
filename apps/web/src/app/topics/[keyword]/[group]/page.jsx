@@ -58,7 +58,7 @@ export async function generateMetadata(props) {
 
   return {
     title: heading,
-    description: `${total} ${group.noun} in the RSS Amplifier directory cover ${topic.keyword}.`,
+    description: `${total} ${group.noun} in the RSSAmp directory cover ${topic.keyword}.`,
     // Out of the index for a combined view; see the whole-topic page.
     ...(topic.multi ? { robots: { index: false, follow: true } } : {}),
     alternates: {

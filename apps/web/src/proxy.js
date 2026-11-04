@@ -183,9 +183,9 @@ export async function proxy(request) {
 function tooMany(verdict, tier) {
   const nextRung =
     tier.name === 'anon'
-      ? 'Sign in for ten times this allowance — free, magic link, no card: https://rssamplifier.com/login'
+      ? 'Sign in for ten times this allowance — free, magic link, no card: https://rssamp.com/login'
       : tier.name === 'session'
-        ? 'Create an API key at https://rssamplifier.com/account and send it as a bearer token; a sponsored key raises the ceiling further.'
+        ? 'Create an API key at https://rssamp.com/account and send it as a bearer token; a sponsored key raises the ceiling further.'
         : 'This is the sponsor ceiling. If you need more than this, ask and we will raise it.';
 
   /*
@@ -205,10 +205,10 @@ function tooMany(verdict, tier) {
     tier.name === 'pass' || tier.name === 'sponsor'
       ? undefined
       : {
-          url: 'https://rssamplifier.com/crawl',
+          url: 'https://rssamp.com/crawl',
           price: '1.00 USD per day, USDC, settled by CoinPay',
           buys: '120,000 requests an hour and 2,000 a minute, for the whole day',
-          how: 'Fetch https://rssamplifier.com/crawl with Accept: application/json for an x402 offer, pay it, then send the pass in the x-crawl-pass header. No account and no human needed.',
+          how: 'Fetch https://rssamp.com/crawl with Accept: application/json for an x402 offer, pay it, then send the pass in the x-crawl-pass header. No account and no human needed.',
         };
 
   /*
@@ -225,7 +225,7 @@ function tooMany(verdict, tier) {
       error: 'rate limit exceeded',
       // Said plainly, because the alternative is that they guess and retry. The
       // directory is still open to them; this is a speed limit, not a door.
-      hint: 'You are welcome here, just slower. Cheaper entry points: https://rssamplifier.com/llms.txt, /api/feeds, /opml, /mcp',
+      hint: 'You are welcome here, just slower. Cheaper entry points: https://rssamp.com/llms.txt, /api/feeds, /opml, /mcp',
       tier: tier.name,
       hourlyLimit: Number.isFinite(tier.hourly) ? tier.hourly : null,
       upgrade: nextRung,

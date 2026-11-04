@@ -28,7 +28,7 @@ export async function llmsTxt(opts = {}) {
   ]);
 
   const lines = [
-    '# RSS Amplifier',
+    '# RSSAmp',
     '',
     '> An open directory of independent blogs and their RSS feeds. Anyone may submit a',
     '> feed; there are no accounts and no paywall. Crawling and reuse are welcome.',

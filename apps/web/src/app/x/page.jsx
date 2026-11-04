@@ -12,7 +12,7 @@ export async function generateMetadata({ searchParams }) {
   return {
     title: page === 1 ? 'X' : `X · page ${page}`,
     description:
-      'X accounts, searches and lists as feeds you can subscribe to — collected by RSS Amplifier and served from here, never from X.',
+      'X accounts, searches and lists as feeds you can subscribe to — collected by RSSAmp and served from here, never from X.',
     alternates: {
       canonical: page === 1 ? `${siteUrl()}/x` : `${siteUrl()}/x?page=${page}`,
     },

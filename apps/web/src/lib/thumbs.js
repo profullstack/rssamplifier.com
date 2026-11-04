@@ -45,7 +45,7 @@ const MAX_LENGTH = 1000;
  *   reason to emit it.
  * - A relative or malformed URL. Ingest now absolute-ises what it stores, but
  *   rows written before that resolve against *our* origin — a 404 on
- *   rssamplifier.com for an image that exists on the publisher's site.
+ *   rssamp.com for an image that exists on the publisher's site.
  * - `http:`, which the browser blocks as mixed content on an https page and
  *   which our own CSP does not allow either. Upgraded rather than dropped: an
  *   image host without TLS in 2026 is rare, a publisher who has TLS and an old

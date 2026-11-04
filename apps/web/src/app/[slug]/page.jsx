@@ -114,7 +114,7 @@ export async function generateMetadata({ params }) {
           // image here would otherwise drop the site name and the type too.
           openGraph: {
             type: 'website',
-            siteName: 'RSS Amplifier',
+            siteName: 'RSSAmp',
             url,
             title,
             description,

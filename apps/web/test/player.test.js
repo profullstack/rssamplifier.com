@@ -19,7 +19,7 @@ import { dockable } from '../src/lib/queue.js';
  * @param {string} [url]
  * @returns {Request}
  */
-function ask(headers = {}, url = 'https://rssamplifier.com/topics/ai/podcasts.m3u') {
+function ask(headers = {}, url = 'https://rssamp.com/topics/ai/podcasts.m3u') {
   return new Request(url, { headers });
 }
 
@@ -48,7 +48,7 @@ test('everything that can actually play an m3u still gets the file', () => {
 });
 
 test('a reader who wants the file can still say so', () => {
-  const url = 'https://rssamplifier.com/topics/ai/podcasts.m3u?dl=1';
+  const url = 'https://rssamp.com/topics/ai/podcasts.m3u?dl=1';
   assert.equal(wantsPlayer(ask({ 'sec-fetch-dest': 'document' }, url)), false);
   assert.equal(rawPlaylistPath('/topics/ai/podcasts.m3u'), '/topics/ai/podcasts.m3u?dl=1');
 });

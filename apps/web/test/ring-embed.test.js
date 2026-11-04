@@ -4,7 +4,7 @@ import { ringLinks } from '@profullstack/footer';
 
 import { PLACEHOLDER_SITE, embedDocument, embedSite, ringEmbed, ringRow } from '../src/lib/ringEmbed.js';
 
-const base = 'https://rssamplifier.com';
+const base = 'https://rssamp.com';
 const pfs = { slug: 'profullstack', title: 'Profullstack' };
 
 test('hops are measured from the member homepage, the same URLs the footer package makes', () => {
@@ -43,7 +43,7 @@ test('without a site the snippet says the placeholder, and bad sites are refused
   const doc = embedDocument({ base, rings: [pfs], site: null });
   assert.equal(doc.placeholder, PLACEHOLDER_SITE);
   assert.match(doc.plain, /your\.site/);
-  assert.equal(doc.rings[0].links.ring, 'https://rssamplifier.com/ring/profullstack');
+  assert.equal(doc.rings[0].links.ring, 'https://rssamp.com/ring/profullstack');
   assert.equal(embedSite(''), null);
   assert.equal(embedSite('localhost:3000'), null);
   assert.equal(embedSite('http://10.0.0.1/'), null);

@@ -2,7 +2,7 @@ import { ImageResponse } from 'next/og';
 
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
-export const alt = 'RSS Amplifier — an open directory of blogs, built for agents';
+export const alt = 'RSSAmp — an open directory of blogs, built for agents';
 
 /**
  * The card every link to this site unfurls into.
@@ -36,7 +36,7 @@ export default function OpengraphImage() {
         }}
       >
         <div style={{ display: 'flex', fontSize: 40, color: '#b4552d', letterSpacing: -1 }}>
-          RSS Amplifier
+          RSSAmp
         </div>
         <div style={{ display: 'flex', fontSize: 78, lineHeight: 1.1, marginTop: 24 }}>
           An open directory of blogs, built for agents.

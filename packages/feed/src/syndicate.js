@@ -367,7 +367,7 @@ export function buildRss(channel, items) {
     <link>${esc(channel.link)}</link>
     <description>${esc(channel.description)}</description>
     <language>${esc(channel.language || 'en')}</language>
-    <generator>RSS Amplifier</generator>
+    <generator>RSSAmp</generator>
     <lastBuildDate>${esc(rfc822(updated))}</lastBuildDate>
     <atom:link href="${esc(channel.selfUrl)}" rel="self" type="application/rss+xml" />
 ${entries}
@@ -436,7 +436,7 @@ export function buildAtom(channel, items) {
   <subtitle>${esc(channel.description)}</subtitle>
   <id>${esc(channel.link)}</id>
   <updated>${esc(updated)}</updated>
-  <generator>RSS Amplifier</generator>
+  <generator>RSSAmp</generator>
   <link rel="alternate" type="text/html" href="${esc(channel.link)}" />
   <link rel="self" type="application/atom+xml" href="${esc(channel.selfUrl)}" />
 ${entries}

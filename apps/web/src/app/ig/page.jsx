@@ -12,7 +12,7 @@ export async function generateMetadata({ searchParams }) {
   return {
     title: page === 1 ? 'Instagram' : `Instagram · page ${page}`,
     description:
-      'Instagram accounts and hashtags as feeds you can subscribe to — collected by RSS Amplifier and served from here, never from Instagram.',
+      'Instagram accounts and hashtags as feeds you can subscribe to — collected by RSSAmp and served from here, never from Instagram.',
     alternates: {
       canonical: page === 1 ? `${siteUrl()}/ig` : `${siteUrl()}/ig?page=${page}`,
     },

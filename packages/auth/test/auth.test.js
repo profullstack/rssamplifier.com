@@ -57,7 +57,7 @@ test('an absent or unknown cookie resolves to nobody rather than throwing', asyn
 });
 
 test('the session cookie is lax and follows the scheme', () => {
-  const https = sessionCookieOptions('https://rssamplifier.com');
+  const https = sessionCookieOptions('https://rssamp.com');
   assert.equal(https.secure, true);
   assert.equal(https.httpOnly, true);
   // Lax, because the sign-in link arrives from a mail client and Strict would
@@ -157,7 +157,7 @@ test('requesting a link says so when email is not configured', async () => {
   delete process.env.RESEND_API_KEY;
 
   try {
-    const result = await requestSignInLink(db, 'nobody@example.com', 'https://rssamplifier.com');
+    const result = await requestSignInLink(db, 'nobody@example.com', 'https://rssamp.com');
     assert.equal(result.ok, false);
     assert.equal(result.error, 'email-not-configured');
   } finally {
@@ -166,17 +166,17 @@ test('requesting a link says so when email is not configured', async () => {
 });
 
 test('the relying party is a bare domain, never a URL', () => {
-  assert.equal(relyingPartyId('https://rssamplifier.com'), 'rssamplifier.com');
-  assert.equal(relyingPartyId('https://rssamplifier.com/'), 'rssamplifier.com');
+  assert.equal(relyingPartyId('https://rssamp.com'), 'rssamp.com');
+  assert.equal(relyingPartyId('https://rssamp.com/'), 'rssamp.com');
   assert.equal(relyingPartyId('http://localhost:3000'), 'localhost');
 });
 
 test('both apex and www count as expected origins', () => {
-  const fromApex = expectedOrigins('https://rssamplifier.com');
-  assert.ok(fromApex.includes('https://rssamplifier.com'));
+  const fromApex = expectedOrigins('https://rssamp.com');
+  assert.ok(fromApex.includes('https://rssamp.com'));
   // A reader who registered a passkey on one must not be locked out on the other.
-  assert.ok(fromApex.includes('https://www.rssamplifier.com'));
+  assert.ok(fromApex.includes('https://www.rssamp.com'));
 
-  const fromWww = expectedOrigins('https://www.rssamplifier.com');
-  assert.ok(fromWww.includes('https://rssamplifier.com'));
+  const fromWww = expectedOrigins('https://www.rssamp.com');
+  assert.ok(fromWww.includes('https://rssamp.com'));
 });

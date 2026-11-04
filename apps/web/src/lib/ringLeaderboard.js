@@ -78,7 +78,7 @@ let board = null;
  */
 export function ringLeaderboard() {
   board ??= createLeaderboard({
-    siteName: 'RSS Amplifier webrings',
+    siteName: 'RSSAmp webrings',
     siteUrl: siteUrl(),
     basePath: '/ring/leaders',
     store: projectionStore({ events }),

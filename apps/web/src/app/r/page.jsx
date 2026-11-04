@@ -12,7 +12,7 @@ export async function generateMetadata({ searchParams }) {
   return {
     title: page === 1 ? 'Reddit' : `Reddit · page ${page}`,
     description:
-      'Subreddits and Reddit users in the RSS Amplifier directory, each with a page and a feed at an address that does not change.',
+      'Subreddits and Reddit users in the RSSAmp directory, each with a page and a feed at an address that does not change.',
     alternates: {
       canonical: page === 1 ? `${siteUrl()}/r` : `${siteUrl()}/r?page=${page}`,
     },

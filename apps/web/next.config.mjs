@@ -331,8 +331,8 @@ const nextConfig = {
       // straight through.
       {
         source: '/:path*',
-        has: [{ type: 'host', value: 'www.rssamplifier.com' }],
-        destination: 'https://rssamplifier.com/:path*',
+        has: [{ type: 'host', value: 'www.rssamp.com' }],
+        destination: 'https://rssamp.com/:path*',
         permanent: true,
       },
 

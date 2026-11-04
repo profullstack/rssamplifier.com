@@ -53,7 +53,7 @@ const USER_AGENT = 'rssamplifier.com reader (+https://rssamp.com/about)';
  * @param {string} [origin] the origin doing the embedding
  * @returns {{ frameable: boolean, reason: string }}
  */
-export function framingVerdict(headers, origin = 'https://rssamplifier.com') {
+export function framingVerdict(headers, origin = 'https://rssamp.com') {
   const csp = String(headers.contentSecurityPolicy ?? '');
   const policies = readFrameAncestors(csp);
 
@@ -158,7 +158,7 @@ function sourceAllows(source, origin) {
  * @param {string} [origin]
  * @returns {Promise<{ frameable: boolean, reason: string }>}
  */
-export async function isFrameable(url, origin = 'https://rssamplifier.com') {
+export async function isFrameable(url, origin = 'https://rssamp.com') {
   const { frameable, reason } = await probePage(url, { origin });
   return { frameable, reason };
 }
@@ -194,7 +194,7 @@ export async function isFrameable(url, origin = 'https://rssamplifier.com') {
  * }>}
  */
 export async function probePage(url, options = {}) {
-  const { origin = 'https://rssamplifier.com', wantHtml = true } = options;
+  const { origin = 'https://rssamp.com', wantHtml = true } = options;
 
   const normalized = normalizeUrl(url);
   if (!normalized) return no('invalid-url');

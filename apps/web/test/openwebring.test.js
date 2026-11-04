@@ -357,9 +357,9 @@ test('the ring file lists members in order and leaves the unstated absent', () =
 });
 
 test('the host file names every ring with where its pieces are', () => {
-  const file = hostFile({ base: BASE, siteName: 'RSS Amplifier', rings: [RING, { ...RING, slug: 'jazz', title: 'Jazz', accepts: ['human', 'both'], description: null }] });
+  const file = hostFile({ base: BASE, siteName: 'RSSAmp', rings: [RING, { ...RING, slug: 'jazz', title: 'Jazz', accepts: ['human', 'both'], description: null }] });
   assert.equal(file.openwebring, '0.1');
-  assert.deepEqual(file.site, { url: `${BASE}/`, name: 'RSS Amplifier' });
+  assert.deepEqual(file.site, { url: `${BASE}/`, name: 'RSSAmp' });
   assert.equal(file.spec, 'https://logicsrc.com/openwebring');
   assert.deepEqual(file.hosts[0], {
     slug: 'physics',

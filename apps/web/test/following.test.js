@@ -109,8 +109,8 @@ test('a topic with no stored spelling falls back to its slug', () => {
 });
 
 test('the feed URL carries the token in the query, where a rewrite cannot lose it', () => {
-  const url = followingFeedUrl('https://rssamplifier.com', 'tok+en/1', 'atom');
-  assert.equal(url, 'https://rssamplifier.com/following.atom?t=tok%2Ben%2F1');
+  const url = followingFeedUrl('https://rssamp.com', 'tok+en/1', 'atom');
+  assert.equal(url, 'https://rssamp.com/following.atom?t=tok%2Ben%2F1');
 });
 
 test('a post pulled in by a followed person is attributed to the person', () => {

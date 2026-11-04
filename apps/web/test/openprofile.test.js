@@ -212,7 +212,7 @@ test('a claim is verified by the published address, or by the site linking back'
   const owner = await claimVerdict({ caller: { kind: 'session', userId: 'u1', email: 'ada@example.com', scopes: [] }, person, profile: taken, ...urls });
   assert.deepEqual(owner, { ok: true, method: 'email' });
 
-  const admin = await claimVerdict({ caller: { kind: 'session', userId: 'u7', email: 'root@rssamplifier.com', scopes: [] }, person, profile: null, ...urls, admins: ['root@rssamplifier.com'] });
+  const admin = await claimVerdict({ caller: { kind: 'session', userId: 'u7', email: 'root@rssamp.com', scopes: [] }, person, profile: null, ...urls, admins: ['root@rssamp.com'] });
   assert.deepEqual(admin, { ok: true, method: 'admin' });
 
   const noScope = await claimVerdict({ caller: { kind: 'openaccess', principal: 'oa:1', email: 'ada@example.com', scopes: [] }, person, profile: null, ...urls });

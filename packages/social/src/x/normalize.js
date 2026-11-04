@@ -305,17 +305,17 @@ function channelDescription(spec, displayName) {
   const who = displayName ?? (spec.username ? `@${spec.username}` : null);
   switch (spec.mode) {
     case 'user':
-      return `Posts from ${who} on X, mirrored by RSS Amplifier.`;
+      return `Posts from ${who} on X, mirrored by RSSAmp.`;
     case 'replies':
-      return `Posts and replies from ${who} on X, mirrored by RSS Amplifier.`;
+      return `Posts and replies from ${who} on X, mirrored by RSSAmp.`;
     case 'media':
-      return `Photos and video from ${who} on X, mirrored by RSS Amplifier.`;
+      return `Photos and video from ${who} on X, mirrored by RSSAmp.`;
     case 'search':
-      return `X posts matching ${spec.query}, mirrored by RSS Amplifier.`;
+      return `X posts matching ${spec.query}, mirrored by RSSAmp.`;
     case 'list':
-      return `Posts from X list ${spec.listId}, mirrored by RSS Amplifier.`;
+      return `Posts from X list ${spec.listId}, mirrored by RSSAmp.`;
     default:
-      return 'X posts mirrored by RSS Amplifier.';
+      return 'X posts mirrored by RSSAmp.';
   }
 }
 

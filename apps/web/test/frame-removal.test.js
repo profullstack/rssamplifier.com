@@ -17,7 +17,7 @@ test('a removed publisher gets a no-store 410 response before it can be framed',
   assert.equal(response.status, 410);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal(response.headers.get('x-robots-tag'), 'noindex');
-  assert.match(await response.text(), /removed from RSS Amplifier/);
+  assert.match(await response.text(), /removed from RSSAmp/);
 });
 
 test('a publisher without a removal record continues through the normal frame path', async () => {

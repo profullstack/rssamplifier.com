@@ -29,11 +29,11 @@ export const metadata = {
     canonical: '/',
     // The whole directory as a feed. A relative base here for the same reason
     // the canonical is relative: Next resolves both against metadataBase.
-    types: feedAlternates('/feed', 'New in RSS Amplifier'),
+    types: feedAlternates('/feed', 'New in RSSAmp'),
   },
   openGraph: {
     type: 'website',
-    siteName: 'RSS Amplifier',
+    siteName: 'RSSAmp',
     url: '/',
   },
 };
@@ -50,7 +50,7 @@ export default async function Home() {
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
-    name: 'RSS Amplifier',
+    name: 'RSSAmp',
     description: 'An open, agent-friendly directory of independent blogs.',
     url: siteUrl(),
     hasPart: rows.slice(0, 20).map((f) => ({

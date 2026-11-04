@@ -96,7 +96,7 @@ export async function providerGet(url, opts = {}) {
  * that disguises itself has given up the right to complain about how it is
  * treated.
  */
-const USER_AGENT = 'RSSAmplifier/1.0 (+https://rssamplifier.com/about)';
+const USER_AGENT = 'RSSAmplifier/1.0 (+https://rssamp.com/about)';
 
 /** @param {Response} res */
 async function readCapped(res) {

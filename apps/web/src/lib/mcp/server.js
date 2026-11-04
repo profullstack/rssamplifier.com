@@ -27,7 +27,7 @@ import { TOOLS, TOOLS_BY_NAME, describe } from './tools.js';
 /** Who this server says it is. Self-reported, and for display only. */
 export const SERVER_INFO = {
   name: 'rssamplifier',
-  title: 'RSS Amplifier',
+  title: 'RSSAmp',
   version: '1.0.0',
 };
 
@@ -45,7 +45,7 @@ export const CAPABILITIES = {
  * and which tool to reach for first.
  */
 export const INSTRUCTIONS = [
-  'RSS Amplifier is an open directory of independent blogs, podcasts and other feeds —',
+  'RSSAmp is an open directory of independent blogs, podcasts and other feeds —',
   'the small web rather than the platforms. Anyone may submit a feed and anyone may read',
   'it: no key, no account, no rate card.',
   '',
@@ -88,7 +88,7 @@ function resources() {
       name: 'llms.txt',
       title: 'The directory, described for language models',
       description:
-        'What RSS Amplifier holds, how it is organised, every machine-readable endpoint it serves, and its largest feeds by name.',
+        'What RSSAmp holds, how it is organised, every machine-readable endpoint it serves, and its largest feeds by name.',
       mimeType: 'text/plain',
     },
   ];

@@ -15,7 +15,7 @@ export async function newsletterStatus() {
   const slot = slotConfig();
   const [latest, size] = await Promise.all([newsletter.latestIssue(client), newsletter.listSize(client)]);
   return {
-    name: 'RSS Amplifier weekly digest',
+    name: 'RSSAmp weekly digest',
     schedule: { every: 'week', day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][slot.day], hourUtc: slot.hour },
     nextSend: nextSlot(now, slot).toISOString(),
     thisWeek: isoWeek(now),

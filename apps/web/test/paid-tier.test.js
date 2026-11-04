@@ -23,7 +23,7 @@ async function passModule() {
 }
 
 const withHeaders = (headers) =>
-  new Request('https://rssamplifier.com/topics/anything', { headers: new Headers(headers) });
+  new Request('https://rssamp.com/topics/anything', { headers: new Headers(headers) });
 
 async function livePass() {
   const now = Math.floor(Date.now() / 1000);

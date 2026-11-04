@@ -43,7 +43,7 @@ export default function AddSocialSource({ network, label, input, canonical }) {
       <h1>{label}</h1>
 
       <p>
-        Nobody has added this {platform.name} source to the directory yet. Add it and RSS Amplifier
+        Nobody has added this {platform.name} source to the directory yet. Add it and RSSAmp
         will start collecting it — usually within a minute.
       </p>
 

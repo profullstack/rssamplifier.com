@@ -489,7 +489,7 @@ test('a receiver written for the old sender still verifies a hub delivery', asyn
     verifyLegacy(got.body, typed, got.headers['x-rssamplifier-signature']),
     'the old receiver, with the string it always had, accepts the delivery',
   );
-  assert.equal(got.headers['user-agent'], 'rssamplifier-alerts/1.0 (+https://rssamplifier.com/alerts)');
+  assert.equal(got.headers['user-agent'], 'rssamplifier-alerts/1.0 (+https://rssamp.com/alerts)');
   assert.ok(verifyStandard({ headers: got.headers, body: got.body, secret }).ok);
   assert.ok(sent.webhook.some((d) => d.url.endsWith('/unsigned')), 'an unsigned channel still gets its alerts');
 });

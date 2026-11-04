@@ -96,7 +96,7 @@ export async function beginRegistration(db, user, siteUrl) {
   const existing = await accounts.credentialsForUser(db, user.id);
 
   const options = await generateRegistrationOptions({
-    rpName: 'RSS Amplifier',
+    rpName: 'RSSAmp',
     rpID: relyingPartyId(siteUrl),
     userName: user.email,
     userDisplayName: user.email,

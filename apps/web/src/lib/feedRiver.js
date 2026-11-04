@@ -70,7 +70,7 @@ export async function feedRiver({ slug: rawSlug, format: rawFormat, limit: rawLi
     // front of it would be this directory talking over the feed it is
     // republishing, in the one field a reader sees under the title.
     description: String(
-      feed.description ?? `Posts from ${feed.title ?? slug}, via the RSS Amplifier directory.`,
+      feed.description ?? `Posts from ${feed.title ?? slug}, via the RSSAmp directory.`,
     ),
     link: page,
     selfUrl: `${page}.${format}`,

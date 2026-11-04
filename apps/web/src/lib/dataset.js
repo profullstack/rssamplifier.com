@@ -87,7 +87,7 @@ export async function datasetCaller(req) {
           error: 'no-dataset-licence',
           detail:
             'This account has no corpus licence. Everything in the open directory stays free — /api/feeds, /api/search, /opml and the MCP server all answer without one.',
-          sales: 'https://rssamplifier.com/sales',
+          sales: 'https://rssamp.com/sales',
         },
         { status: 402, headers: { 'access-control-allow-origin': '*' } },
       ),
@@ -104,7 +104,7 @@ export async function datasetCaller(req) {
  */
 function refuse(status, error) {
   return Response.json(
-    { error, sales: 'https://rssamplifier.com/sales' },
+    { error, sales: 'https://rssamp.com/sales' },
     { status, headers: { 'access-control-allow-origin': '*' } },
   );
 }

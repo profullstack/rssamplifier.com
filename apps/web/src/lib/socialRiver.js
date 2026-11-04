@@ -98,7 +98,7 @@ export async function socialRiver({
     // their title. See socialDisplayTitle.
     title: socialDisplayTitle(feed, label ?? ref),
     description: String(
-      feed.description ?? `${label ?? ref}, mirrored by the RSS Amplifier directory.`,
+      feed.description ?? `${label ?? ref}, mirrored by the RSSAmp directory.`,
     ),
     link: `${page}${suffix}`,
     selfUrl: `${page}.${format}${suffix}`,

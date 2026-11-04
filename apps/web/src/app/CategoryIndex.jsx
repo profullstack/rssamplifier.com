@@ -99,7 +99,7 @@ export default async function CategoryIndex({ kind, page = 1, view = 'shows' }) 
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
-    name: `${category.heading} · RSS Amplifier`,
+    name: `${category.heading} · RSSAmp`,
     description: category.lede,
     url: `${siteUrl()}${category.path}`,
     hasPart: river

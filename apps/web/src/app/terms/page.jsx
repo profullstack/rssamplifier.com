@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = {
   title: 'Terms',
   description:
-    'What RSS Amplifier is, what it promises about freshness and availability, and what it does not.',
+    'What RSSAmp is, what it promises about freshness and availability, and what it does not.',
 };
 
 /**
@@ -40,7 +40,7 @@ export default async function TermsPage() {
 
       <h1>Terms</h1>
       <p className="lede">
-        RSS Amplifier is an open directory of public feeds. Reading it needs no account, no key and
+        RSSAmp is an open directory of public feeds. Reading it needs no account, no key and
         no agreement. These terms describe what the service does, what it commits to, and what it
         deliberately does not.
       </p>

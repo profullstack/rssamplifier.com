@@ -5,7 +5,7 @@ import Toolbar from '../Toolbar.jsx';
 export const metadata = {
   title: 'Advertise',
   description:
-    'What RSS Amplifier reaches, and how to get into the ad rotation. Free to join, no monthly fee, and the creatives are made for you.',
+    'What RSSAmp reaches, and how to get into the ad rotation. Free to join, no monthly fee, and the creatives are made for you.',
 };
 
 // Rendered per request, like every other page here that reads the directory,
@@ -60,7 +60,7 @@ export default async function AdvertisePage() {
     <>
       <h1>Advertise</h1>
       <p className="lede">
-        RSS Amplifier is an open directory of {fmt(feeds)} independent feeds. Ads here run through{' '}
+        RSSAmp is an open directory of {fmt(feeds)} independent feeds. Ads here run through{' '}
         <a href="https://crawlproof.com/ads" rel="noopener">
           CrawlProof
         </a>

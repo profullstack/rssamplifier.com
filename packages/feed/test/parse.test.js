@@ -827,7 +827,7 @@ test('per-episode itunes:image is the episode picture', () => {
 });
 
 test('a relative image in the body resolves against the post it was in', () => {
-  // Not against rssamplifier.com, which is what storing the raw src would mean.
+  // Not against rssamp.com, which is what storing the raw src would mean.
   assert.equal(
     parseFeed(MEDIA_RSS).items[3].imageUrl,
     'https://m.example/img/photo.jpg?w=900&h=600',

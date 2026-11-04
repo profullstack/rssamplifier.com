@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { framingVerdict } from '../src/frameable.js';
 
-const US = 'https://rssamplifier.com';
+const US = 'https://rssamp.com';
 
 test('a page with no framing policy is frameable', () => {
   assert.equal(framingVerdict({}, US).frameable, true);
@@ -54,7 +54,7 @@ test('one CSP policy refusing beats another allowing', () => {
   );
   // Two policies that both allow us still allow us.
   assert.equal(
-    framingVerdict({ contentSecurityPolicy: 'frame-ancestors *, frame-ancestors https://rssamplifier.com' }, US)
+    framingVerdict({ contentSecurityPolicy: 'frame-ancestors *, frame-ancestors https://rssamp.com' }, US)
       .frameable,
     true,
   );
@@ -89,7 +89,7 @@ test("frame-ancestors 'none' and 'self' block, * allows", () => {
 
 test('frame-ancestors naming us allows, naming someone else does not', () => {
   assert.equal(
-    framingVerdict({ contentSecurityPolicy: 'frame-ancestors https://rssamplifier.com' }, US)
+    framingVerdict({ contentSecurityPolicy: 'frame-ancestors https://rssamp.com' }, US)
       .frameable,
     true,
   );
@@ -101,15 +101,15 @@ test('frame-ancestors naming us allows, naming someone else does not', () => {
 
 test('a wildcard host covers subdomains but not the bare domain', () => {
   // Per CSP: *.example.com matches www.example.com and not example.com. So a
-  // policy naming *.rssamplifier.com does not admit the apex we serve from.
+  // policy naming *.rssamp.com does not admit the apex we serve from.
   assert.equal(
-    framingVerdict({ contentSecurityPolicy: 'frame-ancestors *.rssamplifier.com' }, US).frameable,
+    framingVerdict({ contentSecurityPolicy: 'frame-ancestors *.rssamp.com' }, US).frameable,
     false,
   );
   assert.equal(
     framingVerdict(
-      { contentSecurityPolicy: 'frame-ancestors *.rssamplifier.com' },
-      'https://www.rssamplifier.com',
+      { contentSecurityPolicy: 'frame-ancestors *.rssamp.com' },
+      'https://www.rssamp.com',
     ).frameable,
     true,
   );

@@ -100,15 +100,15 @@ export async function GET(req, { params }) {
       // this and the whole thing must be able to tell them apart in a list of
       // feeds, and "Following" twice over cannot.
       title: kinds
-        ? `Following: ${CATEGORIES[kinds[0]].heading} — RSS Amplifier`
-        : 'Following — RSS Amplifier',
+        ? `Following: ${CATEGORIES[kinds[0]].heading} — RSSAmp`
+        : 'Following — RSSAmp',
       description: `Recent ${
         kinds ? CATEGORIES[kinds[0]].item : 'posts'
       } from the ${count(topics.length, 'topic')}, ${count(
         authors.length,
         'person',
         'people',
-      )} and ${count(feeds.length, 'blog')} this RSS Amplifier account follows.`,
+      )} and ${count(feeds.length, 'blog')} this RSSAmp account follows.`,
       link: `${origin}/following${kinds ? `?kind=${kinds[0]}` : ''}`,
       selfUrl: followingFeedUrl(origin, token, format, kinds),
     },

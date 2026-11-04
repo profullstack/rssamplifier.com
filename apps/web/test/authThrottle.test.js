@@ -94,17 +94,17 @@ test('a successful sign-in clears the caller', () => {
 test('the caller is x-real-ip, else the last x-forwarded-for hop, never the forgeable first', () => {
   // nginx sets X-Real-IP from the socket and appends that same address to
   // X-Forwarded-For; everything before it is whatever the client sent.
-  const forged = new Request('https://rssamplifier.com/auth/magic', {
+  const forged = new Request('https://rssamp.com/auth/magic', {
     headers: { 'x-forwarded-for': '6.6.6.6, 203.0.113.9' },
   });
   assert.equal(callerAddress(forged), '203.0.113.9');
-  const behindNginx = new Request('https://rssamplifier.com/auth/magic', {
+  const behindNginx = new Request('https://rssamp.com/auth/magic', {
     headers: { 'x-forwarded-for': '6.6.6.6, 203.0.113.9', 'x-real-ip': '203.0.113.9' },
   });
   assert.equal(callerAddress(behindNginx), '203.0.113.9');
 });
 
 test('a request with no forwarding header still yields one identity', () => {
-  const req = new Request('https://rssamplifier.com/auth/magic');
+  const req = new Request('https://rssamp.com/auth/magic');
   assert.equal(callerAddress(req), 'unknown');
 });

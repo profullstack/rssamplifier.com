@@ -66,7 +66,7 @@ async function probe(url) {
     .find((d) => d.startsWith('frame-ancestors'));
   if (ancestors) {
     const allowed = ancestors.split(/\s+/).slice(1);
-    const us = allowed.some((a) => a === '*' || a === 'https:' || a.includes('rssamplifier.com'));
+    const us = allowed.some((a) => a === '*' || a === 'https:' || a.includes('rssamp.com'));
     if (!us) return { ok: false, reason: 'frame-ancestors' };
   }
 

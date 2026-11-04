@@ -1,5 +1,5 @@
 {
-  "name": "RSS Amplifier",
+  "name": "RSSAmp",
   "short_name": "RSSAmp",
   "description": "An open, agent-friendly directory of independent blogs. Submit a URL, a list or an OPML file.",
   "start_url": "/?source=pwa",

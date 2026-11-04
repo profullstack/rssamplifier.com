@@ -6,7 +6,7 @@ import Toolbar from '../Toolbar.jsx';
 export const metadata = {
   title: 'MCP server',
   description:
-    'Connect an AI agent to RSS Amplifier over the Model Context Protocol. Search the directory, read posts in full and submit feeds — no key, no account.',
+    'Connect an AI agent to RSSAmp over the Model Context Protocol. Search the directory, read posts in full and submit feeds — no key, no account.',
 };
 
 // siteUrl() is read at request time on purpose: rendering this page at build
@@ -32,7 +32,7 @@ export default function McpPage() {
     <>
       <h1>MCP server</h1>
       <p className="lede">
-        RSS Amplifier speaks the Model Context Protocol. Point an agent at{' '}
+        RSSAmp speaks the Model Context Protocol. Point an agent at{' '}
         <code>{endpoint}</code> and it can search tens of thousands of independent blogs, read any
         post in full, and add feeds of its own. No key, no account, no sign-up.
       </p>

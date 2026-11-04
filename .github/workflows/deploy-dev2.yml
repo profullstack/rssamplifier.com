@@ -1,4 +1,4 @@
-# Ship every merge to dev2, where rssamplifier.com runs since 2026-09-25 (it was
+# Ship every merge to dev2, where rssamp.com runs since 2026-09-25 (it was
 # two Railway services, which deployed on merge by themselves). The box pulls the
 # merged commit, rebuilds the web and poller images from the repo's Dockerfiles
 # and restarts the compose stack under /home/anthony/www/rssamplifier.com.
@@ -52,8 +52,8 @@ jobs:
       - name: Verify the site answers
         run: |
           for i in $(seq 1 10); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' https://rssamplifier.com/ || true)
-            if [ "$code" = 200 ]; then echo "rssamplifier.com 200"; exit 0; fi
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://rssamp.com/ || true)
+            if [ "$code" = 200 ]; then echo "rssamp.com 200"; exit 0; fi
             echo "attempt $i: $code"; sleep 10
           done
-          echo "rssamplifier.com never returned 200"; exit 1
+          echo "rssamp.com never returned 200"; exit 1

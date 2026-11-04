@@ -58,8 +58,8 @@ export async function fetchRedditSource(feed, opts = {}) {
         title: redditTitle(display),
         description:
           spec.mode === 'user'
-            ? `Posts by u/${display.name} on Reddit, mirrored by RSS Amplifier.`
-            : `Posts from r/${display.name}, mirrored by RSS Amplifier.`,
+            ? `Posts by u/${display.name} on Reddit, mirrored by RSSAmp.`
+            : `Posts from r/${display.name}, mirrored by RSSAmp.`,
         siteUrl: redditSiteUrl(display),
         language: null,
         imageUrl: null,

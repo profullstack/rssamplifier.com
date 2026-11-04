@@ -1,4 +1,4 @@
-# rssamplifier.com
+# rssamp.com
 
 An open, agent-first directory of independent blogs.
 
@@ -9,7 +9,7 @@ The point of difference is the machine-readable half: most of the web now blocks
 this directory deliberately does the opposite. Everything is also published as JSON, OPML and plain
 text so an agent can read the whole thing in one request.
 
-**Live:** <https://rssamplifier.com>
+**Live:** <https://rssamp.com>
 
 ## Layout
 
@@ -246,11 +246,11 @@ All send `access-control-allow-origin: *` and need no key.
 | `/api/authors/{slug}/claim` | `POST` to claim an author as yourself; verified by the address they published or by their site linking back |
 
 ```bash
-curl -X POST https://rssamplifier.com/api/submit \
+curl -X POST https://rssamp.com/api/submit \
   -H 'content-type: application/json' \
   -d '{"urls":["example.com","another.blog"]}'
 
-curl -X POST https://rssamplifier.com/api/discover \
+curl -X POST https://rssamp.com/api/discover \
   -H 'content-type: application/json' \
   -d '{"keywords":["siberian huskies"]}'
 ```
@@ -342,7 +342,7 @@ than scrape it. It runs inside the web app — no second service, no second
 deploy — and the endpoint is the same URL as its documentation page:
 
 ```bash
-claude mcp add --transport http rssamplifier https://rssamplifier.com/mcp
+claude mcp add --transport http rssamplifier https://rssamp.com/mcp
 ```
 
 Ten tools: `search`, `list_feeds`, `get_feed`, `list_topics`, `get_topic`,
@@ -482,7 +482,7 @@ Talks to the public HTTP API, so it needs no credentials. Point it elsewhere wit
 Two Railway services in the shared Profullstack project, both building from this repo with
 `RAILWAY_DOCKERFILE_PATH` pointing at their own Dockerfile:
 
-- `rssamplifier.com` → `apps/web/Dockerfile`
+- `rssamp.com` → `apps/web/Dockerfile`
 - `rssamplifier-poller` → `apps/poller/Dockerfile`
 
 Secrets live in logicsrc: `logicsrc teams pull profullstack rssamplifier-com prod`.

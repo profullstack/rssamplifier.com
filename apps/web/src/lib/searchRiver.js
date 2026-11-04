@@ -72,8 +72,8 @@ export async function searchRiver({ query: rawQuery, kind: rawKind, format: rawF
   }`;
 
   const channel = {
-    title: filter ? `${query} in ${filter.noun} — RSS Amplifier` : `${query} — RSS Amplifier`,
-    description: `Posts matching “${query}” from the feeds in the RSS Amplifier directory, best match first.`,
+    title: filter ? `${query} in ${filter.noun} — RSSAmp` : `${query} — RSSAmp`,
+    description: `Posts matching “${query}” from the feeds in the RSSAmp directory, best match first.`,
     link: page,
     selfUrl: self,
   };

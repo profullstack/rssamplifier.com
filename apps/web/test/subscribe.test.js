@@ -8,7 +8,7 @@ import { CATEGORIES, CATEGORY_SEGMENTS } from '../src/lib/categories.js';
 const config = readFileSync(new URL('../next.config.mjs', import.meta.url), 'utf8');
 
 test('a page advertises every format it links, at its own address', () => {
-  const types = feedAlternates('https://rssamplifier.com/phoenix-fm', 'Phoenix FM');
+  const types = feedAlternates('https://rssamp.com/phoenix-fm', 'Phoenix FM');
 
   assert.deepEqual(Object.keys(types), [
     'application/rss+xml',
@@ -16,8 +16,8 @@ test('a page advertises every format it links, at its own address', () => {
     'application/feed+json',
     'text/markdown',
   ]);
-  assert.equal(types['application/rss+xml'][0].url, 'https://rssamplifier.com/phoenix-fm.rss');
-  assert.equal(types['text/markdown'][0].url, 'https://rssamplifier.com/phoenix-fm.md');
+  assert.equal(types['application/rss+xml'][0].url, 'https://rssamp.com/phoenix-fm.rss');
+  assert.equal(types['text/markdown'][0].url, 'https://rssamp.com/phoenix-fm.md');
 });
 
 test('a query survives into the feed a page announces', () => {

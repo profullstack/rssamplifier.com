@@ -22,7 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const VERSION = '0.6.0';
 
-const DEFAULT_API = 'https://rssamplifier.com';
+const DEFAULT_API = 'https://rssamp.com';
 
 /**
  * Every command, in the order they are worth learning.

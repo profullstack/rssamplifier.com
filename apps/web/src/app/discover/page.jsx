@@ -83,7 +83,7 @@ export default async function DiscoverPage({ searchParams }) {
 
       <h2>For agents</h2>
       <p>Same endpoint, JSON in and JSON out:</p>
-      <pre className="snippet">{`curl -X POST https://rssamplifier.com/api/discover \\
+      <pre className="snippet">{`curl -X POST https://rssamp.com/api/discover \\
   -H 'content-type: application/json' \\
   -d '{"keywords":["siberian huskies"]}'`}</pre>
 

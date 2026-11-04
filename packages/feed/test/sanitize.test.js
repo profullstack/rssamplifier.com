@@ -80,7 +80,7 @@ test('safe URLs are kept, and links are marked as leaving the site', () => {
   assert.ok(out.includes('target="_blank"'));
 
   assert.ok(sanitizeHtml('<a href="mailto:a@b.co">mail</a>').includes('href="mailto:a@b.co"'));
-  // Relative URLs would resolve against rssamplifier.com, which is not where
+  // Relative URLs would resolve against rssamp.com, which is not where
   // the article came from.
   assert.ok(!sanitizeHtml('<a href="/local">x</a>').includes('href='));
 });

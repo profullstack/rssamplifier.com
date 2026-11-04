@@ -43,7 +43,7 @@ after(async () => {
   db?.close();
 });
 
-const req = (path, init = {}) => new Request(`https://rssamplifier.com${path}`, init);
+const req = (path, init = {}) => new Request(`https://rssamp.com${path}`, init);
 
 test('the API answers 401 without a credential', async () => {
   const res = await api(req('/api/v1/webhooks'));

@@ -153,7 +153,7 @@ export function explainCoinpay(code) {
     case 'failed':
       return 'CoinPay sign-in could not be completed. Try again.';
     case 'linked-elsewhere':
-      return 'That CoinPay account is already connected to a different RSS Amplifier account.';
+      return 'That CoinPay account is already connected to a different RSSAmp account.';
     case 'already-linked':
       return 'This account is already connected to a different CoinPay account.';
     case 'no-account':

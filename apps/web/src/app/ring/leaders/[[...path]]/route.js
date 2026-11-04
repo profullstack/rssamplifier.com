@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 /**
  * The leaderboard package serves standalone HTML so it can also power embeds.
  * Route handlers bypass Next's root layout, though, which left the public pages
- * without RSS Amplifier's wordmark and navigation. Add the same site frame to
+ * without RSSAmp's wordmark and navigation. Add the same site frame to
  * HTML responses while leaving the JSON, RSS and embed endpoints untouched.
  */
 const SITE_FRAME = `
@@ -18,7 +18,7 @@ const SITE_FRAME = `
 <header class="leaderboard-header">
   <div class="leaderboard-header-inner">
     <a class="leaderboard-wordmark" href="/">
-      <img src="/logo.png" alt="RSS Amplifier" width="1256" height="192">
+      <img src="/logo.png" alt="RSSAmp" width="1256" height="192">
     </a>
     <nav aria-label="Primary">
       <a href="/blogs">Blogs</a>
@@ -92,7 +92,7 @@ async function withSiteFrame(response) {
   let framedHtml = html.replace(/<\/head>/i, `<style>${SITE_FRAME_CSS}</style></head>`);
   framedHtml = framedHtml.replace(/<body(\s[^>]*)?>/i, (bodyTag) => `${bodyTag}${SITE_FRAME}`);
   framedHtml = framedHtml.replace(/<main\b(?![^>]*\bid=)([^>]*)>/i, '<main id="main"$1>');
-  framedHtml = framedHtml.replace(/<\/body>/i, `<footer class="leaderboard-footer"><div class="leaderboard-footer-inner"><strong>RSS Amplifier</strong><a href="/mcp">MCP</a><a href="/cli">CLI</a><a href="/api/feeds">JSON API</a><a href="/opml">OPML</a><a href="/about">About</a><a href="/privacy">Privacy</a></div></footer></body>`);
+  framedHtml = framedHtml.replace(/<\/body>/i, `<footer class="leaderboard-footer"><div class="leaderboard-footer-inner"><strong>RSSAmp</strong><a href="/mcp">MCP</a><a href="/cli">CLI</a><a href="/api/feeds">JSON API</a><a href="/opml">OPML</a><a href="/about">About</a><a href="/privacy">Privacy</a></div></footer></body>`);
 
   const headers = new Headers(response.headers);
   headers.delete('content-length');

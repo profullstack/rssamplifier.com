@@ -25,7 +25,7 @@ import { fetchPage, linksTo } from '@rssamplifier/feed';
  */
 
 /** How this pass names itself to the sites it reads. */
-export const RING_USER_AGENT = 'rssamplifier-openwebring/1 (+https://rssamplifier.com/about)';
+export const RING_USER_AGENT = 'rssamplifier-openwebring/1 (+https://rssamp.com/about)';
 
 /** The W3C ai-disclosure vocabulary, verbatim. Anything else is dropped. */
 export const DISCLOSURES = ['none', 'ai-assisted', 'ai-generated', 'autonomous'];
