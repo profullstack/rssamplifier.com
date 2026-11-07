@@ -143,7 +143,7 @@ export async function llmsTxt(opts = {}) {
     '',
     'The same capabilities as the endpoints below, as tools an agent can call:',
     'search, list_feeds, get_feed, list_topics, get_topic, topic_posts, read_post,',
-    'random_feed, directory_stats and submit_feed. Point an MCP client at',
+    'random_feed, directory_stats, trending_topics and submit_feed. Point an MCP client at',
     `\`${base}/mcp\` — it answers both the current protocol revision and the`,
     'older handshake-based ones. Documentation for humans is at the same URL in a',
     `browser: ${base}/mcp`,
