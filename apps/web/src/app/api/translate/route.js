@@ -108,6 +108,9 @@ export async function POST(req) {
     translated: result
       ? { title: result.title, summary: result.summary, source_lang: result.sourceLang }
       : null,
+    // Still being translated in the background: ask again in a few minutes,
+    // which is free (a cache hit, or this same pending answer).
+    pending: Boolean('pending' in attempt && attempt.pending),
   });
 }
 
