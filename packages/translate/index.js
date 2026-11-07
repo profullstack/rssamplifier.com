@@ -14,12 +14,40 @@ export {
 } from './src/languages.js';
 export {
   MODEL,
+  MAX_PEER_ARTICLE_CHARS,
   MAX_SOURCE_CHARS,
   MAX_ARTICLE_CHARS,
   MIN_ARTICLE_CHARS,
   translatePost,
   translateArticle,
+  readTagged,
 } from './src/translate.js';
+
+/**
+ * How long a request waits for a fresh translation before answering "pending".
+ *
+ * c0mpute, which answers first, takes minutes under load (a peer node writes a
+ * few tokens a second, after a queue). That cannot sit inside a page render or
+ * behind the proxy's timeout, so the translation runs in the background and the
+ * request only waits this long for it. A fast answer still lands on the first
+ * click; a slow one lands in the cache, and the next view of the post is a hit.
+ */
+export const DEFAULT_WAIT_MS = 8_000;
+
+/**
+ * Background translations one server process runs at once. Past this a cache
+ * miss shows the original and is not charged, rather than queueing work that
+ * would finish long after anybody cared.
+ */
+export const MAX_PENDING = 24;
+
+/** @type {Map<string, Promise<unknown>>} */
+const pending = new Map();
+
+/** For tests: the background translations still running. */
+export function pendingTranslations() {
+  return [...pending.values()];
+}
 
 /**
  * Paid translations one reader may trigger in a UTC day.
@@ -60,13 +88,15 @@ export const DEFAULT_DAILY_TOTAL = 1000;
  * hurry. A value that is not a positive number falls back to the default rather
  * than to "no limit" — a typo in a Railway variable must not uncap spending.
  *
- * @returns {{ perUser: number, total: number }}
+ * @returns {{ perUser: number, total: number, waitMs: number }}
  */
 export function limits() {
   const env = process.env;
+  const wait = Number(env['TRANSLATE_WAIT_MS']);
   return {
     perUser: positive(env['TRANSLATE_DAILY_PER_USER'], DEFAULT_DAILY_PER_USER),
     total: positive(env['TRANSLATE_DAILY_TOTAL'], DEFAULT_DAILY_TOTAL),
+    waitMs: Number.isFinite(wait) && wait >= 0 ? wait : DEFAULT_WAIT_MS,
   };
 }
 
@@ -108,6 +138,7 @@ function positive(raw, fallback) {
  *   sourceLang?: string|null,
  *   userId?: string|null,
  *   now?: Date,
+ *   ai?: import('@profullstack/ai-providers').AiRouter,
  * }} input
  * @returns {Promise<{
  *   translation: {
@@ -115,6 +146,7 @@ function positive(raw, fallback) {
  *     truncated: boolean, sourceLang: string|null, cached: boolean
  *   }|null,
  *   limited: boolean,
+ *   pending?: boolean,
  * }>}
  */
 export async function ensureTranslation(db, input) {
@@ -151,8 +183,14 @@ export async function ensureTranslation(db, input) {
   const userId = input.userId ? String(input.userId) : null;
   if (!userId) return none();
 
+  // Already being translated (by this process): say so, and do not charge the
+  // reader again for asking twice.
+  const key = `${input.itemId}\u0000${target}`;
+  if (pending.has(key)) return { translation: null, limited: false, pending: true };
+  if (pending.size >= MAX_PENDING) return none();
+
   const day = translations.usageDay(input.now);
-  const { perUser, total } = limits();
+  const { perUser, total, waitMs } = limits();
 
   const [mine, everyone] = await Promise.all([
     translations.usageForUser(db, userId, day),
@@ -174,58 +212,80 @@ export async function ensureTranslation(db, input) {
   const body = String(input.contentHtml ?? '');
   const wholeArticle = textLength(body) >= MIN_ARTICLE_CHARS;
 
-  let fresh;
-  try {
-    fresh = wholeArticle
-      ? await translateArticle({
-          title: input.title,
-          summary: input.summary,
-          contentHtml: body,
-          targetLang: target,
-          sourceLang: source,
-        })
-      : await translatePost({
-          title: input.title,
-          summary: input.summary,
-          targetLang: target,
-          sourceLang: source,
-        });
-  } catch {
-    // Rate limits, timeouts, a revoked key: all of them mean "show the
-    // original", and none of them should reach the reader as an error page.
-    return none();
-  }
+  const job = (async () => {
+    let fresh;
+    try {
+      fresh = wholeArticle
+        ? await translateArticle({
+            title: input.title,
+            summary: input.summary,
+            contentHtml: body,
+            targetLang: target,
+            sourceLang: source,
+            ai: input.ai,
+          })
+        : await translatePost({
+            title: input.title,
+            summary: input.summary,
+            targetLang: target,
+            sourceLang: source,
+            ai: input.ai,
+          });
+    } catch {
+      // Rate limits, timeouts, a revoked key: all of them mean "show the
+      // original", and none of them should reach the reader as an error page.
+      return null;
+    }
 
-  if (!fresh) return none();
+    if (!fresh) return null;
 
-  // Sanitized before it is stored as well as before it is rendered. The model
-  // is not a trusted author — a post can ask it for a script tag — and a
-  // sanitizer that only runs at render time is one forgotten call site away
-  // from serving whatever came back.
-  const translatedHtml = fresh.contentHtml ? sanitizeHtml(fresh.contentHtml) : null;
+    // Sanitized before it is stored as well as before it is rendered. The model
+    // is not a trusted author — a post can ask it for a script tag — and a
+    // sanitizer that only runs at render time is one forgotten call site away
+    // from serving whatever came back.
+    const translatedHtml = fresh.contentHtml ? sanitizeHtml(fresh.contentHtml) : null;
 
-  await translations.saveTranslation(db, {
-    itemId: input.itemId,
-    lang: target,
-    title: fresh.title,
-    summary: fresh.summary,
-    contentHtml: translatedHtml,
-    truncated: Boolean(fresh.truncated),
-    model: fresh.model,
-    sourceLang: fresh.sourceLang ?? source,
-  });
+    await translations.saveTranslation(db, {
+      itemId: input.itemId,
+      lang: target,
+      title: fresh.title,
+      summary: fresh.summary,
+      contentHtml: translatedHtml,
+      truncated: Boolean(fresh.truncated),
+      model: fresh.model,
+      sourceLang: fresh.sourceLang ?? source,
+    });
 
-  return {
-    translation: {
+    return {
       title: fresh.title,
       summary: fresh.summary,
       contentHtml: translatedHtml,
       truncated: Boolean(fresh.truncated),
       sourceLang: fresh.sourceLang ?? source,
       cached: false,
-    },
-    limited: false,
-  };
+    };
+  })()
+    .catch((err) => {
+      console.warn(`[translate] ${input.itemId} -> ${target}: ${err?.message ?? err}`);
+      return null;
+    })
+    .finally(() => pending.delete(key));
+  pending.set(key, job);
+
+  // Wait a little: a quick answer is shown now, a slow one finishes in the
+  // background and is a cache hit on the next view.
+  let timer;
+  const waited = await Promise.race([
+    job.then((translation) => ({ translation })),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), waitMs);
+    }),
+  ]);
+  clearTimeout(timer);
+
+  if (!waited) return { translation: null, limited: false, pending: true };
+  if (!waited.translation) return none();
+  return { translation: waited.translation, limited: false };
 }
 
 /**

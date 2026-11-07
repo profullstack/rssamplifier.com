@@ -182,3 +182,22 @@ test('a post with no title never reaches the API', async () => {
   );
   assert.equal(client.calls.length, 0);
 });
+
+test('readTagged reads the short fields and a body full of markup', async () => {
+  const { readTagged } = await import('../src/translate.js');
+  const text = [
+    '<think>scratch</think>',
+    '<title>Titre</title>',
+    '<summary></summary>',
+    '<source_language>en</source_language>',
+    '<body><p>Un <b>texte</b></p><pre>&lt;/p&gt;</pre></body>',
+  ].join('\n');
+  assert.deepEqual(readTagged(text, ['title', 'summary', 'source_language', 'body']), {
+    title: 'Titre',
+    summary: '',
+    source_language: 'en',
+    body: '<p>Un <b>texte</b></p><pre>&lt;/p&gt;</pre>',
+  });
+  assert.equal(readTagged('<title>x</title>', ['title', 'summary']), null);
+  assert.equal(readTagged('<title>x</title><body><p>cut off', ['title', 'body']), null);
+});

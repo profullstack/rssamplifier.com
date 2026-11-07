@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { AllProvidersFailedError, ProviderError, getAi } from '@profullstack/ai-providers';
 
 /**
  * Machine translation of one post's title and summary.
@@ -7,10 +8,31 @@ import Anthropic from '@anthropic-ai/sdk';
  * task where a small model loses almost nothing — there is no reasoning to do,
  * the source text says exactly what the output should say — and the directory
  * holds 47k feeds, so the per-post cost is the whole design constraint.
+ *
+ * c0mpute (the peer network, through @profullstack/ai-providers) answers
+ * first. The Anthropic call below, with its schema-constrained output, is the
+ * paid fallback and runs only when c0mpute fails and a key is set. Any other
+ * paid provider the router has (OpenAI, when OPENAI_API_KEY is set) gets the
+ * same tagged-text prompt c0mpute does.
+ *
+ * Everything translated here is a public feed post, which is why it may go to
+ * peer nodes at all.
  */
 
-/** @see https://platform.claude.com/docs/en/about-claude/models/overview */
+/** The paid fallback's model. @see https://platform.claude.com/docs/en/about-claude/models/overview */
 export const MODEL = 'claude-haiku-4-5';
+
+/**
+ * Longest article body sent to c0mpute, in characters of HTML.
+ *
+ * A peer node writes a few tokens a second under load, so 60k characters would
+ * be hours. Past this the article is translated down to here and marked
+ * truncated, exactly as the paid path does at MAX_ARTICLE_CHARS.
+ */
+export const MAX_PEER_ARTICLE_CHARS = 8_000;
+
+/** Whole-call ceiling for a c0mpute translation; they run off the request path. */
+const PEER_TIMEOUT_MS = 30 * 60_000;
 
 /**
  * Longest source text sent for translation.
@@ -65,15 +87,13 @@ const SYSTEM = [
  *   targetLang: string,
  *   sourceLang?: string|null,
  *   client?: Anthropic,
+ *   ai?: import('@profullstack/ai-providers').AiRouter,
  * }} input
  * @returns {Promise<{ title: string, summary: string|null, sourceLang: string|null, model: string }|null>}
  */
 export async function translatePost(input) {
   const title = String(input.title ?? '').trim();
   if (!title) return null;
-
-  const client = input.client ?? anthropic();
-  if (!client) return null;
 
   const summary = String(input.summary ?? '')
     .trim()
@@ -83,6 +103,38 @@ export async function translatePost(input) {
     ? `The source is believed to be in "${input.sourceLang}", but trust the text over that label.`
     : 'The source language is not recorded; work it out from the text.';
 
+  const user = [
+    `Target language: ${input.targetLang}`,
+    known,
+    '',
+    `<title>\n${title}\n</title>`,
+    `<summary>\n${summary}\n</summary>`,
+  ].join('\n');
+
+  return route(input, {
+    feature: 'translate-post',
+    paid: (client) => postViaAnthropic(client, user),
+    request: {
+      system: `${SYSTEM}\n\n${TAGGED_ANSWER}`,
+      user,
+      maxTokens: 2000,
+      temperature: 0.2,
+      timeoutMs: PEER_TIMEOUT_MS,
+    },
+    read: (text) => {
+      const parsed = readTagged(text, ['title', 'summary', 'source_language']);
+      return parsed && finishPost(parsed);
+    },
+  });
+}
+
+/**
+ * The paid tier: Anthropic with structured outputs.
+ *
+ * @param {Anthropic} client
+ * @param {string} user
+ */
+async function postViaAnthropic(client, user) {
   const response = await client.messages.create({
     model: MODEL,
     // Title plus a capped summary — a few thousand characters of output at
@@ -90,18 +142,7 @@ export async function translatePost(input) {
     max_tokens: 4000,
     system: SYSTEM,
     output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
-    messages: [
-      {
-        role: 'user',
-        content: [
-          `Target language: ${input.targetLang}`,
-          known,
-          '',
-          `<title>\n${title}\n</title>`,
-          `<summary>\n${summary}\n</summary>`,
-        ].join('\n'),
-      },
-    ],
+    messages: [{ role: 'user', content: user }],
   });
 
   // A refusal and a truncation both come back as an ordinary 200 with unusable
@@ -119,6 +160,14 @@ export async function translatePost(input) {
     return null;
   }
 
+  const result = finishPost(parsed);
+  return result && { ...result, model: MODEL };
+}
+
+/**
+ * @param {{ title?: unknown, summary?: unknown, source_language?: unknown }} parsed
+ */
+function finishPost(parsed) {
   const translatedTitle = String(parsed.title ?? '').trim();
   if (!translatedTitle) return null;
 
@@ -127,8 +176,7 @@ export async function translatePost(input) {
   return {
     title: translatedTitle,
     summary: translatedSummary || null,
-    sourceLang: parsed.source_language ? String(parsed.source_language) : null,
-    model: MODEL,
+    sourceLang: parsed.source_language ? String(parsed.source_language).trim() : null,
   };
 }
 
@@ -210,6 +258,7 @@ const ARTICLE_SYSTEM = [
  *   targetLang: string,
  *   sourceLang?: string|null,
  *   client?: Anthropic,
+ *   ai?: import('@profullstack/ai-providers').AiRouter,
  * }} input
  * @returns {Promise<{
  *   title: string, summary: string|null, contentHtml: string,
@@ -220,9 +269,6 @@ export async function translateArticle(input) {
   const title = String(input.title ?? '').trim();
   const body = String(input.contentHtml ?? '').trim();
   if (!title || !body) return null;
-
-  const client = input.client ?? anthropic();
-  if (!client) return null;
 
   const truncated = body.length > MAX_ARTICLE_CHARS;
   const source = truncated ? body.slice(0, MAX_ARTICLE_CHARS) : body;
@@ -235,27 +281,59 @@ export async function translateArticle(input) {
     ? `The source is believed to be in "${input.sourceLang}", but trust the text over that label.`
     : 'The source language is not recorded; work it out from the text.';
 
+  const prompt = (/** @type {string} */ body, /** @type {boolean} */ cut) =>
+    [
+      `Target language: ${input.targetLang}`,
+      known,
+      cut ? 'This is the beginning of a longer post; translate what is here and stop.' : '',
+      '',
+      `<title>\n${title}\n</title>`,
+      `<summary>\n${summary}\n</summary>`,
+      `<body>\n${body}\n</body>`,
+    ].join('\n');
+
+  // The peer network gets less of a long post than the paid model would: it is
+  // a few tokens a second, and a translation nobody waits for is no use.
+  const peerCut = body.length > MAX_PEER_ARTICLE_CHARS;
+  const peerSource = peerCut ? cutHtml(body, MAX_PEER_ARTICLE_CHARS) : body;
+
+  return route(input, {
+    feature: 'translate-article',
+    paid: (client) => articleViaAnthropic(client, prompt(source, truncated), truncated),
+    request: {
+      system: `${ARTICLE_SYSTEM}\n\n${TAGGED_ARTICLE_ANSWER}`,
+      user: prompt(peerSource, peerCut),
+      maxTokens: 8000,
+      temperature: 0.2,
+      timeoutMs: PEER_TIMEOUT_MS,
+    },
+    read: (text) => {
+      const parsed = readTagged(text, ['title', 'summary', 'source_language', 'body']);
+      if (!parsed) return null;
+      const result = finishArticle({ ...parsed, content_html: parsed.body });
+      return result && { ...result, truncated: peerCut };
+    },
+  });
+}
+
+/**
+ * The paid tier: Anthropic, streamed, with structured outputs.
+ *
+ * Streamed rather than awaited as one response. A full article at this token
+ * ceiling is minutes of generation, and a non-streaming request that long hits
+ * the SDK's HTTP timeout and throws away work that was nearly finished.
+ *
+ * @param {Anthropic} client
+ * @param {string} user
+ * @param {boolean} truncated
+ */
+async function articleViaAnthropic(client, user, truncated) {
   const stream = client.messages.stream({
     model: MODEL,
     max_tokens: ARTICLE_MAX_TOKENS,
     system: ARTICLE_SYSTEM,
     output_config: { format: { type: 'json_schema', schema: ARTICLE_SCHEMA } },
-    messages: [
-      {
-        role: 'user',
-        content: [
-          `Target language: ${input.targetLang}`,
-          known,
-          truncated
-            ? 'This is the beginning of a longer post; translate what is here and stop.'
-            : '',
-          '',
-          `<title>\n${title}\n</title>`,
-          `<summary>\n${summary}\n</summary>`,
-          `<body>\n${source}\n</body>`,
-        ].join('\n'),
-      },
-    ],
+    messages: [{ role: 'user', content: user }],
   });
 
   const response = await stream.finalMessage();
@@ -277,6 +355,14 @@ export async function translateArticle(input) {
     return null;
   }
 
+  const result = finishArticle(parsed);
+  return result && { ...result, model: MODEL, truncated };
+}
+
+/**
+ * @param {{ title?: unknown, summary?: unknown, content_html?: unknown, source_language?: unknown }} parsed
+ */
+function finishArticle(parsed) {
   const translatedTitle = String(parsed.title ?? '').trim();
   const translatedBody = String(parsed.content_html ?? '').trim();
   if (!translatedTitle || !translatedBody) return null;
@@ -287,10 +373,124 @@ export async function translateArticle(input) {
     title: translatedTitle,
     summary: translatedSummary || null,
     contentHtml: translatedBody,
-    sourceLang: parsed.source_language ? String(parsed.source_language) : null,
-    model: MODEL,
-    truncated,
+    sourceLang: parsed.source_language ? String(parsed.source_language).trim() : null,
   };
+}
+
+/**
+ * The answer format for c0mpute and any non-Anthropic fallback. Tags rather
+ * than JSON: a 9B model escapes a page of HTML into a JSON string badly, and
+ * it copies the tags the input already arrives in very reliably.
+ */
+const TAGGED_ANSWER = [
+  'Answer in exactly this format and nothing else:',
+  '<title>the translated title</title>',
+  '<summary>the translated summary</summary>',
+  '<source_language>ISO-639-1 code of the source text</source_language>',
+].join('\n');
+
+const TAGGED_ARTICLE_ANSWER = [
+  TAGGED_ANSWER,
+  '<body>the translated body HTML</body>',
+].join('\n');
+
+/**
+ * Reads `<tag>...</tag>` fields out of a model answer. `body` is read last and
+ * greedily, so markup inside it cannot end it early; the short fields are read
+ * from the text before it. Null if any field is missing.
+ *
+ * @param {string} text
+ * @param {string[]} fields
+ * @returns {Record<string, string>|null}
+ */
+export function readTagged(text, fields) {
+  let rest = String(text ?? '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+  /** @type {Record<string, string>} */
+  const out = {};
+  if (fields.includes('body')) {
+    const open = rest.indexOf('<body>');
+    const close = rest.lastIndexOf('</body>');
+    if (open < 0 || close < open) return null;
+    out.body = rest.slice(open + 6, close).trim();
+    rest = rest.slice(0, open);
+  }
+  for (const field of fields) {
+    if (field === 'body') continue;
+    const m = new RegExp(`<${field}>([\\s\\S]*?)</${field}>`, 'i').exec(rest);
+    if (!m) return null;
+    out[field] = m[1].trim();
+  }
+  return out;
+}
+
+/**
+ * Cuts HTML at a paragraph-ish boundary at or before `max` characters, so the
+ * model is not handed half a tag.
+ *
+ * @param {string} html
+ * @param {number} max
+ */
+function cutHtml(html, max) {
+  const head = html.slice(0, max);
+  const at = Math.max(head.lastIndexOf('</p>'), head.lastIndexOf('</li>'), head.lastIndexOf('</pre>'));
+  if (at > max / 2) return head.slice(0, head.indexOf('>', at) + 1);
+  const tag = head.lastIndexOf('<');
+  return tag > head.lastIndexOf('>') ? head.slice(0, tag) : head;
+}
+
+/**
+ * Runs one translation through the provider chain: c0mpute first (streamed,
+ * over the package's provider.stream), then the paid fallbacks. The Anthropic
+ * slot runs this module's own SDK call.
+ *
+ * A test (or a caller) that passes `client` without `ai` gets that client and
+ * nothing else, which is how the request shape is unit-tested.
+ *
+ * Null when every provider failed or answered unusably: a translation is an
+ * enhancement and its absence is never an error page.
+ *
+ * @template T
+ * @param {{ client?: any, ai?: any }} input
+ * @param {{
+ *   feature: string,
+ *   paid: (client: Anthropic) => Promise<T|null>,
+ *   request: object,
+ *   read: (text: string) => T|null,
+ * }} job
+ * @returns {Promise<(T & { model: string })|null>}
+ */
+async function route(input, job) {
+  if (input.client && !input.ai) return /** @type {any} */ (job.paid(input.client));
+
+  const router = input.ai ?? getAi();
+  try {
+    const { value } = await router.run(
+      async (/** @type {any} */ provider) => {
+        if (provider.name === 'anthropic') {
+          const client = input.client ?? anthropic();
+          if (!client) throw new ProviderError('anthropic', 'no API key', { kind: 'billing' });
+          const answer = await job.paid(client);
+          if (!answer) throw new ProviderError('anthropic', 'refused or unusable answer', { kind: 'output' });
+          return answer;
+        }
+        const out =
+          typeof provider.stream === 'function'
+            ? await provider.stream(job.request, () => {})
+            : await provider.generate(job.request);
+        const answer = job.read(out.text);
+        if (!answer) throw new ProviderError(provider.name, 'answer was not in the tagged format', { kind: 'output' });
+        return { ...answer, model: `${provider.name}:${out.model}` };
+      },
+      { feature: job.feature },
+    );
+    return value;
+  } catch (err) {
+    if (err instanceof AllProvidersFailedError) {
+      console.warn(`[translate] ${job.feature}: ${err.message}`);
+      return null;
+    }
+    throw err;
+  }
 }
 
 /**

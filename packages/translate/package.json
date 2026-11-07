@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
+    "@profullstack/ai-providers": "0.2.0",
     "@rssamplifier/db": "workspace:*",
     "@rssamplifier/feed": "workspace:*"
   }

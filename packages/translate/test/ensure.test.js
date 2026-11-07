@@ -3,7 +3,19 @@ import { test, before, after, beforeEach } from 'node:test';
 import { q, translations, accounts } from '@rssamplifier/db';
 import { connectTest } from '@rssamplifier/db/src/testdb.js';
 
-import { DEFAULT_DAILY_PER_USER, DEFAULT_DAILY_TOTAL, ensureTranslation, limits } from '../index.js';
+import { AiRouter } from '@profullstack/ai-providers';
+
+import {
+  DEFAULT_DAILY_PER_USER,
+  DEFAULT_DAILY_TOTAL,
+  DEFAULT_WAIT_MS,
+  ensureTranslation,
+  limits,
+  pendingTranslations,
+} from '../index.js';
+
+// No provider at all unless a test hands one in: c0mpute off, no paid keys.
+process.env['C0MPUTE_DISABLED'] = '1';
 
 /**
  * The branches of ensureTranslation that must never reach the API: a cache hit,
@@ -44,6 +56,7 @@ beforeEach(async () => {
   await db.execute('delete from translation_usage');
   delete process.env['TRANSLATE_DAILY_PER_USER'];
   delete process.env['TRANSLATE_DAILY_TOTAL'];
+  delete process.env['TRANSLATE_WAIT_MS'];
 });
 
 after(async () => {
@@ -199,7 +212,11 @@ test("yesterday's spending does not count against today", async () => {
 });
 
 test('limits fall back to the defaults rather than to no limit', async () => {
-  assert.deepEqual(limits(), { perUser: DEFAULT_DAILY_PER_USER, total: DEFAULT_DAILY_TOTAL });
+  assert.deepEqual(limits(), {
+    perUser: DEFAULT_DAILY_PER_USER,
+    total: DEFAULT_DAILY_TOTAL,
+    waitMs: DEFAULT_WAIT_MS,
+  });
 
   // A typo in a Railway variable must not uncap spending.
   for (const bad of ['', 'lots', '0', '-5', 'NaN']) {
@@ -209,4 +226,79 @@ test('limits fall back to the defaults rather than to no limit', async () => {
 
   process.env['TRANSLATE_DAILY_TOTAL'] = '250';
   assert.equal(limits().total, 250);
+});
+
+/**
+ * A c0mpute stand-in that answers in the tagged format after `ms`.
+ *
+ * @param {number} ms
+ */
+function peer(ms) {
+  const provider = {
+    name: 'c0mpute',
+    calls: 0,
+    /** @param {any} req */
+    async generate(req) {
+      provider.calls += 1;
+      provider.last = req;
+      await new Promise((r) => setTimeout(r, ms));
+      return {
+        text: '<title>Configurer le BIOS UEFI de Proxmox</title>\n<summary>Bonjour le forum !</summary>\n<source_language>de</source_language>',
+        model: 'qwen-9b',
+        usage: { inputTokens: 1, outputTokens: 1, estimated: true },
+      };
+    },
+    last: /** @type {any} */ (null),
+  };
+  return provider;
+}
+
+test('c0mpute answers first, and a quick answer is shown and cached on the first click', async () => {
+  await db.execute('delete from item_translations');
+  const provider = peer(5);
+  const { translation, limited } = await ask({ ai: new AiRouter({ primary: [provider] }) });
+
+  assert.equal(limited, false);
+  assert.equal(translation.title, 'Configurer le BIOS UEFI de Proxmox');
+  assert.equal(translation.summary, 'Bonjour le forum !');
+  assert.match(provider.last.system, /<source_language>/);
+
+  const row = await translations.translationFor(db, itemId, 'fr');
+  assert.equal(row.model, 'c0mpute:qwen-9b');
+});
+
+test('a slow translation runs in the background: pending now, a cache hit later, charged once', async () => {
+  await db.execute('delete from item_translations');
+  process.env['TRANSLATE_WAIT_MS'] = '10';
+  const provider = peer(150);
+  const ai = new AiRouter({ primary: [provider] });
+
+  const first = await ask({ ai });
+  assert.equal(first.translation, null);
+  assert.equal(first.pending, true);
+
+  // Asking again while it runs is not a second call and not a second charge.
+  const second = await ask({ ai });
+  assert.equal(second.pending, true);
+  assert.equal(provider.calls, 1);
+  assert.equal(await translations.usageForUser(db, userId, translations.usageDay()), 1);
+
+  await Promise.all(pendingTranslations());
+  const third = await ask({ ai });
+  assert.equal(third.translation.cached, true);
+  assert.equal(third.translation.title, 'Configurer le BIOS UEFI de Proxmox');
+});
+
+test('an answer that is not in the tagged format shows the original', async () => {
+  await db.execute('delete from item_translations');
+  const junk = {
+    name: 'c0mpute',
+    async generate() {
+      return { text: 'Sure! Here is your translation: ...', model: 'm', usage: { inputTokens: 0, outputTokens: 0, estimated: true } };
+    },
+  };
+  const { translation, pending } = await ask({ ai: new AiRouter({ primary: [junk] }) });
+  assert.equal(translation, null);
+  assert.equal(pending, undefined);
+  assert.equal(await translations.translationFor(db, itemId, 'fr'), null);
 });

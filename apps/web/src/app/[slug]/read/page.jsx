@@ -363,6 +363,18 @@ export default async function ReaderPage({ params, searchParams }) {
           </p>
         )}
 
+        {/*
+         * The translation is running in the background (c0mpute takes minutes
+         * under load). The original shows meanwhile; reloading later is a
+         * cache hit and costs the reader nothing more.
+         */}
+        {'pending' in attempt && attempt.pending && (
+          <p className="translated-note">
+            Translating this post — it takes a few minutes. Showing the original until it is
+            ready; reload this page later to read it in your language.
+          </p>
+        )}
+
         <PostActions
           slug={slug}
           guid={String(post.guid)}
