@@ -201,3 +201,10 @@ test('readTagged reads the short fields and a body full of markup', async () => 
   assert.equal(readTagged('<title>x</title>', ['title', 'summary']), null);
   assert.equal(readTagged('<title>x</title><body><p>cut off', ['title', 'body']), null);
 });
+
+test('a peer answer that names the target as its source falls back to the declared language', async () => {
+  const { fixSourceLanguage } = await import('../src/translate.js');
+  assert.equal(fixSourceLanguage({ source_language: 'en' }, { targetLang: 'en', sourceLang: 'de' }).source_language, 'de');
+  assert.equal(fixSourceLanguage({ source_language: 'EN-us' }, { targetLang: 'en' }).source_language, '');
+  assert.equal(fixSourceLanguage({ source_language: 'fr' }, { targetLang: 'en', sourceLang: 'de' }).source_language, 'fr');
+});
