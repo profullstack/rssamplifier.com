@@ -123,7 +123,7 @@ export async function translatePost(input) {
     },
     read: (text) => {
       const parsed = readTagged(text, ['title', 'summary', 'source_language']);
-      return parsed && finishPost(parsed);
+      return parsed && finishPost(fixSourceLanguage(parsed, input));
     },
   });
 }
@@ -310,7 +310,7 @@ export async function translateArticle(input) {
     read: (text) => {
       const parsed = readTagged(text, ['title', 'summary', 'source_language', 'body']);
       if (!parsed) return null;
-      const result = finishArticle({ ...parsed, content_html: parsed.body });
+      const result = finishArticle({ ...fixSourceLanguage(parsed, input), content_html: parsed.body });
       return result && { ...result, truncated: peerCut };
     },
   });
@@ -421,6 +421,23 @@ export function readTagged(text, fields) {
     out[field] = m[1].trim();
   }
   return out;
+}
+
+/**
+ * A small model often reports the language it wrote in (the target) as the
+ * source. When it names the target, trust the feed's declared language
+ * instead, or record none: "translated from English into English" is wrong
+ * either way.
+ *
+ * @param {Record<string, string>} parsed
+ * @param {{ targetLang: string, sourceLang?: string|null }} input
+ */
+export function fixSourceLanguage(parsed, input) {
+  const base = (/** @type {unknown} */ v) => String(v ?? '').trim().toLowerCase().split(/[-_]/)[0];
+  if (parsed.source_language && base(parsed.source_language) === base(input.targetLang)) {
+    return { ...parsed, source_language: input.sourceLang ? String(input.sourceLang) : '' };
+  }
+  return parsed;
 }
 
 /**
