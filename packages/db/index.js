@@ -27,3 +27,4 @@ export * as crawlSales from './src/crawl-sales.js';
 export * as webrings from './src/webrings.js';
 export * as newsletter from './src/newsletter.js';
 export * as coinpay from './src/coinpay.js';
+export * as trends from './src/trends.js';
