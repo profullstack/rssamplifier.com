@@ -63,6 +63,7 @@ export const CRAWL_STALE_AFTER = '30m';
  *     sourceIntervalMs: number,
  *     topicSearchIntervalMs: number,
  *     topicsIntervalMs: number,
+ *     trendsIntervalMs?: number,
  *     statusMs?: number,
  *   },
  *   run: Record<string, () => Promise<unknown>>,
@@ -100,6 +101,9 @@ export function buildPollerDaemon({ createDaemon = defaultCreateDaemon, store, r
   if (c.clusterBackfill) add('cluster-backfill', c.clusterIntervalMs, run.clusterBackfill);
   if (c.cardEnabled) add('cards', c.cardIntervalMs, run.cards);
   add('alerts', c.alertIntervalMs, run.alerts);
+  // Outside the catch-up gate: a small read most hours and a sample once a day,
+  // and prod has run with CRAWL_CATCHUP=1 for weeks.
+  if (run.trends) add('trends', c.trendsIntervalMs ?? 3_600_000, run.trends);
   // The weekly digest: a no-op outside its slot. Optional so callers that build
   // a daemon without it (tests, older configs) keep working.
   if (run.newsletter) add('newsletter', c.newsletterIntervalMs ?? 600_000, run.newsletter);

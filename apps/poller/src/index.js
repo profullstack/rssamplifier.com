@@ -11,6 +11,7 @@ import {
   warmDirectoryCache,
   warmLiveStatsCache,
   warmPanelCaches,
+  trends,
 } from '@rssamplifier/db';
 import {
   crawlDue,
@@ -521,6 +522,14 @@ async function topicsTick() {
   const started = Date.now();
   const topics = await q.refreshTopics(db);
   log('topics', { topics, ms: Date.now() - started });
+}
+
+// Hourly, and a single small read on the 23 hours with no finished day to add.
+async function trendsTick() {
+  if (stopping) return;
+  const started = Date.now();
+  const days = await trends.rollupTrendDays(db);
+  if (days.length) log('trends', { days, ms: Date.now() - started });
 }
 
 
@@ -1245,6 +1254,7 @@ const daemon = buildPollerDaemon({
     discoveryTopics: discoveryTopicsTick,
     discoveryNotify: discoveryNotifyTick,
     topics: topicsTick,
+    trends: trendsTick,
     clusterBackfill: backfillTick,
     cards: cardTick,
     alerts: alertTick,
