@@ -1,4 +1,4 @@
-import { q, newId, authors as people, webrings } from '@rssamplifier/db';
+import { q, newId, authors as people, trends, webrings } from '@rssamplifier/db';
 import { topicSlug } from '@rssamplifier/feed';
 import { submitCatalogue, hashIp, EXPRESS_MAX } from '@rssamplifier/ingest';
 import { submitFeedTool } from '@profullstack/submit-feed/core';
@@ -649,6 +649,27 @@ export const TOOLS = [
       const client = db();
       const [stats, kinds] = await Promise.all([q.crawlStats(client), q.countFeedsByKind(client)]);
       return { ...stats, byKind: kinds };
+    },
+  },
+
+  {
+    name: 'trending_topics',
+    title: 'What the open web is writing about more than last week',
+    description:
+      'Subjects English blogs and news sites used in headlines more than the week before, ranked. `count` is feeds, not posts, in a one in four sample, so it measures movement rather than coverage, and `prior_count` is the same figure for the week before. Updated daily. An empty list means the rollup has not got two days to compare yet.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window: { type: 'integer', minimum: 1, maximum: 14, description: 'Days per side of the comparison. Default 7.' },
+        limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Default 50.' },
+      },
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    async run({ window = 7, limit = 50 } = {}) {
+      const size = Math.min(14, Math.max(1, Math.round(Number(window)) || 7));
+      const top = Math.min(200, Math.max(1, Math.round(Number(limit)) || 50));
+      const result = await trends.trendingTerms(db(), { window: size, limit: top });
+      return { window_days: size, generated_at: result.generatedAt, documents: result.feeds, topics: result.topics };
     },
   },
 
