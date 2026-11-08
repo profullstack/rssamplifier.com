@@ -596,6 +596,10 @@ test('crawl failure backs off and eventually marks the feed dead', async () => {
   assert.ok(days > 29.9 && days <= 30, `next check in 30 days -> ${days.toFixed(2)}`);
   assert.equal((await q.dueFeeds(db, 10)).length, 0);
 
+  // Retired with a low count by an older rule: a failed recheck keeps it dead.
+  await q.markCrawlFailure(db, id, 'invalid-url', 3, 43_200, { keepInterval: true });
+  assert.equal((await q.feedBySlug(db, 'test-blog')).status, 'dead', 'dead stays dead');
+
   // A successful recheck restores it.
   await q.markUnchanged(db, id, 60);
   row = await q.feedBySlug(db, 'test-blog');
