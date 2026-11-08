@@ -127,7 +127,8 @@ test('a single URL is still resolved inline, because it has a blog to land on', 
   // It is proved by the attempt failing rather than by a stubbed response.
   // `safeFetch` resolves the hostname itself before it fetches anything — the
   // SSRF guard — and `.example` has no DNS, so the resolve stops at
-  // `blocked-host` without `fetch` ever being reached. A stub cannot observe
+  // `dns-failed` without `fetch` ever being reached (`dns-retry` where the
+  // resolver itself is unreachable, as in a sandbox). A stub cannot observe
   // this; a rejection can, and a rejection is only possible if the entry went
   // to the head rather than the tail.
   const res = await submitCatalogue(db, [{ url: 'https://solo.example/feed.xml' }], {
@@ -136,7 +137,7 @@ test('a single URL is still resolved inline, because it has a blog to land on', 
 
   assert.equal(res.queued, 0, 'one URL is not queued, it is resolved');
   assert.equal(res.accepted.length, 0);
-  assert.deepEqual(res.rejected, [
-    { url: 'https://solo.example/feed.xml', error: 'blocked-host' },
-  ]);
+  assert.equal(res.rejected.length, 1);
+  assert.equal(res.rejected[0].url, 'https://solo.example/feed.xml');
+  assert.ok(['dns-failed', 'dns-retry'].includes(res.rejected[0].error), res.rejected[0].error);
 });

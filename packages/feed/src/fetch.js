@@ -16,7 +16,15 @@ import { findPlaylistLinks } from './playlist.js';
 const USER_AGENT = 'RSSAmplifierBot/1.0 (+https://rssamp.com/about; feed directory indexer)';
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB — generous for a feed, bounded for us
-const TIMEOUT_MS = 15_000;
+
+/**
+ * The whole budget for one plain fetch of somebody else's URL: DNS, connect,
+ * headers and body together (fleet crawler rule, 2026-11-08: "crawlers should
+ * timeout after 10 seconds for fetch ... we don't want broken slow shit").
+ * A server that cannot hand over a feed document in ten seconds is broken for
+ * our purposes, and the crawler flags it for a month rather than waiting on it.
+ */
+export const CRAWL_FETCH_TIMEOUT_MS = 10_000;
 
 /**
  * Private, loopback, link-local and carrier-grade-NAT ranges.
@@ -65,20 +73,104 @@ export function isBlockedAddress(ip) {
  * @returns {Promise<boolean>} true when safe to fetch
  */
 export async function isPublicHost(hostname) {
-  if (net.isIP(hostname)) return !isBlockedAddress(hostname);
+  return (await hostVerdict(hostname)) === 'ok';
+}
+
+/**
+ * The same check, saying *why* a host was refused.
+ *
+ * `blocked` is a private or unparseable address and is our refusal; a name
+ * that does not resolve is a fact about the publisher (`dns-failed`), and the
+ * crawler treats the two very differently -- one is a policy, the other a broken
+ * site to flag and leave alone for a month. A resolver that answers "try again"
+ * (EAI_AGAIN) is usually *our* resolver having a bad minute, so it is kept apart
+ * as `dns-retry` and does not condemn the feed.
+ *
+ * Bounded by `signal` when given, so the lookup counts against the fetch's
+ * budget instead of adding the system resolver's own retries on top of it.
+ *
+ * @param {string} hostname
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<'ok'|'blocked'|'dns-failed'|'dns-retry'|'timeout'>}
+ */
+export async function hostVerdict(hostname, signal) {
+  if (net.isIP(hostname)) return isBlockedAddress(hostname) ? 'blocked' : 'ok';
 
   const lower = hostname.toLowerCase();
   if (lower === 'localhost' || lower.endsWith('.localhost') || lower.endsWith('.internal')) {
-    return false;
+    return 'blocked';
   }
 
   try {
-    const addrs = await dns.lookup(hostname, { all: true });
-    if (addrs.length === 0) return false;
-    return addrs.every((a) => !isBlockedAddress(a.address));
-  } catch {
-    return false;
+    const lookup = dns.lookup(hostname, { all: true });
+    const addrs = signal ? await raceAbort(lookup, signal) : await lookup;
+    if (addrs.length === 0) return 'dns-failed';
+    return addrs.every((a) => !isBlockedAddress(a.address)) ? 'ok' : 'blocked';
+  } catch (err) {
+    const code = fetchErrorCode(err);
+    if (code === 'timeout' || code === 'dns-retry') return code;
+    return 'dns-failed';
   }
+}
+
+/**
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {AbortSignal} signal
+ * @returns {Promise<T>}
+ */
+function raceAbort(promise, signal) {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (v) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
+function abortError() {
+  const err = new Error('aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+/**
+ * A thrown fetch error, reduced to the short code stored in `feeds.last_error`.
+ *
+ * Node (undici) hides the reason in `err.cause.code`; Bun puts it on the error
+ * itself, with its own spellings (`ConnectionRefused`, `FailedToOpenSocket`).
+ * Everything here except `dns-retry` is what the fleet rule calls a slow or
+ * broken target: the crawler flags it and does not ask again for thirty days.
+ *
+ * @param {unknown} err
+ * @returns {'timeout'|'dns-failed'|'dns-retry'|'tls-failed'|'connection-failed'|'fetch-failed'}
+ */
+export function fetchErrorCode(err) {
+  const e = /** @type {any} */ (err);
+  if (e?.name === 'AbortError' || e?.name === 'TimeoutError') return 'timeout';
+  const code = String(e?.cause?.code ?? e?.code ?? e?.cause?.name ?? '');
+  const text = `${code} ${String(e?.cause?.message ?? '')} ${String(e?.message ?? '')}`;
+  if (/EAI_AGAIN|DNSTryAgain/i.test(text)) return 'dns-retry';
+  if (/ENOTFOUND|EAI_NONAME|EAI_NODATA|ENODATA|DNS_?ENOTFOUND|getaddrinfo/i.test(text)) return 'dns-failed';
+  if (/TIMEOUT|ETIMEDOUT|Timed ?out/i.test(code)) return 'timeout';
+  if (/CERT|TLS|SSL|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)|ALTNAME|HANDSHAKE/i.test(text)) return 'tls-failed';
+  if (
+    /ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|EPIPE|ECONNABORTED|UND_ERR_SOCKET|UND_ERR_CONNECT|ConnectionRefused|ConnectionClosed|FailedToOpenSocket|socket hang up|other side closed/i.test(
+      text,
+    )
+  ) {
+    return 'connection-failed';
+  }
+  return 'fetch-failed';
 }
 
 /**
@@ -113,19 +205,26 @@ export async function safeFetch(url, conditional = {}) {
   }
 
   const target = new URL(normalized);
-  if (!(await isPublicHost(target.hostname))) {
+
+  // One deadline for the whole exchange, started before the name is even
+  // resolved: DNS, connect, headers and body all spend the same ten seconds.
+  // A ref'd setTimeout rather than AbortSignal.timeout(), whose unref'd timer
+  // lets Node 22's test runner exit under a stubbed fetch.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CRAWL_FETCH_TIMEOUT_MS);
+
+  const verdict = await hostVerdict(target.hostname, controller.signal);
+  if (verdict !== 'ok') {
+    clearTimeout(timer);
     return {
       ok: false,
       status: 0,
       contentType: '',
       body: '',
       url: normalized,
-      error: 'blocked-host',
+      error: verdict === 'blocked' ? 'blocked-host' : verdict,
     };
   }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
     /** @type {Record<string, string>} */
@@ -153,7 +252,7 @@ export async function safeFetch(url, conditional = {}) {
 
     // A redirect can land somewhere internal even when the origin was public.
     const finalHost = new URL(res.url).hostname;
-    if (finalHost !== target.hostname && !(await isPublicHost(finalHost))) {
+    if (finalHost !== target.hostname && (await hostVerdict(finalHost, controller.signal)) !== 'ok') {
       return {
         ok: false,
         status: res.status,
@@ -207,7 +306,7 @@ export async function safeFetch(url, conditional = {}) {
       contentType: '',
       body: '',
       url: normalized,
-      error: err?.name === 'AbortError' ? 'timeout' : 'fetch-failed',
+      error: fetchErrorCode(err),
     };
   } finally {
     clearTimeout(timer);
@@ -239,19 +338,22 @@ export async function safeFetchBytes(url, maxBytes = 64 * 1024) {
   }
 
   const target = new URL(normalized);
-  if (!(await isPublicHost(target.hostname))) {
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CRAWL_FETCH_TIMEOUT_MS);
+
+  const verdict = await hostVerdict(target.hostname, controller.signal);
+  if (verdict !== 'ok') {
+    clearTimeout(timer);
     return {
       ok: false,
       status: 0,
       contentType: '',
       bytes: empty,
       url: normalized,
-      error: 'blocked-host',
+      error: verdict === 'blocked' ? 'blocked-host' : verdict,
     };
   }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
     const res = await paidFetch(normalized, {
@@ -265,7 +367,7 @@ export async function safeFetchBytes(url, maxBytes = 64 * 1024) {
     });
 
     const finalHost = new URL(res.url).hostname;
-    if (finalHost !== target.hostname && !(await isPublicHost(finalHost))) {
+    if (finalHost !== target.hostname && (await hostVerdict(finalHost, controller.signal)) !== 'ok') {
       return {
         ok: false,
         status: res.status,
@@ -295,7 +397,7 @@ export async function safeFetchBytes(url, maxBytes = 64 * 1024) {
       contentType: '',
       bytes: empty,
       url: normalized,
-      error: err?.name === 'AbortError' ? 'timeout' : 'fetch-failed',
+      error: fetchErrorCode(err),
     };
   } finally {
     clearTimeout(timer);
@@ -502,7 +604,7 @@ export async function resolveFeed(input, conditional = {}) {
  *
  * The fetch behind the OpenProfile claim check and the OpenWebring member
  * check. Both read a stranger's front page to see whether it links back at
- * us, so neither wants the crawler's fifteen seconds and five megabytes, and
+ * us, so neither wants the crawler's ten seconds and five megabytes, and
  * both name themselves so a publisher reading their logs can see what asked
  * and why. Every failure is a null: to the caller, a site that is down and a
  * site that answered without the link are the same fact, "no link found".

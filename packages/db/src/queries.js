@@ -2895,6 +2895,39 @@ export async function expressFeeds(db, limit = 25) {
 }
 
 /**
+ * The share of a tick offered to retired feeds that are due their monthly
+ * recheck. Small and bounded, so the 31k feeds that were already dead when the
+ * recheck arrived drain over a day or two instead of landing in one tick; slots
+ * the live tiers cannot fill are handed to it as well.
+ */
+const RECHECK_SHARE = 0.05;
+
+/**
+ * Retired ('dead') feeds whose recheck is due, oldest first.
+ *
+ * 'dead' used to be for ever: every due query filters `status <> 'dead'`, so a
+ * blog that was down for a fortnight in August was never looked at again. It
+ * now comes back once its next_fetch_at passes -- thirty days after the attempt
+ * that retired it -- for exactly one recheck. Served by `feeds_recheck_idx`, the
+ * partial index on `status = 'dead'`.
+ *
+ * @param {Client} db
+ * @param {number} [limit]
+ * @returns {Promise<object[]>}
+ */
+export async function recheckFeeds(db, limit = 25) {
+  if (limit <= 0) return [];
+  const { rows } = await db.execute({
+    sql: `select ${DUE_COLUMNS}
+          from feeds
+          where status = 'dead' and next_fetch_at <= ?
+          order by next_fetch_at asc limit ?`,
+    args: [nowIso(), limit],
+  });
+  return rows;
+}
+
+/**
  * A feed's crawl tier, from its interval alone: 0 hot (read at least hourly),
  * 1 active (daily), 2 slow, 3 dormant (gone quiet, read weekly), 4 archived
  * (silent six months, read once a quarter). The house cadence
@@ -2928,13 +2961,18 @@ export async function dueFeeds(db, limit = 25) {
   // Bounded rather than unbounded even though the express table is tiny: the
   // point of a reserved share is that it is reserved in both directions.
   const express = await expressFeeds(db, Math.floor(limit * EXPRESS_SHARE));
-  const room = limit - express.length;
-  if (room <= 0) return express;
+  if (limit - express.length <= 0) return express;
+
+  // Retired feeds due their monthly recheck: a small reserved share first, and
+  // whatever the live tiers leave over at the end.
+  const rechecks = await recheckFeeds(db, Math.max(1, Math.floor((limit - express.length) * RECHECK_SHARE)));
+  const room = limit - express.length - rechecks.length;
 
   const now = nowIso();
-  const out = [...express];
+  const out = [...express, ...rechecks];
   const exhausted = new Set();
-  const seen = new Set(express.map((r) => String(r.id)));
+  const seen = new Set(out.map((r) => String(r.id)));
+  if (room <= 0) return out;
 
   const take = async (tier, want) => {
     // The express rows are excluded rather than deduplicated afterwards: they
@@ -2968,6 +3006,15 @@ export async function dueFeeds(db, limit = 25) {
   for (const tier of TIERS) {
     if (carry <= 0) break;
     if (!exhausted.has(tier)) carry -= await take(tier, carry);
+  }
+  if (carry > 0) {
+    for (const row of await recheckFeeds(db, carry + rechecks.length)) {
+      if (carry <= 0) break;
+      if (seen.has(String(row.id))) continue;
+      seen.add(String(row.id));
+      out.push(row);
+      carry -= 1;
+    }
   }
   return out;
 }
@@ -3505,18 +3552,25 @@ export async function markUnchanged(db, id, minutes, signals = {}) {
 /**
  * Record a failed crawl and push the next attempt out.
  *
+ * Ten consecutive failures retire a feed (status 'dead': hidden from listings,
+ * page kept), but not for ever: `recheckFeeds` hands a dead feed back to the
+ * crawler once its `next_fetch_at` passes, which the crawler sets thirty days
+ * out (see failureMinutes in @rssamplifier/ingest).
+ *
  * @param {Client} db
  * @param {string} id
  * @param {string} error
  * @param {number} errorCount consecutive failures including this one
- * @param {number} minutes backoff
+ * @param {number} minutes until the next attempt
+ * @param {{ keepInterval?: boolean }} [opts] keepInterval: leave
+ *   fetch_interval_minutes alone (a month-long flag is not the feed's cadence)
  */
-export async function markCrawlFailure(db, id, error, errorCount, minutes) {
+export async function markCrawlFailure(db, id, error, errorCount, minutes, opts = {}) {
   const now = nowIso();
   await db.execute({
     sql: `update feeds set
             status = ?, last_fetched_at = ?, last_error = ?, error_count = ?,
-            fetch_interval_minutes = ?, next_fetch_at = ?, updated_at = ?
+            fetch_interval_minutes = coalesce(?, fetch_interval_minutes), next_fetch_at = ?, updated_at = ?
           where id = ?`,
     args: [
       // Ten consecutive failures is a dead feed: stop crawling, keep the page.
@@ -3524,7 +3578,7 @@ export async function markCrawlFailure(db, id, error, errorCount, minutes) {
       now,
       error,
       errorCount,
-      minutes,
+      opts.keepInterval ? null : minutes,
       nowIso(minutes * 60_000),
       now,
       id,

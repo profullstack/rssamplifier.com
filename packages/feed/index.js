@@ -29,7 +29,17 @@ export {
 export { extractKeywords, feedTopics, tokenize, topicSlug, singularize } from './src/keywords.js';
 export { sanitizeHtml, textLength } from './src/sanitize.js';
 export { normalizeUrl, findFeedLinks, guessFeedUrls, looksLikeFeed } from './src/discover.js';
-export { safeFetch, safeFetchBytes, resolveFeed, isBlockedAddress, isPublicHost, fetchPage } from './src/fetch.js';
+export {
+  safeFetch,
+  safeFetchBytes,
+  resolveFeed,
+  isBlockedAddress,
+  isPublicHost,
+  hostVerdict,
+  fetchErrorCode,
+  fetchPage,
+  CRAWL_FETCH_TIMEOUT_MS,
+} from './src/fetch.js';
 export { imageSize } from './src/imagesize.js';
 export {
   findFeedCard,

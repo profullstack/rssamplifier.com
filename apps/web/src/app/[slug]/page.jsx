@@ -424,8 +424,8 @@ export default async function FeedPage({ params, base }) {
 
       {feed.status === 'dead' && (
         <p className="notice">
-          This feed stopped responding, so we no longer crawl it. The archive below is what we
-          collected while it was live.
+          This feed stopped responding, so we only check it once a month now and it is back as
+          soon as it answers. The archive below is what we collected while it was live.
         </p>
       )}
 

@@ -557,17 +557,51 @@ test('crawl failure backs off and eventually marks the feed dead', async () => {
   row = await q.feedBySlug(db, 'test-blog');
   assert.equal(row.status, 'dead', 'ten consecutive failures retires the feed');
 
-  // A dead feed must drop out of the crawl queue and the public listing.
-  await db.execute({
-    sql: 'update feeds set next_fetch_at = ? where id = ?',
-    args: [nowIso(-60_000), id],
-  });
-  assert.equal((await q.dueFeeds(db, 10)).length, 0, 'dead feeds are not re-crawled');
+  // A dead feed drops out of the public listing at once, and out of the crawl
+  // queue until its recheck comes due.
   assert.equal(
     (await q.listFeeds(db)).some((f) => f.slug === 'test-blog'),
     false,
     'dead feeds are hidden from the index',
   );
+  await db.execute({
+    sql: 'update feeds set next_fetch_at = ? where id = ?',
+    args: [nowIso(29 * 86_400_000), id],
+  });
+  assert.equal((await q.dueFeeds(db, 10)).length, 0, 'not before its recheck');
+  assert.equal((await q.recheckFeeds(db, 10)).length, 0);
+
+  // But not dead for ever: once next_fetch_at passes it is offered for one recheck.
+  await db.execute({
+    sql: 'update feeds set next_fetch_at = ? where id = ?',
+    args: [nowIso(-60_000), id],
+  });
+  assert.deepEqual(
+    (await q.recheckFeeds(db, 10)).map((f) => String(f.id)),
+    [id],
+    'a dead feed comes back for its monthly recheck',
+  );
+  assert.deepEqual(
+    (await q.dueFeeds(db, 10)).map((f) => String(f.id)),
+    [id],
+    'and the crawler is handed it',
+  );
+
+  // A failed recheck parks it another month, still dead, interval untouched.
+  await q.markCrawlFailure(db, id, 'timeout', 11, 43_200, { keepInterval: true });
+  row = await q.feedBySlug(db, 'test-blog');
+  assert.equal(row.status, 'dead');
+  assert.equal(Number(row.fetch_interval_minutes), 1440, 'a flag is not a cadence');
+  const days = (Date.parse(row.next_fetch_at) - Date.now()) / 86_400_000;
+  assert.ok(days > 29.9 && days <= 30, `next check in 30 days -> ${days.toFixed(2)}`);
+  assert.equal((await q.dueFeeds(db, 10)).length, 0);
+
+  // A successful recheck restores it.
+  await q.markUnchanged(db, id, 60);
+  row = await q.feedBySlug(db, 'test-blog');
+  assert.equal(row.status, 'active', 'success clears the flag');
+  assert.equal(Number(row.error_count), 0);
+  assert.equal((await q.listFeeds(db)).some((f) => f.slug === 'test-blog'), true);
 });
 
 test('submission audit and rate-limit window', async () => {
