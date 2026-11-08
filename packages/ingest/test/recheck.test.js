@@ -100,3 +100,15 @@ test('a 429 is still a throttle, capped at a day, never a flag', async () => {
   const hours = (Date.parse(next) - Date.now()) / 3_600_000;
   assert.ok(hours > 23.9 && hours <= 24, `capped at a day -> ${hours}`);
 });
+
+test('a dead feed that fails its recheck waits another month, even with a low count', async () => {
+  const db = recorder();
+  await crawlFeed(db, { ...feed, status: 'dead', error_count: 3 }, {
+    resolve: async () => ({ ok: false, error: 'invalid-url' }),
+  });
+  const call = db.calls.find((c) => /last_error/.test(c.sql));
+  assert.match(call.sql, /when status = 'dead' then 'dead'/, 'never downgraded to error');
+  const next = call.args[5];
+  const days = (Date.parse(next) - Date.now()) / 86_400_000;
+  assert.ok(days > 29.99 && days <= 30, `30 days -> ${days}`);
+});

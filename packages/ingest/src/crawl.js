@@ -357,7 +357,14 @@ export async function crawlFeed(db, feed, opts = {}) {
     // A social source's failures come from a vendor (Arctic Shift, RSSHub) and
     // only "no such source" reaches here, so the month-long flag is for feeds
     // and scraped pages we fetched ourselves.
-    const minutes = social ? backoffMinutes(errorCount) : failureMinutes(resolved.error, errorCount);
+    // A retired feed failing its monthly recheck waits another month, whatever
+    // its count (some were retired with fewer than DEAD_AFTER failures).
+    const minutes =
+      feed.status === 'dead'
+        ? RECHECK_MINUTES
+        : social
+          ? backoffMinutes(errorCount)
+          : failureMinutes(resolved.error, errorCount);
     // A month-long wait is a flag, not a cadence: the feed's own interval is
     // kept so that its tier and its rhythm survive to the recheck, and a
     // recovered feed is not mistaken for one that publishes monthly.

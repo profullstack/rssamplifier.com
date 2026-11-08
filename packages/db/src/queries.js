@@ -2845,7 +2845,7 @@ export async function recentlyCrawled(db, limit = 20) {
 }
 
 /** The columns a crawl needs off a feed row. Shared by both due queries. */
-const DUE_COLUMNS = `id, slug, title, feed_url, error_count, fetch_interval_minutes, source_kind,
+const DUE_COLUMNS = `id, slug, title, feed_url, status, error_count, fetch_interval_minutes, source_kind,
                  item_count, last_published_at,
                  http_etag, http_last_modified, content_hash, change_log,
                  social_network, social_ref, social_config`;
@@ -3569,11 +3569,14 @@ export async function markCrawlFailure(db, id, error, errorCount, minutes, opts 
   const now = nowIso();
   await db.execute({
     sql: `update feeds set
-            status = ?, last_fetched_at = ?, last_error = ?, error_count = ?,
+            status = case when status = 'dead' then 'dead' else ? end,
+            last_fetched_at = ?, last_error = ?, error_count = ?,
             fetch_interval_minutes = coalesce(?, fetch_interval_minutes), next_fetch_at = ?, updated_at = ?
           where id = ?`,
     args: [
       // Ten consecutive failures is a dead feed: stop crawling, keep the page.
+      // A dead feed that fails its monthly recheck stays dead whatever its
+      // count says (some were retired by older rules with fewer than ten).
       errorCount >= 10 ? 'dead' : 'error',
       now,
       error,
