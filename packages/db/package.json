@@ -25,6 +25,6 @@
     "ioredis": "^6.0.0",
     "pg": "^8.23.1",
     "pg-copy-streams": "^7.0.0",
-    "@profullstack/scraper-daemon": "0.3.0"
+    "@profullstack/scraper-daemon": "0.4.0"
   }
 }

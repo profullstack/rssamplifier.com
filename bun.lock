@@ -22,7 +22,7 @@
       "name": "@rssamplifier/poller",
       "version": "0.1.0",
       "dependencies": {
-        "@profullstack/scraper-daemon": "0.3.0",
+        "@profullstack/scraper-daemon": "0.4.0",
         "@rssamplifier/db": "workspace:*",
         "@rssamplifier/discover": "workspace:*",
         "@rssamplifier/feed": "workspace:*",
@@ -89,7 +89,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@libsql/client": "^0.18.0",
-        "@profullstack/scraper-daemon": "0.3.0",
+        "@profullstack/scraper-daemon": "0.4.0",
         "@rssamplifier/feed": "workspace:*",
         "bullmq": "^6.4.2",
         "ioredis": "^6.0.0",
@@ -121,7 +121,7 @@
       "name": "@rssamplifier/ingest",
       "version": "0.1.0",
       "dependencies": {
-        "@profullstack/scraper-daemon": "0.3.0",
+        "@profullstack/scraper-daemon": "0.4.0",
         "@rssamplifier/db": "workspace:*",
         "@rssamplifier/feed": "workspace:*",
         "@rssamplifier/mail": "workspace:*",
@@ -387,7 +387,7 @@
 
     "@profullstack/rssamplifier": ["@profullstack/rssamplifier@workspace:apps/cli"],
 
-    "@profullstack/scraper-daemon": ["@profullstack/scraper-daemon@0.3.0", "", { "peerDependencies": { "bullmq": ">=6", "ioredis": ">=5" }, "optionalPeers": ["bullmq", "ioredis"], "bin": { "scraper-daemon": "bin/scraper-daemon.js" } }, "sha512-C/COc8Oef+/8/Bdu/uyvTZbeIO0rMm3q7wEJNzDqcuoZ+cEs6OEGzrKwCkA1N7zqyi3NASCAytfeFxJiiaG9TQ=="],
+    "@profullstack/scraper-daemon": ["@profullstack/scraper-daemon@0.4.0", "", { "peerDependencies": { "bullmq": ">=6", "ioredis": ">=5" }, "optionalPeers": ["bullmq", "ioredis"], "bin": { "scraper-daemon": "bin/scraper-daemon.js" } }, "sha512-oYgJEHNytRI40Euj4HWQ+BARYS316JMUrkmQ4ntfRAGuVLCcvVNleZFGMofLNDhJU+b1zoGVMqEJNWTdUiw8rw=="],
 
     "@profullstack/sealed-secrets": ["@profullstack/sealed-secrets@0.1.0", "", {}, "sha512-6LRa+yUT7PQ5tZNoYEnf3VVxsyw/dqHqAtYpk/aS/bntxf3mQH+2MwNjQoBd7fCqdN97TvZup8qhrpfUcZlfng=="],
 
