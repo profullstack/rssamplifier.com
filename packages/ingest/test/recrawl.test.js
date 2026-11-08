@@ -347,7 +347,7 @@ test('the stored item count tracks what is really there', async () => {
 
 test('a failing feed still backs off on its own ladder', async () => {
   const feed = await seed();
-  const res = await crawlFeed(db, feed, { resolve: async () => ({ ok: false, error: 'timeout' }) });
+  const res = await crawlFeed(db, feed, { resolve: async () => ({ ok: false, error: 'http-404' }) });
 
   assert.equal(res.ok, false);
   assert.equal(res.newItems, 0);
@@ -355,6 +355,35 @@ test('a failing feed still backs off on its own ladder', async () => {
   const row = await q.feedBySlug(db, 'quiet');
   assert.equal(Number(row.error_count), 1);
   assert.equal(Number(row.fetch_interval_minutes), 60, 'first failure waits an hour');
+});
+
+test('a timed-out feed is flagged for a month, and a success clears the flag', async () => {
+  const feed = await seed();
+  await crawlFeed(db, feed, { resolve });
+  const before = await q.feedBySlug(db, 'quiet');
+
+  const res = await crawlFeed(db, before, { resolve: async () => ({ ok: false, error: 'timeout' }) });
+  assert.equal(res.ok, false);
+  assert.equal(res.recheckDays, 30);
+
+  const row = await q.feedBySlug(db, 'quiet');
+  assert.equal(row.status, 'error');
+  assert.equal(row.last_error, 'timeout');
+  assert.equal(Number(row.error_count), 1);
+  const days = (Date.parse(row.next_fetch_at) - Date.now()) / 86_400_000;
+  assert.ok(days > 29.9 && days <= 30, `rechecked in 30 days -> ${days.toFixed(2)}`);
+  assert.equal(
+    Number(row.fetch_interval_minutes),
+    Number(before.fetch_interval_minutes),
+    'the cadence survives the flag',
+  );
+
+  // The recheck succeeds: back to active, count cleared, on its own rhythm.
+  await crawlFeed(db, row, { resolve });
+  const healed = await q.feedBySlug(db, 'quiet');
+  assert.equal(healed.status, 'active');
+  assert.equal(Number(healed.error_count), 0);
+  assert.ok((Date.parse(healed.next_fetch_at) - Date.now()) / 86_400_000 < 8);
 });
 
 /* --------------------------------------------------------- conditional GET */

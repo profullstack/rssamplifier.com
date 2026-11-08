@@ -20,6 +20,10 @@ export const REASONS = {
   'no-feed-found': 'no feed on the site',
   timeout: 'site did not respond',
   'fetch-failed': 'site could not be reached',
+  'connection-failed': 'site refused or dropped the connection',
+  'tls-failed': 'site has a broken HTTPS certificate',
+  'dns-failed': 'site name does not resolve',
+  'dns-retry': 'site name could not be looked up just now',
   'blocked-host': 'not a public address',
   // Emitted by the checker but never given words until the log started showing
   // rejections one by one, where a bare code is the most common thing on screen.

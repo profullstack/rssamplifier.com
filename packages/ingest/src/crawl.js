@@ -46,6 +46,61 @@ export function backoffMinutes(errorCount) {
   return Math.min(BACKOFF[Math.min(errorCount - 1, BACKOFF.length - 1)], MAX_INTERVAL);
 }
 
+/**
+ * How long a slow or broken target is left alone: thirty days (fleet crawler
+ * rule, 2026-11-08: "flag to recheck later in a month").
+ */
+export const RECHECK_MINUTES = 30 * 24 * 60;
+
+/** Consecutive failures that retire a feed (status 'dead'; see markCrawlFailure). */
+export const DEAD_AFTER = 10;
+
+/**
+ * Failures that say the target is slow or broken rather than that it said no:
+ * the ten-second fetch budget ran out, the name does not resolve, TLS or the
+ * connection failed, or the server answered 5xx. Asking again in an hour only
+ * spends another ten seconds of a worker on the same broken server, so these
+ * are flagged for a month instead of walking the short ladder.
+ *
+ * Not here, on purpose: `dns-retry` (our resolver having a bad minute -- one
+ * hiccup must not park the whole directory for a month), `blocked-host` (our
+ * policy), 4xx and `no-feed-found` (the publisher answered; they keep the
+ * ladder), and anything thrown by a social provider, which is a vendor and is
+ * turned into a throttle long before it gets here.
+ *
+ * @param {string|null|undefined} error the code resolveFeed / scrapeFeed returned
+ * @returns {boolean}
+ */
+export function isSlowOrBroken(error) {
+  const e = String(error ?? '');
+  return (
+    e === 'timeout' ||
+    e === 'fetch-failed' ||
+    e === 'connection-failed' ||
+    e === 'tls-failed' ||
+    e === 'dns-failed' ||
+    /^http-5\d\d$/.test(e)
+  );
+}
+
+/**
+ * When to try a feed again after a failed crawl, in minutes.
+ *
+ * Thirty days for a slow or broken target, and thirty days for a feed this
+ * failure retires: 'dead' is not forever any more. A retired feed comes due once
+ * a month for exactly one recheck, a success restores it (`storeCrawl` and
+ * `markUnchanged` set it active and zero the count), and another failure parks
+ * it for another month. Everything else walks the short ladder as before.
+ *
+ * @param {string|null|undefined} error
+ * @param {number} errorCount consecutive failures, including this one
+ * @returns {number}
+ */
+export function failureMinutes(error, errorCount) {
+  if (isSlowOrBroken(error) || errorCount >= DEAD_AFTER) return RECHECK_MINUTES;
+  return backoffMinutes(errorCount);
+}
+
 /** How long to wait after a throttle that named no interval of its own. */
 const THROTTLE_DEFAULT = 30;
 
@@ -299,8 +354,18 @@ export async function crawlFeed(db, feed, opts = {}) {
 
   if (!resolved.ok) {
     const errorCount = Number(feed.error_count ?? 0) + 1;
-    await q.markCrawlFailure(db, id, resolved.error, errorCount, backoffMinutes(errorCount));
-    return { ok: false, newItems: 0, error: resolved.error };
+    // A social source's failures come from a vendor (Arctic Shift, RSSHub) and
+    // only "no such source" reaches here, so the month-long flag is for feeds
+    // and scraped pages we fetched ourselves.
+    const minutes = social ? backoffMinutes(errorCount) : failureMinutes(resolved.error, errorCount);
+    // A month-long wait is a flag, not a cadence: the feed's own interval is
+    // kept so that its tier and its rhythm survive to the recheck, and a
+    // recovered feed is not mistaken for one that publishes monthly.
+    const flagged = minutes >= RECHECK_MINUTES;
+    await q.markCrawlFailure(db, id, resolved.error, errorCount, minutes, {
+      keepInterval: flagged,
+    });
+    return { ok: false, newItems: 0, error: resolved.error, ...(flagged ? { recheckDays: 30 } : {}) };
   }
 
   // The ordinary path writes the whole crawl in one transaction. Production

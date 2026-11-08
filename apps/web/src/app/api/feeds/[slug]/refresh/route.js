@@ -43,7 +43,7 @@ export async function POST(_req, { params }) {
   const client = db();
   const feed = await q.feedBySlug(client, slug);
   if (!feed) return json({ error: 'not-found' }, 404);
-  if (feed.status === 'dead') return json({ ok: false, state: 'dead', error: 'This feed has been retired after repeated failures.' }, 409);
+  if (feed.status === 'dead') return json({ ok: false, state: 'dead', error: 'This feed has been retired after repeated failures; it is rechecked once a month.' }, 409);
 
   const last = Date.parse(String(feed.last_fetched_at ?? ''));
   if (Number.isFinite(last) && Date.now() - last < RECENT_MS) {
