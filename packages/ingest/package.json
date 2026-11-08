@@ -20,6 +20,6 @@
     "@rssamplifier/mail": "workspace:*",
     "@rssamplifier/search": "workspace:*",
     "@rssamplifier/social": "workspace:*",
-    "@profullstack/scraper-daemon": "0.3.0"
+    "@profullstack/scraper-daemon": "0.4.0"
   }
 }
