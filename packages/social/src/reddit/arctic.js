@@ -114,6 +114,18 @@ export async function fetchRedditFirehosePage(after, opts = {}) {
 }
 
 /**
+ * The newest post the mirror holds, anywhere on Reddit: where its ingestion
+ * has got to, which can trail Reddit by most of an hour.
+ *
+ * @param {Parameters<typeof arcticGet>[2]} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function fetchRedditNewest(opts = {}) {
+  const data = await arcticGet('/api/posts/search', { sort: 'desc', limit: 1 }, opts);
+  return Array.isArray(data) ? data : [];
+}
+
+/**
  * One post by id, or null when the archive has never seen it.
  *
  * @param {string} id
