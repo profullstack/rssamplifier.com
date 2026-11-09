@@ -85,7 +85,7 @@ export function buildPollerDaemon({ createDaemon = defaultCreateDaemon, store, r
   add('import', c.intervalMs, run.import);
   add('purge', 3_600_000, run.purge);
   // Outside catch-up too: it is what keeps all of /r/* current.
-  if (c.redditFirehose && run.redditFirehose) add('reddit-firehose', c.redditFirehoseMs ?? 120_000, run.redditFirehose);
+  if (c.redditFirehose && run.redditFirehose) add('reddit-firehose', c.redditFirehoseMs ?? 60_000, run.redditFirehose);
 
   // Everything the old tick() skipped below `if (catchupOnly) return`.
   if (!c.catchupOnly) {

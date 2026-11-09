@@ -63,9 +63,11 @@ export const FLOOR_MINUTES = {
   x: 5,
   instagram: 30,
   facebook: 60,
-  // A public archive rather than a personal session, but one shared mirror
-  // serving fifty thousand subreddits; the hourly floor Reddit's RSS had.
-  reddit: 60,
+  // A week. Every new post on Reddit already arrives through the firehose
+  // (ingest/src/redditFirehose.js), which keeps all of /r/* current; asking a
+  // subreddit by name is now only the first read and a weekly check, and it
+  // spends the same per-IP budget at Arctic Shift that the firehose needs.
+  reddit: 7 * 24 * 60,
 };
 
 /** The default for anything fetched rather than collected. */

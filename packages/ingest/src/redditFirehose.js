@@ -26,6 +26,10 @@ const PAGE = 100;
  * @param {{
  *   lookbackSeconds?: number,
  *   maxPages?: number,
+ *   gapMs?: number,
+ *   sleep?: (ms: number) => Promise<unknown>,
+ *   maxLagSeconds?: number,
+ *   resumeLagSeconds?: number,
  *   concurrency?: number,
  *   env?: Record<string, string|undefined>,
  *   fetchPage?: typeof fetchRedditFirehosePage,
@@ -37,8 +41,17 @@ export function createRedditFirehose(opts = {}) {
   const now = opts.now ?? (() => Date.now());
   const fetchPage = opts.fetchPage ?? fetchRedditFirehosePage;
   const crawl = opts.crawl ?? crawlFeed;
-  const maxPages = opts.maxPages ?? 80;
+  const maxPages = opts.maxPages ?? 12;
   const concurrency = opts.concurrency ?? 6;
+  // Arctic Shift answers 422 "Timeout. Maybe slow down a bit" after ~5 pages
+  // back to back (measured 2026-11-09), and a page is ~6 s of Reddit, so pages
+  // are spaced rather than fired: ~11 a minute is just over Reddit's own pace.
+  const gapMs = opts.gapMs ?? 4_000;
+  const sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  // Never more than this far behind: past it, skip forward so every feed stays
+  // inside the hour, and say how much was skipped.
+  const maxLagSeconds = opts.maxLagSeconds ?? 50 * 60;
+  const resumeLagSeconds = opts.resumeLagSeconds ?? 5 * 60;
 
   /** unix seconds; posts created after this are still to be read */
   let cursor = Math.floor(now() / 1000) - (opts.lookbackSeconds ?? 900);
@@ -53,8 +66,26 @@ export function createRedditFirehose(opts = {}) {
   return async function runRedditFirehose(db) {
     const posts = [];
     let pages = 0;
+    let skipped = 0;
+    let limited = null;
+
+    const nowSeconds = Math.floor(now() / 1000);
+    if (nowSeconds - cursor > maxLagSeconds) {
+      skipped = nowSeconds - resumeLagSeconds - cursor;
+      cursor = nowSeconds - resumeLagSeconds;
+    }
+
     for (; pages < maxPages; pages += 1) {
-      const page = await fetchPage(cursor, { env: opts.env });
+      if (pages > 0 && gapMs > 0) await sleep(gapMs);
+      let page;
+      try {
+        page = await fetchPage(cursor, { env: opts.env });
+      } catch (error) {
+        // The mirror asking us to slow down, or a bad minute: keep what this
+        // pass already read and carry on from the cursor next pass.
+        limited = String(error?.message ?? error);
+        break;
+      }
       for (const post of page) {
         const id = String(post?.id ?? '');
         if (!id || seen.has(id)) continue;
@@ -123,6 +154,8 @@ export function createRedditFirehose(opts = {}) {
       failed,
       items,
       lagSeconds: Math.max(0, Math.floor(now() / 1000) - cursor),
+      skipped,
+      limited,
     };
   };
 }

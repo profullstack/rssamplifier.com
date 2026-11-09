@@ -530,8 +530,11 @@ async function topicsTick() {
 // of /r/* current (see packages/ingest/src/redditFirehose.js). REDDIT_FIREHOSE=0
 // switches it off.
 const redditFirehoseEnabled = process.env.REDDIT_FIREHOSE !== '0';
-const redditFirehoseMs = Number(process.env.REDDIT_FIREHOSE_MS) || 120_000;
-const redditFirehose = createRedditFirehose();
+const redditFirehoseMs = Number(process.env.REDDIT_FIREHOSE_MS) || 60_000;
+const redditFirehose = createRedditFirehose({
+  gapMs: Number(process.env.REDDIT_FIREHOSE_GAP_MS) || undefined,
+  maxPages: Number(process.env.REDDIT_FIREHOSE_PAGES) || undefined,
+});
 
 async function redditFirehoseTick() {
   if (stopping) return;
