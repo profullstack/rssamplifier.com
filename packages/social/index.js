@@ -97,6 +97,7 @@ export {
   arcticGet,
   commentTree,
   fetchRedditComments,
+  fetchRedditFirehosePage,
   fetchRedditListing,
   fetchRedditPost,
   isShowable as isShowableRedditPost,
@@ -105,4 +106,4 @@ export {
   redditPostId,
 } from './src/reddit/arctic.js';
 
-export { fetchRedditSource } from './src/reddit/fetch.js';
+export { fetchRedditSource, redditResult } from './src/reddit/fetch.js';

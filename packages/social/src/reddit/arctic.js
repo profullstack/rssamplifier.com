@@ -98,6 +98,22 @@ export async function fetchRedditListing(spec, opts = {}) {
 }
 
 /**
+ * One page of every new post on Reddit, oldest first, created after `after`
+ * (unix seconds). The firehose: about 25 posts a second across the whole site,
+ * so a hundred-post page per ~4 seconds of Reddit keeps every subreddit we hold
+ * current for ~15 requests a minute, against ~14 a second to ask fifty
+ * thousand subreddits one by one every hour.
+ *
+ * @param {number} after unix seconds
+ * @param {Parameters<typeof arcticGet>[2]} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function fetchRedditFirehosePage(after, opts = {}) {
+  const data = await arcticGet('/api/posts/search', { after: Math.floor(after), sort: 'asc', limit: 100 }, opts);
+  return Array.isArray(data) ? data : [];
+}
+
+/**
  * One post by id, or null when the archive has never seen it.
  *
  * @param {string} id
@@ -360,7 +376,16 @@ function inline(raw) {
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
     .replace(/~~([^~]+)~~/g, '<del>$1</del>');
 
-  return s.replace(/\u0000(\d+)\u0000/g, (_, n) => tokens[Number(n)]);
+  // Tokens nest (a code span inside a link label is kept inside the link's
+  // token), so restore until none are left. One pass leaked the inner
+  // placeholder, NULs and all, and Postgres refused the whole subreddit's write
+  // ("invalid byte sequence for encoding UTF8: 0x00") on every crawl.
+  const PLACEHOLDER = /\u0000(\d+)\u0000/g;
+  for (let pass = 0; pass < 8 && PLACEHOLDER.test(s); pass += 1) {
+    PLACEHOLDER.lastIndex = 0;
+    s = s.replace(PLACEHOLDER, (_, n) => tokens[Number(n)] ?? '');
+  }
+  return s.replace(/\u0000/g, '');
 }
 
 function escapeHtml(s) {

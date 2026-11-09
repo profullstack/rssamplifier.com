@@ -24,6 +24,7 @@ import {
   drainImport,
   seedTopRings,
   verifyRingMembers,
+  createRedditFirehose,
 } from '@rssamplifier/ingest';
 import { runDueSources, discoverFromOwnTopics } from '@rssamplifier/discover';
 import { findFeedCard } from '@rssamplifier/feed';
@@ -525,6 +526,20 @@ async function topicsTick() {
 }
 
 // Hourly, and a single small read on the 23 hours with no finished day to add.
+// Every new post on Reddit, matched to the subreddits we hold: what keeps all
+// of /r/* current (see packages/ingest/src/redditFirehose.js). REDDIT_FIREHOSE=0
+// switches it off.
+const redditFirehoseEnabled = process.env.REDDIT_FIREHOSE !== '0';
+const redditFirehoseMs = Number(process.env.REDDIT_FIREHOSE_MS) || 120_000;
+const redditFirehose = createRedditFirehose();
+
+async function redditFirehoseTick() {
+  if (stopping) return;
+  const started = Date.now();
+  const res = await redditFirehose(db);
+  log('reddit-firehose', { ...res, ms: Date.now() - started });
+}
+
 async function trendsTick() {
   if (stopping) return;
   const started = Date.now();
@@ -1243,8 +1258,11 @@ const daemon = buildPollerDaemon({
     sourceIntervalMs,
     topicSearchIntervalMs,
     topicsIntervalMs,
+    redditFirehose: redditFirehoseEnabled,
+    redditFirehoseMs,
   },
   run: {
+    redditFirehose: redditFirehoseTick,
     crawl: tick,
     import: importTick,
     purge: purgeTick,
