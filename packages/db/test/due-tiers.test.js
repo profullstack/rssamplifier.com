@@ -71,3 +71,20 @@ test('requestRefresh puts a feed at the front of its tier', async () => {
   const due = await q.dueFeeds(db, 1);
   assert.equal(due[0].slug, 'dormant-39');
 });
+
+test('requestRefreshIfStale queues only a copy older than the limit', async () => {
+  const [row] = (await db.execute({ sql: `select id from feeds where slug = 'dormant-38'`, args: [] })).rows;
+  const id = String(row.id);
+  const front = '1970-01-01T00:00:00.000Z';
+  const later = new Date(Date.now() + DAY).toISOString();
+  const nextOf = async () =>
+    String((await db.execute({ sql: `select next_fetch_at from feeds where id = ?`, args: [id] })).rows[0].next_fetch_at);
+
+  await db.execute({ sql: `update feeds set last_fetched_at = ?, next_fetch_at = ? where id = ?`, args: [new Date().toISOString(), later, id] });
+  await q.requestRefreshIfStale(db, id, 60);
+  assert.equal(await nextOf(), later, 'read minutes ago: left alone');
+
+  await db.execute({ sql: `update feeds set last_fetched_at = ? where id = ?`, args: [new Date(Date.now() - 2 * 3_600_000).toISOString(), id] });
+  await q.requestRefreshIfStale(db, id, 60);
+  assert.equal(await nextOf(), front, 'two hours old: to the front');
+});

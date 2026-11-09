@@ -41,7 +41,11 @@ export async function fetchRedditSource(feed, opts = {}) {
     // none is the mirror having a bad minute, not a community going silent.
     if (items.length === 0 && Number(feed?.item_count ?? 0) > 0) {
       onEvent('reddit.fetch.failed', { ref: feed.social_ref, error: 'empty-result' });
-      return { ok: false, throttled: true, retryAfter: 20 * 60, error: 'empty-result' };
+      // `hostWide: false`: this is one subreddit's answer (gone private, banned,
+      // or the archive's bad minute for that one query), not the mirror refusing
+      // us. Holding back the whole reddit.com queue for it parked ~200 other
+      // subreddits every few minutes and capped Reddit at ~7 reads an hour.
+      return { ok: false, throttled: true, hostWide: false, retryAfter: 20 * 60, error: 'empty-result' };
     }
 
     onEvent('reddit.fetch.success', { ref: feed.social_ref, itemCount: items.length });

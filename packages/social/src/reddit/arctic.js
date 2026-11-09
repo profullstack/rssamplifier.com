@@ -66,7 +66,11 @@ export async function arcticGet(path, params, opts = {}) {
 
   let json;
   try {
-    json = JSON.parse(body);
+    // Strip NUL from every string on the way in. Reddit text occasionally carries
+    // one (JSON can only spell it `\u0000`), and Postgres refuses it in a text
+    // column with "invalid byte sequence for encoding UTF8: 0x00" -- which failed
+    // the whole subreddit's write on every crawl, for ever, the same few each hour.
+    json = JSON.parse(body, (_key, value) => (typeof value === 'string' ? value.replace(/\u0000/g, '') : value));
   } catch {
     throw new XUnavailable('arctic-shift: unparseable-response');
   }

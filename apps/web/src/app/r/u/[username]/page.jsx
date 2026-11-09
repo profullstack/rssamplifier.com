@@ -2,6 +2,8 @@ import { notFound } from 'next/navigation';
 import { redditSource } from '@rssamplifier/social';
 
 import { socialFeed, socialMetadata } from '../../../../lib/socialPage.js';
+import { refreshIfStale } from '../../../../lib/socialRiver.js';
+import { db } from '../../../../lib/db.js';
 import AddSocialSource from '../../../AddSocialSource.jsx';
 import FeedPage from '../../../[slug]/page.jsx';
 
@@ -51,5 +53,6 @@ export default async function RedditUserPage({ params }) {
     );
   }
 
+  refreshIfStale(db(), feed);
   return FeedPage({ params: Promise.resolve({ slug: String(feed.slug) }), base: source.path });
 }

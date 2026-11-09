@@ -150,6 +150,14 @@ test('the collector reads a subreddit from the mirror, by name, with no runtime 
   assert.equal(asked.searchParams.get('sort'), 'desc');
 });
 
+test('NUL characters never reach the database, which refuses them', async () => {
+  const fetch = fakeFetch({ '/api/posts/search': { data: [{ ...POST, title: 'a\u0000b', selftext: 'x\u0000y' }] } });
+  const result = await fetchRedditSource({ social_ref: 'r:sub:asktechnology', feed_url: 'x' }, { runtime: { fetch } });
+  assert.equal(result.ok, true);
+  assert.equal(result.feed.items[0].title, 'ab');
+  assert.ok(!JSON.stringify(result.feed).includes('\\u0000'));
+});
+
 test('a user source asks by author', async () => {
   const fetch = fakeFetch({ '/api/posts/search': { data: [POST] } });
   const result = await fetchRedditSource({ social_ref: 'r:user:rosybodynimbus', feed_url: 'x' }, { runtime: { fetch } });
@@ -170,6 +178,7 @@ test('a mirror outage or an empty answer for a source that had posts never count
     { runtime: { fetch: empty } },
   );
   assert.equal(quiet.throttled, true);
+  assert.equal(quiet.hostWide, false, 'one quiet subreddit does not hold back the rest of Reddit');
 
   const errored = fakeFetch({ '/api/posts/search': { error: 'Timeout. Maybe slow down a bit' } });
   const slow = await fetchRedditSource({ social_ref: 'r:sub:asktechnology', feed_url: 'x' }, { runtime: { fetch: errored } });
