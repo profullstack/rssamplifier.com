@@ -3036,6 +3036,22 @@ export async function requestRefresh(db, id) {
 }
 
 /**
+ * When the newest reddit post we hold was published: where the Reddit firehose
+ * resumes after a restart. One aggregate over the ~50k reddit rows.
+ *
+ * @param {Client} db
+ * @returns {Promise<string|null>}
+ */
+export async function newestRedditPost(db) {
+  const { rows } = await db.execute({
+    sql: `select max(last_published_at) as at from feeds
+          where social_network = 'reddit' and last_published_at <= ?`,
+    args: [nowIso()],
+  });
+  return rows[0]?.at ? String(rows[0].at) : null;
+}
+
+/**
  * Live rows for a set of social refs (`r:sub:rss`, `r:user:spez`), with the
  * columns a crawl needs: the Reddit firehose matches every new post on the site
  * against these and crawls only the rows it found.

@@ -16,7 +16,7 @@
  */
 
 import { q } from '@rssamplifier/db';
-import { fetchRedditFirehosePage, redditPostToItem, redditResult } from '@rssamplifier/social';
+import { fetchRedditFirehosePage, fetchRedditNewest, redditPostToItem, redditResult } from '@rssamplifier/social';
 
 import { crawlFeed } from './crawl.js';
 
@@ -28,6 +28,7 @@ const PAGE = 100;
  *   maxPages?: number,
  *   gapMs?: number,
  *   fetchBudgetMs?: number,
+ *   fetchHead?: () => Promise<number|null>,
  *   sleep?: (ms: number) => Promise<unknown>,
  *   maxLagSeconds?: number,
  *   resumeLagSeconds?: number,
@@ -59,8 +60,23 @@ export function createRedditFirehose(opts = {}) {
   const maxLagSeconds = opts.maxLagSeconds ?? 50 * 60;
   const resumeLagSeconds = opts.resumeLagSeconds ?? 5 * 60;
 
-  /** unix seconds; posts created after this are still to be read */
-  let cursor = Math.floor(now() / 1000) - (opts.lookbackSeconds ?? 900);
+  // The newest post the mirror holds. Arctic Shift itself can fall behind
+  // Reddit (37 minutes on 2026-11-09), so "behind" is measured against this,
+  // never the wall clock: skipping to now - 5 min while the mirror is 37
+  // minutes back would jump over posts it has not ingested yet.
+  const fetchHead = opts.fetchHead ?? (async () => {
+    const [newest] = await fetchRedditNewest({ env: opts.env });
+    return Number(newest?.created_utc) || null;
+  });
+
+  /**
+   * Unix seconds; posts created after this are still to be read. Null until
+   * the first pass, which starts where the last process stopped: the newest
+   * reddit post already stored, so a restart neither skips nor re-reads an
+   * hour. `lookbackSeconds` (tests) starts from the clock instead.
+   * @type {number|null}
+   */
+  let cursor = opts.lookbackSeconds != null ? Math.floor(now() / 1000) - opts.lookbackSeconds : null;
   /** ids already handled near the cursor, since pages overlap by a second */
   let seen = new Set();
 
@@ -76,9 +92,19 @@ export function createRedditFirehose(opts = {}) {
     let limited = null;
 
     const nowSeconds = Math.floor(now() / 1000);
+    if (cursor == null) {
+      const stored = await q.newestRedditPost(db).catch(() => null);
+      const from = stored ? Math.floor(Date.parse(stored) / 1000) - 120 : nowSeconds - 900;
+      cursor = Math.max(from, nowSeconds - maxLagSeconds);
+    }
+
     if (nowSeconds - cursor > maxLagSeconds) {
-      skipped = nowSeconds - resumeLagSeconds - cursor;
-      cursor = nowSeconds - resumeLagSeconds;
+      const head = await fetchHead().catch(() => null);
+      const target = head ? head - resumeLagSeconds : null;
+      if (target && target > cursor) {
+        skipped = target - cursor;
+        cursor = target;
+      }
     }
 
     const started = now();

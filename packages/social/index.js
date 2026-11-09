@@ -98,6 +98,7 @@ export {
   commentTree,
   fetchRedditComments,
   fetchRedditFirehosePage,
+  fetchRedditNewest,
   fetchRedditListing,
   fetchRedditPost,
   isShowable as isShowableRedditPost,

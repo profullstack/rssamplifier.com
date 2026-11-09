@@ -101,15 +101,38 @@ test('a "slow down" keeps what the pass read and resumes from the cursor', async
 
 test('more than the lag limit behind, it skips forward so feeds stay inside the hour', async () => {
   let clock = T0 * 1000;
+  let head = T0 + 7200;
   const asked = [];
   const run = createRedditFirehose({
     fetchPage: async (after) => (asked.push(after), []),
+    fetchHead: async () => head,
     now: () => clock,
     lookbackSeconds: 60,
     gapMs: 0,
   });
   clock += 2 * 3_600_000;
   const res = await run(db);
-  assert.equal(asked[0], T0 + 7200 - 300, 'resumes five minutes back');
+  assert.equal(asked[0], T0 + 7200 - 300, 'resumes five minutes behind the mirror');
   assert.ok(res.skipped > 3_000);
+
+  // The mirror itself 2 hours behind: nothing to skip to, so nothing is skipped.
+  clock += 2 * 3_600_000;
+  head = T0 + 7200 - 100;
+  const held = await run(db);
+  assert.equal(held.skipped, 0);
+  assert.equal(asked[1], T0 + 7200 - 300, 'the cursor waits for the mirror');
+});
+
+test('a restart resumes from the newest reddit post already stored', async () => {
+  const id = await seedSub('rss');
+  const stored = new Date((T0 - 600) * 1000).toISOString();
+  await db.execute({ sql: 'update feeds set last_published_at = ? where id = ?', args: [stored, id] });
+  const asked = [];
+  const run = createRedditFirehose({
+    fetchPage: async (after) => (asked.push(after), []),
+    now: () => T0 * 1000,
+    gapMs: 0,
+  });
+  await run(db);
+  assert.equal(asked[0], T0 - 600 - 120);
 });
