@@ -27,6 +27,7 @@ const PAGE = 100;
  *   lookbackSeconds?: number,
  *   maxPages?: number,
  *   gapMs?: number,
+ *   fetchBudgetMs?: number,
  *   sleep?: (ms: number) => Promise<unknown>,
  *   maxLagSeconds?: number,
  *   resumeLagSeconds?: number,
@@ -41,12 +42,17 @@ export function createRedditFirehose(opts = {}) {
   const now = opts.now ?? (() => Date.now());
   const fetchPage = opts.fetchPage ?? fetchRedditFirehosePage;
   const crawl = opts.crawl ?? crawlFeed;
-  const maxPages = opts.maxPages ?? 12;
+  const maxPages = opts.maxPages ?? 30;
+  // Reading stops at this deadline so the pass (reads plus writes) fits its
+  // 60 s slot. A pass that overran the slot waited for the *next* one (the
+  // daemon runs on a fixed grid), which halved throughput to ~6 pages a minute
+  // against Reddit's ~9 (2026-11-09).
+  const fetchBudgetMs = opts.fetchBudgetMs ?? 40_000;
   const concurrency = opts.concurrency ?? 6;
   // Arctic Shift answers 422 "Timeout. Maybe slow down a bit" after ~5 pages
   // back to back (measured 2026-11-09), and a page is ~6 s of Reddit, so pages
   // are spaced rather than fired: ~11 a minute is just over Reddit's own pace.
-  const gapMs = opts.gapMs ?? 4_000;
+  const gapMs = opts.gapMs ?? 3_500;
   const sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   // Never more than this far behind: past it, skip forward so every feed stays
   // inside the hour, and say how much was skipped.
@@ -75,7 +81,9 @@ export function createRedditFirehose(opts = {}) {
       cursor = nowSeconds - resumeLagSeconds;
     }
 
+    const started = now();
     for (; pages < maxPages; pages += 1) {
+      if (pages > 0 && now() - started + gapMs >= fetchBudgetMs) break;
       if (pages > 0 && gapMs > 0) await sleep(gapMs);
       let page;
       try {
