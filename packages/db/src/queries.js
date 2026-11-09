@@ -3036,6 +3036,30 @@ export async function requestRefresh(db, id) {
 }
 
 /**
+ * Live rows for a set of social refs (`r:sub:rss`, `r:user:spez`), with the
+ * columns a crawl needs: the Reddit firehose matches every new post on the site
+ * against these and crawls only the rows it found.
+ *
+ * @param {Client} db
+ * @param {string[]} refs
+ * @returns {Promise<object[]>}
+ */
+export async function feedsBySocialRefs(db, refs) {
+  const out = [];
+  for (let i = 0; i < refs.length; i += 500) {
+    const chunk = refs.slice(i, i + 500);
+    if (chunk.length === 0) continue;
+    const { rows } = await db.execute({
+      sql: `select ${DUE_COLUMNS} from feeds
+            where social_ref in (${chunk.map(() => '?').join(',')}) and status <> 'dead'`,
+      args: chunk,
+    });
+    out.push(...rows);
+  }
+  return out;
+}
+
+/**
  * `requestRefresh`, but only when the stored copy is older than `maxAgeMinutes`
  * and the feed is not already at the front. For sources whose readers expect a
  * fixed freshness (every /r/ URL is promised hourly): reading one is the signal

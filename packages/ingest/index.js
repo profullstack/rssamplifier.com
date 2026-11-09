@@ -8,6 +8,7 @@ export {
   refreshFeedKeywords,
 } from './src/crawl.js';
 export { importFeeds, importOpml } from './src/import.js';
+export { createRedditFirehose } from './src/redditFirehose.js';
 export { queueFeeds } from './src/queue.js';
 export { drainImport } from './src/drain.js';
 export {

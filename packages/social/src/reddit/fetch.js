@@ -49,31 +49,44 @@ export async function fetchRedditSource(feed, opts = {}) {
     }
 
     onEvent('reddit.fetch.success', { ref: feed.social_ref, itemCount: items.length });
-
-    // Reddit's casing for the name, when the archive has it, so a row created
-    // from a lowercased ref still titles itself `r/AskTechnology`.
-    const named = posts[0]?.[spec.mode === 'user' ? 'author' : 'subreddit'];
-    const display = { ...spec, name: named && String(named).toLowerCase() === spec.name.toLowerCase() ? String(named) : spec.name };
-
-    return {
-      ok: true,
-      feedUrl: feed.feed_url,
-      feed: {
-        title: redditTitle(display),
-        description:
-          spec.mode === 'user'
-            ? `Posts by u/${display.name} on Reddit, mirrored by RSSAmp.`
-            : `Posts from r/${display.name}, mirrored by RSSAmp.`,
-        siteUrl: redditSiteUrl(display),
-        language: null,
-        imageUrl: null,
-        categories: [],
-        kind: 'blog',
-        items,
-      },
-    };
+    return redditResult(feed, spec, posts, items);
   } catch (error) {
     onEvent('reddit.fetch.failed', { ref: feed.social_ref, error: String(error?.message ?? error) });
     return failureResult(error);
   }
+}
+
+/**
+ * The `{ok, feedUrl, feed}` a crawl stores, from posts already in hand. Shared
+ * by the per-source collector and the firehose, which reads every new post on
+ * Reddit and hands each row its own.
+ *
+ * @param {{ feed_url?: string }} feed
+ * @param {{ mode: 'sub'|'user', name: string }} spec
+ * @param {object[]} posts raw Arctic Shift posts
+ * @param {object[]} [items] posts already mapped through postToItem
+ */
+export function redditResult(feed, spec, posts, items = posts.map(postToItem).filter(Boolean)) {
+  // Reddit's casing for the name, when the archive has it, so a row created
+  // from a lowercased ref still titles itself `r/AskTechnology`.
+  const named = posts[0]?.[spec.mode === 'user' ? 'author' : 'subreddit'];
+  const display = { ...spec, name: named && String(named).toLowerCase() === spec.name.toLowerCase() ? String(named) : spec.name };
+
+  return {
+    ok: true,
+    feedUrl: feed.feed_url,
+    feed: {
+      title: redditTitle(display),
+      description:
+        spec.mode === 'user'
+          ? `Posts by u/${display.name} on Reddit, mirrored by RSSAmp.`
+          : `Posts from r/${display.name}, mirrored by RSSAmp.`,
+      siteUrl: redditSiteUrl(display),
+      language: null,
+      imageUrl: null,
+      categories: [],
+      kind: 'blog',
+      items,
+    },
+  };
 }

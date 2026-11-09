@@ -156,6 +156,13 @@ test('NUL characters never reach the database, which refuses them', async () => 
   assert.equal(result.ok, true);
   assert.equal(result.feed.items[0].title, 'ab');
   assert.ok(!JSON.stringify(result.feed).includes('\\u0000'));
+
+  // Our own markdown placeholders nest: a code span inside a link label.
+  const nested = fakeFetch({ '/api/posts/search': { data: [{ ...POST, selftext: 'see [the `rss` tool](https://example.com/x) and r/rss' }] } });
+  const out = await fetchRedditSource({ social_ref: 'r:sub:asktechnology', feed_url: 'x' }, { runtime: { fetch: nested } });
+  const html = out.feed.items[0].contentHtml;
+  assert.ok(!html.includes('\u0000'), html);
+  assert.ok(html.includes('<code>rss</code>'), html);
 });
 
 test('a user source asks by author', async () => {
