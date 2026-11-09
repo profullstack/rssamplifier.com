@@ -197,8 +197,9 @@ test('each platform is asked no faster than it tolerates', () => {
   assert.equal(floorMinutesFor({ social_network: 'instagram' }), 30);
   assert.equal(floorMinutesFor({ social_network: 'facebook' }), 60);
 
-  // Reddit, collected through a shared public mirror, keeps the hour its RSS had.
-  assert.equal(floorMinutesFor({ social_network: 'reddit' }), 60);
+  // Reddit's new posts arrive through the firehose; asking a subreddit by name
+  // is a first read and a weekly check.
+  assert.equal(floorMinutesFor({ social_network: 'reddit' }), 7 * 24 * 60);
   assert.equal(floorMinutesFor({}), 60);
 
   // Nothing collected may be asked faster than X.

@@ -2,10 +2,7 @@ import { notFound } from 'next/navigation';
 import { redditSource } from '@rssamplifier/social';
 
 import { socialFeed, socialMetadata } from '../../../lib/socialPage.js';
-import { liveSubredditPosts, threadSlug } from '../../../lib/redditThread.js';
-import { refreshIfStale } from '../../../lib/socialRiver.js';
-import { db } from '../../../lib/db.js';
-import AddSocialSource from '../../AddSocialSource.jsx';
+import { liveSubredditPosts, threadSlug } from '../../../lib/redditThread.js';import AddSocialSource from '../../AddSocialSource.jsx';
 import FeedPage from '../../[slug]/page.jsx';
 import { when } from '../RedditComments.jsx';
 
@@ -63,9 +60,6 @@ export default async function SubredditPage({ params }) {
       />
     );
   }
-
-  // Older than an hour: queue a refresh. This view still shows the stored copy.
-  refreshIfStale(db(), feed);
 
   // In the directory but never read: 36,679 subreddits were in that state on
   // 2026-10-06, queued behind one host's crawl budget. Rather than an empty

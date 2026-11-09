@@ -57,7 +57,7 @@ test('every new post reaches the subreddit row it belongs to, and nothing else i
     return asked.length === 1 ? first : asked.length === 2 ? [first[99], ...second] : [];
   };
 
-  const run = createRedditFirehose({ fetchPage, now: () => (T0 + 300) * 1000, lookbackSeconds: 300 });
+  const run = createRedditFirehose({ fetchPage, now: () => (T0 + 300) * 1000, lookbackSeconds: 300, gapMs: 0 });
   const res = await run(db);
 
   assert.equal(asked.length, 2, 'stopped once a page came back short');
@@ -76,4 +76,40 @@ test('every new post reaches the subreddit row it belongs to, and nothing else i
 
   const [row] = (await db.execute({ sql: 'select last_success_at from feeds where id = ?', args: [rss] })).rows;
   assert.ok(row.last_success_at, 'the row is marked read');
+});
+
+test('a "slow down" keeps what the pass read and resumes from the cursor', async () => {
+  const rss = await seedSub('rss');
+  const full = Array.from({ length: 100 }, (_, i) => post(`c${i}`, 'rss', T0 + i));
+  const asked = [];
+  const fetchPage = async (after) => {
+    asked.push(after);
+    if (asked.length === 2) throw new Error('upstream-422');
+    return asked.length === 1 ? full : [];
+  };
+  const run = createRedditFirehose({ fetchPage, now: () => (T0 + 300) * 1000, lookbackSeconds: 300, gapMs: 0 });
+
+  const res = await run(db);
+  assert.equal(res.limited, 'upstream-422');
+  assert.equal(res.matched, 1, 'the page read before the refusal is still stored');
+  const { rows } = await db.execute({ sql: 'select count(*) as n from feed_items where feed_id = ?', args: [rss] });
+  assert.equal(Number(rows[0].n), 50);
+
+  await run(db);
+  assert.equal(asked[2], T0 + 98, 'the next pass carries on where this one stopped');
+});
+
+test('more than the lag limit behind, it skips forward so feeds stay inside the hour', async () => {
+  let clock = T0 * 1000;
+  const asked = [];
+  const run = createRedditFirehose({
+    fetchPage: async (after) => (asked.push(after), []),
+    now: () => clock,
+    lookbackSeconds: 60,
+    gapMs: 0,
+  });
+  clock += 2 * 3_600_000;
+  const res = await run(db);
+  assert.equal(asked[0], T0 + 7200 - 300, 'resumes five minutes back');
+  assert.ok(res.skipped > 3_000);
 });

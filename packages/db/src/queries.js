@@ -3060,29 +3060,6 @@ export async function feedsBySocialRefs(db, refs) {
 }
 
 /**
- * `requestRefresh`, but only when the stored copy is older than `maxAgeMinutes`
- * and the feed is not already at the front. For sources whose readers expect a
- * fixed freshness (every /r/ URL is promised hourly): reading one is the signal
- * that it is wanted, so a page view or an RSS reader's poll pulls a stale
- * subreddit forward, instead of fifty thousand of them being asked hourly
- * whether anyone is looking or not. One guarded UPDATE, a no-op when fresh.
- *
- * @param {Client} db
- * @param {string} id
- * @param {number} [maxAgeMinutes]
- */
-export async function requestRefreshIfStale(db, id, maxAgeMinutes = 60) {
-  const cutoff = new Date(Date.now() - maxAgeMinutes * 60_000).toISOString();
-  await db.execute({
-    sql: `update feeds set next_fetch_at = '1970-01-01T00:00:00.000Z'
-          where id = ? and status <> 'dead'
-            and next_fetch_at > '1970-01-01T00:00:00.000Z'
-            and (last_fetched_at is null or last_fetched_at < ?)`,
-    args: [id, cutoff],
-  });
-}
-
-/**
  * Due feeds per tier, and how late the oldest of each is: the number that says
  * whether live feeds are being read on time even while the backlog drains.
  *
