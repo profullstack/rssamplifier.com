@@ -181,3 +181,20 @@ test('one throttled host does not stop the others in the same batch', async () =
   );
   assert.equal(Number(fine.rows[0].n), 5, 'every feed on the healthy host was crawled');
 });
+
+test('a throttle about one source (hostWide: false) does not hold back the host', async () => {
+  // Reddit's empty-result: one subreddit that had posts and now returns none
+  // (private, banned). Treating it as the mirror refusing us parked ~200 other
+  // subreddits every few minutes and capped Reddit at ~7 reads an hour.
+  await seedHost('crowded.example', 10);
+
+  let attempts = 0;
+  const resolve = async () => {
+    attempts += 1;
+    return { ok: false, error: 'empty-result', throttled: true, hostWide: false, retryAfter: 1200 };
+  };
+
+  const result = await crawlDue(db, 10, 4, null, { crawl: { resolve } });
+  assert.equal(attempts, 10, 'every feed on the host is still asked');
+  assert.equal(result.throttled, 0, 'no host was held back');
+});

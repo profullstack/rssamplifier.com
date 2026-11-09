@@ -89,6 +89,8 @@ export async function socialRiver({
     );
   }
 
+  refreshIfStale(client, feed);
+
   const page = `${siteUrl()}${canonical}`;
   const rows = await q.itemsForFeed(client, String(feed.id), riverLimit(rawLimit));
 
@@ -117,6 +119,21 @@ export async function socialRiver({
     src: 'social',
     req,
   });
+}
+
+/**
+ * Every /r/ URL is promised hourly. Fifty thousand subreddits cannot all be
+ * asked hourly through one mirror, but the ones somebody reads can: a view or a
+ * reader's poll of a copy older than an hour puts it at the front of the queue
+ * (the poller ticks every few minutes). Fire-and-forget, and never fatal: the
+ * stored copy is served either way.
+ *
+ * @param {object} client
+ * @param {{ id?: unknown, social_network?: string|null }|null} feed
+ */
+export function refreshIfStale(client, feed) {
+  if (!feed?.id || feed.social_network !== 'reddit') return;
+  q.requestRefreshIfStale(client, String(feed.id), 60).catch(() => {});
 }
 
 /**

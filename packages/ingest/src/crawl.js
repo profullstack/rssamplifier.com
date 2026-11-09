@@ -347,6 +347,9 @@ export async function crawlFeed(db, feed, opts = {}) {
       ok: false,
       newItems: 0,
       throttled: true,
+      // False when the collector says the refusal is about this one source,
+      // not its host; crawlDue then throttles the feed and keeps walking.
+      hostWide: resolved.hostWide !== false,
       retryAfter: resolved.retryAfter ?? null,
       error: resolved.error,
     };
@@ -784,7 +787,7 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
           // the same question another eight hundred times is precisely what it
           // just told us to stop doing — see `markHostThrottled` for the
           // measurement that put this here.
-          if (res.throttled) {
+          if (res.throttled && res.hostWide !== false) {
             throttled += 1;
             const rest = queue.slice(position + 1);
             if (rest.length > 0) {
