@@ -1,6 +1,7 @@
 import { resolveFeed, scrapeFeed, feedTopics } from '@rssamplifier/feed';
 import { q, authors } from '@rssamplifier/db';
 import { fetchSocialSource, floorMinutesFor, isCollected, needsRuntime } from '@rssamplifier/social';
+import { tierFor } from '@profullstack/scraper-daemon/cadence';
 
 import { prepareCredits } from './enrich.js';
 import {
@@ -641,6 +642,41 @@ const OVERREAD = 3;
  * @param {number} [perHost]
  * @returns {object[]}
  */
+/**
+ * Mix the due pool across tiers before the batch is cut from its front.
+ *
+ * `dueFeeds` returns the pool tier by tier (hot, active, slow, dormant,
+ * archived, each its quota times OVERREAD), and `spreadHosts` takes the first
+ * `batchSize`. Uninterleaved, the hot tier alone filled the batch and every
+ * other tier starved: on 2026-11-09 a subreddit queued at the front of the
+ * active tier sat at position 1,081 of 2,700 against a batch of 900 and was
+ * never read. Ordering by each row's fractional position within its own tier
+ * keeps the quota proportions in any prefix, and the rows first within their
+ * tier (express submissions, oldest due) stay first.
+ *
+ * @template {{ status?: string, fetch_interval_minutes?: number }} T
+ * @param {T[]} feeds
+ * @returns {T[]}
+ */
+export function interleaveTiers(feeds) {
+  const groups = new Map();
+  const keyOf = (feed) => (feed?.status === 'dead' ? 'recheck' : tierFor(feed?.fetch_interval_minutes));
+  for (const feed of feeds) {
+    const key = keyOf(feed);
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  const seenIn = new Map();
+  return feeds
+    .map((feed, index) => {
+      const key = keyOf(feed);
+      const i = seenIn.get(key) ?? 0;
+      seenIn.set(key, i + 1);
+      return { feed, index, at: (i + 0.5) / groups.get(key) };
+    })
+    .sort((a, b) => a.at - b.at || a.index - b.index)
+    .map((entry) => entry.feed);
+}
+
 export function spreadHosts(feeds, batchSize, perHost = PER_HOST_DEFAULT) {
   if (batchSize <= 0) return [];
 
@@ -730,7 +766,7 @@ export async function crawlDue(db, batchSize = 25, concurrency = 8, onEvent = nu
   const pool = await q.dueFeeds(db, batchSize * OVERREAD);
   if (pool.length === 0) return { crawled: 0, failed: 0, items: 0, hosts: 0 };
 
-  const due = spreadHosts(pool, batchSize, perHost);
+  const due = spreadHosts(interleaveTiers(pool), batchSize, perHost);
 
   // Longest queue first. Whichever host is heaviest in this batch is the one
   // that decides when the batch ends, so it must start at the beginning of it.
