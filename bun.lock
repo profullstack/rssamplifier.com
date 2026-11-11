@@ -121,6 +121,7 @@
       "name": "@rssamplifier/ingest",
       "version": "0.1.0",
       "dependencies": {
+        "@profullstack/cross-promo": "0.1.0",
         "@profullstack/scraper-daemon": "0.4.0",
         "@rssamplifier/db": "workspace:*",
         "@rssamplifier/feed": "workspace:*",
@@ -364,6 +365,8 @@
     "@profullstack/coinpay-onboard": ["@profullstack/coinpay-onboard@0.3.1", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.32.2", "zod": "^4.6.7" }, "bin": { "coinpay-onboard": "bin/coinpay-onboard" } }, "sha512-+K7D6uaX10y+0V5sg7To1jKwNG8iCNbN9SSW6q5ACzoiDNswMox3G7gzY/Swxd128klq7ecN2Ni4JVNr50nRIQ=="],
 
     "@profullstack/contact-form": ["@profullstack/contact-form@0.3.2", "", { "dependencies": { "@profullstack/emailer": "^1.0.3", "@profullstack/form-guard": "^0.3.0" }, "peerDependencies": { "react": ">=18.0.0" }, "optionalPeers": ["react"] }, "sha512-hXzHgCFj5PAHsov6bnIai++cRaHJsoo8OsSPj1b41qDAP3WfABE87O3A7vlQ44MoRPkqV7pEk5JaSgSAGmB9Lw=="],
+
+    "@profullstack/cross-promo": ["@profullstack/cross-promo@0.1.0", "", { "bin": { "cross-promo": "bin/cross-promo.js" } }, "sha512-LQMxZSvApH1T+8WmMu/Nj1LqojXeTw6wAtpLfhuKFwx9eR36hQG/7vVIDkKpmU5zKw7UwARe20MOfFCak2+ejA=="],
 
     "@profullstack/emailer": ["@profullstack/emailer@1.0.3", "", {}, "sha512-VyAtCcfnSI6LOwJvWogCr3ZNmEsaZw+iuWrqnosLsdcKsbRyCrCmXigMNZJZEjlgYlR+lK//PwNPG+xtCFvWAw=="],
 

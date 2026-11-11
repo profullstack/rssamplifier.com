@@ -1,5 +1,6 @@
 import { q, discovery } from '@rssamplifier/db';
 import { sendEmail, emailEnabled } from '@rssamplifier/mail';
+import { promoBlock, hostOf } from '@profullstack/cross-promo';
 
 /**
  * Telling submitters their import finished.
@@ -15,6 +16,21 @@ import { sendEmail, emailEnabled } from '@rssamplifier/mail';
 
 export { emailEnabled };
 
+const siteUrl = () => process.env['SITE_URL'] || 'https://rssamp.com';
+
+/**
+ * The "more from the network" block, after a blank line, for the end of a
+ * text-only note. Submitters run blogs, so the reader is a publisher. Never
+ * throws and never promotes RSSAmp itself; an empty block adds nothing.
+ *
+ * @param {string} to
+ * @returns {Promise<string>}
+ */
+async function promoText(to) {
+  const promo = await promoBlock({ site: hostOf(siteUrl()), audience: 'publishers', seed: to });
+  return promo.text ? `\n\n${promo.text}` : '';
+}
+
 /**
  * Send one "your import finished" note.
  *
@@ -22,7 +38,17 @@ export { emailEnabled };
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function sendSubmissionEmail(params) {
-  const site = process.env['SITE_URL'] || 'https://rssamp.com';
+  return sendEmail(await submissionEmail(params));
+}
+
+/**
+ * The "your import finished" message, built but not sent.
+ *
+ * @param {{ to: string, submissionId: string, crawled: number, failed: number, queued: number }} params
+ * @returns {Promise<{ to: string, subject: string, text: string }>}
+ */
+export async function submissionEmail(params) {
+  const site = siteUrl();
   const statusUrl = `${site}/submissions/${params.submissionId}`;
 
   const lines = [
@@ -35,11 +61,11 @@ export async function sendSubmissionEmail(params) {
     `Full status: ${statusUrl}`,
   ];
 
-  return sendEmail({
+  return {
     to: params.to,
     subject: `Your ${params.queued} feeds are indexed`,
-    text: lines.join('\n'),
-  });
+    text: lines.join('\n') + (await promoText(params.to)),
+  };
 }
 
 /**
@@ -49,7 +75,17 @@ export async function sendSubmissionEmail(params) {
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function sendDiscoveryEmail(params) {
-  const site = process.env['SITE_URL'] || 'https://rssamp.com';
+  return sendEmail(await discoveryEmail(params));
+}
+
+/**
+ * The "your keyword search finished" message, built but not sent.
+ *
+ * @param {{ to: string, runId: string, keywords: string[], accepted: number, checked: number }} params
+ * @returns {Promise<{ to: string, subject: string, text: string }>}
+ */
+export async function discoveryEmail(params) {
+  const site = siteUrl();
   const statusUrl = `${site}/discoveries/${params.runId}`;
   const shown = params.keywords.slice(0, 5).join(', ');
   const more = params.keywords.length > 5 ? ` and ${params.keywords.length - 5} more` : '';
@@ -64,11 +100,11 @@ export async function sendDiscoveryEmail(params) {
     `Full status: ${statusUrl}`,
   ];
 
-  return sendEmail({
+  return {
     to: params.to,
     subject: `${params.accepted} new blogs from your keyword search`,
-    text: lines.join('\n'),
-  });
+    text: lines.join('\n') + (await promoText(params.to)),
+  };
 }
 
 /**
