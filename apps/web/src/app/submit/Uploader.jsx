@@ -271,11 +271,19 @@ export default function Uploader({ shared = '' }) {
 
   return (
     <>
-      <form className="submit-box" action="/api/submit" method="post" onSubmit={onPaste}>
+      <form
+        className="submit-box"
+        action="/api/submit"
+        method="post"
+        onSubmit={onPaste}
+        toolname="submit_feeds"
+        tooldescription="Fill in blog, podcast or feed URLs (one per line) to add to the directory. The person presses the button to submit."
+      >
         <p className="eyebrow">One per line</p>
         <textarea
           ref={pasteRef}
           name="input"
+          toolparamdescription="Site or feed URLs, one per line"
           rows={5}
           defaultValue={shared}
           placeholder={'example.com\nanotherblog.net/feed.xml\nnetlabel.example/album.m3u'}
