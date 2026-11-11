@@ -18,6 +18,29 @@ import { jsonLdScript } from '../lib/jsonld.js';
  */
 export const revalidate = 3600;
 
+const WEBMCP_KEY_ONLY_TOOLS = [
+  'update_openprofile',
+  'claim_openprofile',
+  'list_webhooks',
+  'create_webhook',
+  'update_webhook',
+  'delete_webhook',
+  'test_webhook',
+  'rotate_webhook_secret',
+  'webhook_deliveries',
+].join(',');
+
+const WEBMCP_PAGES = JSON.stringify({
+  blogs: '/blogs',
+  podcasts: '/podcasts',
+  topics: '/topics',
+  discover: '/discover',
+  search: '/search',
+  submit: '/submit',
+  newsletter: '/newsletter',
+  about: '/about',
+});
+
 export const metadata = {
   metadataBase: new URL(siteUrl()),
   title: {
@@ -157,6 +180,21 @@ function siteJsonLd() {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
+      <head>
+        {/* WebMCP (@profullstack/webmcp): the directory's tools for an AI agent
+            in the reader's browser. The MCP endpoint takes bearer keys only,
+            never the session cookie, so the key-only tools are left out. */}
+        <script
+          type="module"
+          data-webmcp=""
+          src="https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js"
+          data-mcp="/api/mcp"
+          data-mcp-exclude={WEBMCP_KEY_ONLY_TOOLS}
+          data-search-api="/api/search?q={query}&limit={limit}"
+          data-search-description="Search every blog, podcast and post in the RSSAmp directory."
+          data-pages={WEBMCP_PAGES}
+        />
+      </head>
       <body>
         <script
           type="application/ld+json"

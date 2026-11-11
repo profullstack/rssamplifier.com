@@ -111,7 +111,14 @@ export default async function SearchPage({ searchParams }) {
         Across every post we have collected — writing, episodes, tracks and video alike.
       </p>
 
-      <form className="submit-box" method="get" action="/search">
+      <form
+        className="submit-box"
+        method="get"
+        action="/search"
+        toolname="search_directory"
+        tooldescription="Open the search results page for blogs, podcasts and posts matching a query."
+        toolautosubmit=""
+      >
         <input
           type="search"
           name="q"

@@ -37,7 +37,7 @@ const CSP = [
   // Next injects inline style attributes; there is no nonce-free way around it.
   "style-src 'self' 'unsafe-inline'",
   // crawlproof.com serves the analytics beacon and the ad loader.
-  "script-src 'self' 'unsafe-inline' https://crawlproof.com",
+  "script-src 'self' 'unsafe-inline' https://crawlproof.com https://cdn.jsdelivr.net",
   "connect-src 'self' https:",
   "worker-src 'self'",
   "manifest-src 'self'",
