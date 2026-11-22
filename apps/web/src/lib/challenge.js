@@ -84,7 +84,7 @@
 
 import { clientIp } from '@profullstack/x402-gateway/edge';
 
-import { exempt } from './crawl-gateway.js';
+import { exempt, signedInHint } from './crawl-gateway.js';
 
 const env = process.env;
 
@@ -297,7 +297,9 @@ export function wouldChallenge(request, pathname) {
   if (!EXPENSIVE.test(pathname)) return false;
   if (EXPORT_EXTENSION.test(pathname)) return false;
   if (pathname.startsWith('/api/')) return false;
-  return !exempt(request);
+  // Unchanged by x402-gateway 0.18.3: a signed-in reader or a key holder is not
+  // interrupted here (the gateway itself no longer lets their shapes skip a charge).
+  return !exempt(request) && !signedInHint(request);
 }
 
 /**
