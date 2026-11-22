@@ -5,7 +5,7 @@ import { profileStore, signInWithCoinpay, startSession, takeCoinpayCallback } fr
 
 import { db } from '../../../../../../lib/db.js';
 import { currentUser, requestMeta, setSessionCookie } from '../../../../../../lib/auth.js';
-import { STATE_COOKIE, STATE_COOKIE_PATH, coinpayConfig, seeOther } from '../../../../../../lib/coinpay.js';
+import { STATE_COOKIE, STATE_COOKIE_PATH, coinpayConfig, coinpayFetch, seeOther } from '../../../../../../lib/coinpay.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,6 +54,7 @@ export async function GET(req) {
       clientId: config.clientId,
       clientSecret: config.clientSecret,
       redirectUri: config.redirectUri,
+      fetch: coinpayFetch,
     });
     profile = { sub: result.sub, email: result.email, name: result.name };
     openProfileUrl = typeof result.userinfo.openprofile_url === 'string' ? result.userinfo.openprofile_url : null;
