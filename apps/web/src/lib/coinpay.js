@@ -8,6 +8,22 @@ import { siteUrl } from './db.js';
  * at build time, which would bake an absent value into the image for good.
  */
 
+const APP_VERSION = process.env['npm_package_version'];
+/** Every server-side call to CoinPay says which fleet app sent it (they share one IP). */
+export const COINPAY_UA = `rssamplifier.com${APP_VERSION ? `/${APP_VERSION}` : ''} (+https://rssamplifier.com)`;
+
+/**
+ * fetch that adds COINPAY_UA unless the caller set its own User-Agent.
+ * coinpay-onboard 0.3.x has no userAgent option, only `fetch`.
+ *
+ * @type {typeof fetch}
+ */
+export const coinpayFetch = (input, init = {}) => {
+  const headers = new Headers(init.headers);
+  if (!headers.has('user-agent')) headers.set('user-agent', COINPAY_UA);
+  return fetch(input, { ...init, headers });
+};
+
 export const STATE_COOKIE = 'rssa_cp_state';
 export const STATE_COOKIE_PATH = '/api/v1/coinpay/oauth';
 
