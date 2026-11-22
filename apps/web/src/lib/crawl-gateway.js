@@ -143,12 +143,28 @@ function carriesApiKey(request) {
 }
 
 /**
+ * A reader with a session (the `signed_in` hint the masthead reads, or the
+ * session cookie it describes) or a program with an API key. Both are only
+ * SHAPES: any client can send `signed_in=1`, so this is a hint, never a pass
+ * (x402-gateway 0.18.3 `sessionCookie`). It spares the spoof check, but a
+ * declared training crawler wearing it is still charged. Until 0.18.3 it was
+ * part of `exempt`, and GPTBot with `Cookie: signed_in=1` read free.
+ *
+ * @param {Request} request
+ * @returns {boolean}
+ */
+export function signedInHint(request) {
+  const cookie = request.headers.get('cookie') ?? '';
+  if (cookie.includes(`${SIGNED_IN_HINT_COOKIE}=`) || /(^|;\s*)rsa_session=[^;]/.test(cookie)) return true;
+  return carriesApiKey(request);
+}
+
+/**
  * Who is never charged, whatever they look like.
  *
- * Three kinds of caller have already said who they are: a reader with a
- * session (the `signed_in` hint the masthead reads, or the session cookie it
- * describes), a program with an API key, and a crawler that names itself on
- * the retrieval or search-engine lists. None of them is what the spoof check
+ * A crawler that names itself on the retrieval or search-engine lists has
+ * already said who it is (readers with a session and programs with a key are
+ * `signedInHint` above: a hint, not a pass). None of them is what the spoof check
  * is for — that check exists for the caller that says nothing true about
  * itself — so they step around it. A training crawler that also matches a
  * welcomed token (Applebot-Extended contains "Applebot") is a training
@@ -158,10 +174,6 @@ function carriesApiKey(request) {
  * @returns {boolean}
  */
 export function exempt(request) {
-  const cookie = request.headers.get('cookie') ?? '';
-  if (cookie.includes(`${SIGNED_IN_HINT_COOKIE}=`) || /(^|;\s*)rsa_session=[^;]/.test(cookie)) return true;
-  if (carriesApiKey(request)) return true;
-
   const ua = request.headers.get('user-agent') ?? '';
   if (isTrainingAgent(ua)) return false;
   // `gateway` is defined below; exempt() only ever runs at request time.
@@ -200,6 +212,7 @@ export const gateway = createGateway({
    */
   suspectAllowance: { requests: 20, windowSeconds: 3600, paths: ['/', '/about', '/contact', '/advertise', '/submit', '/terms', '/privacy'] },
   exempt,
+  sessionCookie: signedInHint,
   /*
    * What a pass actually buys, printed on the sales page and in every 402.
    *

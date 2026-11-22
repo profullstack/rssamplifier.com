@@ -241,6 +241,9 @@ test('a signed-in reader is never charged, headers or not', async () => {
   assert.equal(await gate(request('/topics/x', UAS.chrome, { cookie: 'signed_in=1' })), undefined);
   assert.equal(await gate(request('/topics/x', UAS.rotation[0], { cookie: 'theme=dark; signed_in=1' })), undefined);
   assert.equal(await gate(request('/topics/x', UAS.rotation[1], { cookie: 'rsa_session=a-token' })), undefined);
+  // A hint, never a pass (x402-gateway 0.18.3): a declared training crawler wearing it pays.
+  assert.equal((await gate(request('/topics/x', UAS.claudebot, { cookie: 'signed_in=1' })))?.status, 402);
+  assert.equal((await gate(request('/topics/x', UAS.claudebot, { cookie: 'rsa_session=forged' })))?.status, 402);
   // An emptied session is not a session, and a look-alike name is not the cookie.
   assert.equal((await gate(request('/topics/x', UAS.rotation[1], { cookie: 'rsa_session=' })))?.status, 402);
   assert.equal((await gate(request('/topics/x', UAS.rotation[1], { cookie: 'not_signed_in_at_all=1' })))?.status, 402);
