@@ -83,6 +83,14 @@ export default async function Home() {
           aria-label="One or more URLs, one per line"
           required
         />
+        <input
+          type="email"
+          name="email"
+          autoComplete="email"
+          required
+          placeholder="you@example.com (we email you once when it is listed)"
+          aria-label="Your email, for one note when your blog is listed"
+        />
         <div className="submit-actions">
           <button type="submit">Add to the directory</button>
           <span className="pill">no account needed</span>

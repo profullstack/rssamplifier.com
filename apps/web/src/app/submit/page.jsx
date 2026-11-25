@@ -2,11 +2,12 @@ import { AD_TEXT } from '../../lib/ads.js';
 import Ad from '../Ad.jsx';
 import Toolbar from '../Toolbar.jsx';
 import Uploader from './Uploader.jsx';
+import { currentUser } from '../../lib/auth.js';
 
 export const metadata = {
   title: 'Submit a blog',
   description:
-    'Add a URL, a playlist, a list of URLs, an OPML export or a text file of feed URLs to the directory. No account needed.',
+    'Add a URL, a playlist, a list of URLs, an OPML export or a text file of feed URLs to the directory. No account needed, just an email for one note when it is listed.',
 };
 
 /**
@@ -19,6 +20,7 @@ export default async function SubmitPage({ searchParams }) {
   // from a phone lands as ?url= (or ?input= for shared text). Prefill from
   // either so the flow is one tap.
   const shared = (params.url ?? params.input ?? '').trim();
+  const user = await currentUser();
 
   return (
     <>
@@ -26,10 +28,15 @@ export default async function SubmitPage({ searchParams }) {
       <p className="lede">
         Paste a homepage and we will find the feed. A playlist works too — an m3u, m3u8 or pls is
         read as a feed of what it lists, and a live stream lands under Live. No account, no waiting
-        list, no fee.
+        list, no fee. Leave your email and we write once when it is listed, or tell you why not.
       </p>
 
-      {params.error === 'large' ? (
+      {params.error === 'email' ? (
+        <p className="notice">
+          Add your email so we can tell you when your feed is listed. We send one note per
+          submission and nothing else.
+        </p>
+      ) : params.error === 'large' ? (
         <p className="notice">
           That file is too big to send in one piece. The uploader below reads it in your browser and
           sends the feeds a few thousand at a time instead, which has no size limit worth the name —
@@ -53,7 +60,7 @@ export default async function SubmitPage({ searchParams }) {
        * importable at all — see Uploader for why that cannot be done at the
        * server end.
        */}
-      <Uploader shared={shared} />
+      <Uploader shared={shared} signedIn={Boolean(user)} />
 
       {/*
        * The only ad on the funnel, and it is below both forms and the hint
@@ -68,7 +75,7 @@ export default async function SubmitPage({ searchParams }) {
       <p>Same endpoint, JSON in and JSON out:</p>
       <pre className="snippet">{`curl -X POST https://rssamp.com/api/submit \\
   -H 'content-type: application/json' \\
-  -d '{"urls":["example.com","another.blog"]}'`}</pre>
+  -d '{"urls":["example.com","another.blog"],"email":"you@example.com"}'`}</pre>
 
       <p>
         A catalogue too large to post in one request goes in the same way the uploader sends it —
@@ -76,7 +83,7 @@ export default async function SubmitPage({ searchParams }) {
       </p>
       <pre className="snippet">{`curl -X POST https://rssamp.com/api/submit/begin \\
   -H 'content-type: application/json' \\
-  -d '{"kind":"opml","sample":"<opml>…"}'
+  -d '{"kind":"opml","sample":"<opml>…","email":"you@example.com"}'
 # → {"submissionId":"…","maxEntriesPerBatch":5000}
 
 curl -X POST https://rssamp.com/api/submit/batch \\
@@ -85,7 +92,7 @@ curl -X POST https://rssamp.com/api/submit/batch \\
 
 curl -X POST https://rssamp.com/api/submit/finish \\
   -H 'content-type: application/json' \\
-  -d '{"submissionId":"…"}'`}</pre>
+  -d '{"submissionId":"…","email":"you@example.com"}'`}</pre>
 
       <Toolbar />
     </>

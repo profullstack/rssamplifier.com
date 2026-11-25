@@ -17,6 +17,7 @@ import { clampRawInput } from '../submitted.js';
 import { clip, plainText } from './text.js';
 import { WEBHOOK_TOOLS } from './webhookTools.js';
 import { clientIp } from '@profullstack/x402-gateway/edge';
+import { EMAIL_REQUIRED, INTERNAL_TOKEN_HEADER, resolveSubmitter } from '../submitter.js';
 import { resolveTopics, topicQueryArg, topicSegment } from '../topicSet.js';
 
 /**
@@ -819,7 +820,7 @@ export const TOOLS = [
   // so an agent that learned submit_feed on p0dcasters.com finds the same tool
   // here. Only `run` is this directory's: the ledger, the express lane and
   // the status page are its own.
-  submitFeedTool({
+  withEmail(submitFeedTool({
     directory: 'RSSAmp',
     maxUrls: 200,
     async run(args, ctx) {
@@ -835,6 +836,18 @@ export const TOOLS = [
       // one budget rather than the agent having a private one.
       const ip = clientIp({ headers: { get: (name) => ctx.header(name) ?? null } }) || null;
       const ipHash = hashIp(ip, process.env['IP_HASH_SALT']);
+
+      // The same rule as the form: a contact address, unless an API key says
+      // which account this is (see lib/submitter.js).
+      const submitter = await resolveSubmitter({
+        email: args?.email,
+        ip,
+        token: ctx.header(INTERNAL_TOKEN_HEADER) ?? null,
+        caller: () => callerOf(requestFrom(ctx), { user: async () => null }),
+      });
+      if (!submitter.ok) {
+        throw invalid(`${EMAIL_REQUIRED}: pass "email", the address we write to when the feeds are listed`);
+      }
 
       if (ipHash && (await q.submissionCount(client, ipHash)) >= SUBMIT_RATE_LIMIT) {
         throw invalid('rate limited — try again in an hour');
@@ -867,8 +880,10 @@ export const TOOLS = [
         accepted_count: result.accepted.length,
         rejected_count: result.rejected.length,
         queued_count: result.queued,
-        notify_email: null,
+        notify_email: submitter.email,
         errors: result.rejected,
+        accepted: result.accepted,
+        already_listed: result.skipped ?? 0,
       });
 
       return {
@@ -882,9 +897,10 @@ export const TOOLS = [
         queued: result.queued,
         total: result.total,
         statusUrl: `${siteUrl()}/submissions/${submissionId}`,
+        notify: Boolean(submitter.email),
       };
     },
-  }),
+  })),
 
   // Account tools: an API key in the Authorization header.
   ...WEBHOOK_TOOLS,
@@ -1089,6 +1105,36 @@ function topicSetFields(topic) {
       page: `${siteUrl()}/topics/${encodeURIComponent(t.slug)}`,
     })),
     unknown: topic.unknown ?? [],
+  };
+}
+
+/**
+ * The shared submit_feed contract plus this directory's one extra field.
+ *
+ * The package's schema (`@profullstack/submit-feed` 0.1.3) knows only `urls`.
+ * RSSAmp asks for a contact address as well, so it is added here rather than
+ * republishing the package for every directory that speaks it.
+ *
+ * @template {{ inputSchema: any, description: string }} T
+ * @param {T} tool
+ * @returns {T}
+ */
+function withEmail(tool) {
+  return {
+    ...tool,
+    description: `${tool.description} Pass "email": we write once when the feeds are listed (or say why not). Not needed with an API key.`,
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...tool.inputSchema.properties,
+        email: {
+          type: 'string',
+          format: 'email',
+          description: 'Where to send one note when the feeds are listed, or why they could not be. Required unless the call carries an API key.',
+        },
+      },
+      required: [...new Set([...(tool.inputSchema.required ?? []), 'email'])],
+    },
   };
 }
 

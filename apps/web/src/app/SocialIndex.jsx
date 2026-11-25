@@ -105,6 +105,14 @@ export default async function SocialIndex({ network, page = 1 }) {
       <form method="post" action="/api/submit" className="add-source">
         <label htmlFor="social-input">{addLabel}</label>
         <input id="social-input" name="input" type="text" placeholder={placeholder} required />
+        <input
+          name="email"
+          type="email"
+          autoComplete="email"
+          required
+          placeholder="you@example.com"
+          aria-label="Your email, for one note when it is listed"
+        />
         <button type="submit">Add</button>
       </form>
 

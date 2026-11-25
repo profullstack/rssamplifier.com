@@ -175,7 +175,7 @@ export async function llmsTxt(opts = {}) {
     `- [OPML export](${base}/opml): the whole directory as a subscription list, one category with ?kind=, or one subject with ?topic=`,
     `- [Webring footer snippet](${base}/api/v1/rings/embed?rings={slug}&site={your homepage}): the copy-paste \`<< Ring >>\` row (previous / ring / next, hops measured from your site) as plain and styled HTML; several rings with ?rings=a,b, raw HTML with &format=html&style=plain|styled; also /api/rings/{slug}/embed, the CLI \`rssamp ring embed\` and the MCP tool ring_embed`,
     `- [Weekly digest](${base}/api/v1/newsletter): schedule, next send and the latest issue; [this week's preview](${base}/api/v1/newsletter/preview); your own subscription is GET/PUT ${base}/api/v1/me/newsletter {"subscribed":bool} with a session or API key. Every account is on it by default; every issue has a one-click unsubscribe`,
-    `- [Submit](${base}/api/submit): POST {"url":"..."} or {"urls":[...]} or {"opml":"..."}`,
+    `- [Submit](${base}/api/submit): POST {"url":"...","email":"you@example.com"} or {"urls":[...],"email":"..."} or {"opml":"...","email":"..."}; email is required (one note when the feeds are listed) unless you send an API key`,
     `- [Discover](${base}/api/discover): POST {"keywords":["..."]} — find blogs by subject`,
     `- [Discovery status](${base}/api/discoveries/{id}): progress of one keyword run`,
     // Listed among the open endpoints because the manifest *is* open — it

@@ -441,7 +441,7 @@ async function importTick() {
   // Guarded, unlike where it used to sit. Down there a throw only cost the
   // housekeeping that followed it; up here it would cost the crawl.
   try {
-    const notified = await notifyFinishedSubmissions(db);
+    const notified = await notifyFinishedSubmissions(db, 5, { log });
     if (notified.sent || notified.failed) log('notified', notified);
   } catch (err) {
     log('notify-error', { message: String(err?.message ?? err) });

@@ -49,6 +49,14 @@ export default function AddSocialSource({ network, label, input, canonical }) {
 
       <form method="post" action="/api/submit">
         <input type="hidden" name="input" value={input} />
+        <input
+          name="email"
+          type="email"
+          autoComplete="email"
+          required
+          placeholder="you@example.com (we email you once when it is listed)"
+          aria-label="Your email, for one note when it is listed"
+        />{' '}
         <button type="submit">Add {label} to the directory</button>
       </form>
 

@@ -1,7 +1,10 @@
 import { q } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../lib/db.js';
-import { checkUploadAccess, ipHashOf, json, normalizeEmail } from '../../../../lib/upload.js';
+import { checkUploadAccess, ipHashOf, json } from '../../../../lib/upload.js';
+import { callerOf } from '../../../../lib/profileAuth.js';
+import { INTERNAL_TOKEN_HEADER, resolveSubmitter } from '../../../../lib/submitter.js';
+import { clientIp } from '@profullstack/x402-gateway/edge';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +38,16 @@ export async function POST(req) {
   const access = await checkUploadAccess(client, id, ipHashOf(req));
   if (!access.ok) return json({ ok: false, error: access.error }, access.status);
 
-  const email = normalizeEmail(body?.email);
+  // Not refused here when missing: /begin already asked, and an upload that
+  // has been read and staged is not thrown away at the last step. A signed-in
+  // uploader who left the field empty is told at their account address.
+  const submitter = await resolveSubmitter({
+    email: body?.email,
+    ip: clientIp(req) || null,
+    token: req.headers.get(INTERNAL_TOKEN_HEADER),
+    caller: () => callerOf(req),
+  });
+  const email = submitter.ok ? submitter.email : null;
   const staged = await q.countImportEntries(client, id);
 
   // A staged upload is not finished, it is handed over. Marking it ready is

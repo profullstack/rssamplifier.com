@@ -35,7 +35,7 @@ export function emailEnabled() {
  * its one-click button for. Both are left out of the payload when unset.
  *
  * @param {{ to: string, subject: string, text: string, html?: string, headers?: Record<string, string>, from?: string, replyTo?: string }} message
- * @returns {Promise<{ ok: boolean, error?: string }>}
+ * @returns {Promise<{ ok: boolean, id?: string, error?: string }>}
  */
 export async function sendEmail(message) {
   const key = process.env['RESEND_API_KEY'];
@@ -65,7 +65,10 @@ export async function sendEmail(message) {
       return { ok: false, error: `resend-${res.status}${detail ? `: ${detail.slice(0, 200)}` : ''}` };
     }
 
-    return { ok: true };
+    // The provider's message id, when it gives one, so a sent note can be found
+    // in the Resend dashboard from the poller's log line.
+    const sent = await res.json().catch(() => null);
+    return sent?.id ? { ok: true, id: String(sent.id) } : { ok: true };
   } catch (err) {
     return { ok: false, error: String(err?.message ?? err) };
   }
