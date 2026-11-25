@@ -102,6 +102,33 @@ test('submit with no arguments is an error', async () => {
   assert.match(errs.join(' '), /at least one URL/);
 });
 
+test('submit without --email or a token asks for one and sends nothing', async () => {
+  const originalFetch = globalThis.fetch;
+  const savedEmail = process.env['RSSAMP_EMAIL'];
+  const savedToken = process.env['RSSAMPLIFIER_TOKEN'];
+  delete process.env['RSSAMP_EMAIL'];
+  delete process.env['RSSAMPLIFIER_TOKEN'];
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return new Response('{}');
+  };
+  const errs = [];
+  try {
+    const code = await run(['submit', 'a.example', '--api', 'http://t.example'], {
+      log: () => {},
+      error: (s) => errs.push(s),
+    });
+    assert.equal(code, 1);
+    assert.equal(called, false);
+    assert.match(errs.join(' '), /--email/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (savedEmail !== undefined) process.env['RSSAMP_EMAIL'] = savedEmail;
+    if (savedToken !== undefined) process.env['RSSAMPLIFIER_TOKEN'] = savedToken;
+  }
+});
+
 test('search with no query is an error', async () => {
   const errs = [];
   assert.equal(await run(['search'], { log: () => {}, error: (s) => errs.push(s) }), 1);
@@ -115,6 +142,7 @@ test('submit routes an .opml argument to a file read', async () => {
   globalThis.fetch = async (url, init) => {
     const payload = JSON.parse(init.body);
     assert.equal(payload.opml, '<opml/>', 'file contents are sent, not the path');
+    assert.equal(payload.email, 'me@example.com');
     assert.ok(String(url).endsWith('/api/submit'));
     return new Response(JSON.stringify({ ok: true, accepted: [{ slug: 'x', existing: false }] }), {
       status: 200,
@@ -122,7 +150,7 @@ test('submit routes an .opml argument to a file read', async () => {
   };
 
   try {
-    const code = await run(['submit', 'subs.opml', '--api', 'http://t.example'], {
+    const code = await run(['submit', 'subs.opml', '--api', 'http://t.example', '--email', 'me@example.com'], {
       log: () => {},
       error: () => {},
       readFile: async (p) => {
@@ -415,7 +443,7 @@ test('submit exits non-zero when nothing was accepted', async () => {
     });
 
   try {
-    const code = await run(['submit', 'nope.example', '--api', 'http://t.example'], {
+    const code = await run(['submit', 'nope.example', '--api', 'http://t.example', '--email', 'me@example.com'], {
       log: () => {},
       error: () => {},
     });

@@ -6,6 +6,8 @@ import { db, siteUrl } from '../../../lib/db.js';
 import { sniffKind } from '../../../lib/opml-scan.js';
 import { clampRawInput } from '../../../lib/submitted.js';
 import { clientIp } from '@profullstack/x402-gateway/edge';
+import { callerOf } from '../../../lib/profileAuth.js';
+import { INTERNAL_TOKEN_HEADER, emailRequiredBody, resolveSubmitter } from '../../../lib/submitter.js';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -148,7 +150,7 @@ export async function POST(req) {
   try {
     if (contentType.includes('application/json')) {
       const body = await req.json();
-      email = normalizeEmail(body?.email);
+      email = body?.email;
 
       if (typeof body?.opml === 'string') {
         kind = 'opml';
@@ -163,7 +165,7 @@ export async function POST(req) {
     } else {
       const form = await req.formData();
       const file = form.get('opml');
-      email = normalizeEmail(form.get('email'));
+      email = form.get('email');
 
       if (file && typeof file !== 'string' && file.size > 0) {
         if (file.size > INLINE_UPLOAD_LIMIT) return tooLarge(req, file.size);
@@ -196,6 +198,31 @@ export async function POST(req) {
     return json({ ok: false, error: 'bad-request' }, 400);
   }
 
+  const browser = (req.headers.get('accept') ?? '').includes('text/html');
+
+  // A hand submission names who to tell how it went (see lib/submitter.js for
+  // who is exempt and why). Asked before anything is written, so a refused
+  // submission leaves no ledger row and spends none of the hourly budget.
+  const submitter = await resolveSubmitter({
+    email,
+    ip,
+    token: req.headers.get(INTERNAL_TOKEN_HEADER),
+    caller: () => callerOf(req),
+  });
+
+  if (!submitter.ok) {
+    if (browser) {
+      // Back to the form with what they typed, so the address is all that is
+      // left to add. A pasted list is kept only while it fits in a URL.
+      const params = new URLSearchParams({ error: 'email' });
+      if (kind !== 'opml' && raw.length <= 2_000) params.set('input', raw);
+      return new Response(null, { status: 303, headers: { location: `/submit?${params}` } });
+    }
+    return json(emailRequiredBody(), 400);
+  }
+
+  email = submitter.email;
+
   // Written before the work rather than after it, so that an upload big enough
   // to be worth watching has a status page to be sent to while it is still
   // being worked on. The counts are filled in by completeSubmission; until then
@@ -207,8 +234,6 @@ export async function POST(req) {
     ip_hash: ipHash,
     user_agent: req.headers.get('user-agent')?.slice(0, 300) ?? null,
   });
-
-  const browser = (req.headers.get('accept') ?? '').includes('text/html');
 
   // An OPML document becomes its entries here rather than inside `submitOpml`,
   // because how many of them there are is what decides what happens next.
@@ -224,7 +249,8 @@ export async function POST(req) {
       accepted_count: 0,
       rejected_count: 1,
       queued_count: 0,
-      notify_email: null,
+      // Told too: "that was the wrong file" is worth a line in their inbox.
+      notify_email: email,
       errors: rejected,
     });
 
@@ -298,10 +324,15 @@ export async function POST(req) {
       accepted_count: result.accepted.length,
       rejected_count: result.rejected.length,
       queued_count: result.queued,
-      // Only stored when there is actually a queue to report on; a submission
-      // that finished inline has nothing left to notify anyone about.
-      notify_email: result.queued > 0 ? email : null,
+      // Stored whether or not anything was queued: a feed settled inline (added,
+      // or found already listed) is told about on the poller's next tick, and a
+      // queued list once its last feed has been crawled. Written only now, after
+      // the queue is durable, for the reason completeSubmission documents.
+      notify_email: email,
       errors: result.rejected,
+      accepted: result.accepted,
+      // Entries a queued list skipped because the directory already had them.
+      already_listed: result.skipped ?? 0,
     });
     return result;
   });
@@ -361,6 +392,8 @@ export async function POST(req) {
     total: result.total,
     submissionId,
     statusUrl,
+    // Whether a note will follow once the feeds are settled.
+    notify: Boolean(email),
   });
 }
 
@@ -424,23 +457,6 @@ function tooLarge(req, bytes) {
     },
     413,
   );
-}
-
-/**
- * Accept an email address only if it plausibly is one.
- *
- * Deliberately loose — the only consequence of a bad address here is one
- * undeliverable notification — but it must reject the empty string a form
- * sends for an untouched field.
- *
- * @param {unknown} value
- * @returns {string|null}
- */
-function normalizeEmail(value) {
-  const email = String(value ?? '')
-    .trim()
-    .slice(0, 254);
-  return /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email) ? email : null;
 }
 
 /**

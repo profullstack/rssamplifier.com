@@ -4164,6 +4164,12 @@ html:not([data-dock]) .playlist-hint {
   font-size: 0.92rem;
 }
 
+/* The source gets the full row; the contact address and the button share the
+   one under it (2026-11-25, when submissions started asking for an email). */
+.add-source input[type='text'] {
+  grid-column: 1 / -1;
+}
+
 /* One column once the field and the button can no longer share a line without
    squeezing the field down to nothing. */
 @media (max-width: 34rem) {

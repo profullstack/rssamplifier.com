@@ -2,12 +2,14 @@ import { q, newId } from '@rssamplifier/db';
 
 import { db, siteUrl } from '../../../../lib/db.js';
 import { clampRawInput } from '../../../../lib/submitted.js';
+import { callerOf } from '../../../../lib/profileAuth.js';
+import { INTERNAL_TOKEN_HEADER, emailRequiredBody, resolveSubmitter } from '../../../../lib/submitter.js';
+import { clientIp } from '@profullstack/x402-gateway/edge';
 import {
   MAX_BATCH_ENTRIES,
   MAX_UPLOAD_FEEDS,
   ipHashOf,
   json,
-  normalizeEmail,
 } from '../../../../lib/upload.js';
 
 export const dynamic = 'force-dynamic';
@@ -46,6 +48,18 @@ export async function POST(req) {
     return json({ ok: false, error: 'bad-request' }, 400);
   }
 
+  // The address is asked for here, at the start, rather than at /finish: a
+  // large upload is minutes of the browser reading a file, and refusing it at
+  // the end would throw all of that away. It is stored only at /finish (see
+  // that route for why), so the uploader sends it to both.
+  const submitter = await resolveSubmitter({
+    email: body?.email,
+    ip: clientIp(req) || null,
+    token: req.headers.get(INTERNAL_TOKEN_HEADER),
+    caller: () => callerOf(req),
+  });
+  if (!submitter.ok) return json(emailRequiredBody(), 400);
+
   const kind = body?.kind === 'opml' ? 'opml' : 'list';
   const sample = clampRawInput(body?.sample);
 
@@ -69,7 +83,7 @@ export async function POST(req) {
     // Echoed back so the uploader only promises an email when the address was
     // actually understood, rather than on the strength of the field not being
     // empty.
-    email: normalizeEmail(body?.email),
+    email: submitter.email,
     // Reported rather than assumed, so a client — ours or anybody's — sizes its
     // batches from what the server will take instead of from a guess.
     maxEntriesPerBatch: MAX_BATCH_ENTRIES,

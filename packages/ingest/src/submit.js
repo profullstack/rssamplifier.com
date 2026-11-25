@@ -280,7 +280,10 @@ export async function submitMany(db, urls) {
  * @param {import('@rssamplifier/db/src/pg.js').PgClient} db
  * @param {Array<{ url: string, title?: string, siteUrl?: string|null }>} entries
  * @param {{ inlineLimit?: number, submissionId?: string|null, priority?: number, onQueued?: (queued: number) => void }} [opts]
- * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, total: number }>}
+ * `skipped` counts queued-path entries the directory already had (or that
+ * repeated an earlier line), which get no row of their own.
+ *
+ * @returns {Promise<{ accepted: object[], rejected: object[], queued: number, skipped: number, total: number }>}
  */
 export async function submitCatalogue(db, entries, opts = {}) {
   // A lone URL is resolved while the submitter waits, so that it can redirect
@@ -295,6 +298,7 @@ export async function submitCatalogue(db, entries, opts = {}) {
   const tail = entries.slice(inlineLimit);
 
   let queued = 0;
+  let skipped = 0;
   if (tail.length > 0) {
     // `queueFeeds`, not `importFeeds`. The difference is the opening read:
     // `importFeeds` reads every feed_url and slug in the directory first, which
@@ -309,6 +313,7 @@ export async function submitCatalogue(db, entries, opts = {}) {
       priority: opts.priority,
     });
     queued = imported.queued;
+    skipped = imported.skipped ?? 0;
   }
 
   opts.onQueued?.(queued);
@@ -318,7 +323,7 @@ export async function submitCatalogue(db, entries, opts = {}) {
     head.map((e) => e.url),
   );
 
-  return { accepted, rejected, queued, total: entries.length };
+  return { accepted, rejected, queued, skipped, total: entries.length };
 }
 
 /**

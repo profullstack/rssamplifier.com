@@ -4099,15 +4099,30 @@ export async function submissionProgress(db, id) {
  * carrying an address during the moment before its feeds were queued would be
  * read as a finished import and mailed about immediately.
  *
+ * `accepted` is the feeds settled inline, kept (first {@link NOTICE_FEEDS}) so
+ * the note can name a blog that was already listed: that row keeps the id of
+ * whichever submission first added it, so it never shows up under this one.
+ *
  * @param {Client} db
  * @param {string} id
- * @param {{ accepted_count?: number, rejected_count?: number, queued_count?: number, errors?: unknown, notify_email?: string|null }} row
+ * `already_listed` counts the entries of a queued list the directory already
+ * had, which `queueFeeds` skips without a row of their own.
+ *
+ * @param {{ accepted_count?: number, rejected_count?: number, queued_count?: number, errors?: unknown, notify_email?: string|null, accepted?: Array<{ slug: string, path?: string|null, existing?: boolean }>, already_listed?: number }} row
  */
 export async function completeSubmission(db, id, row) {
+  const accepted = Array.isArray(row.accepted)
+    ? row.accepted.slice(0, NOTICE_FEEDS).map((a) => ({
+        slug: String(a.slug),
+        path: a.path ?? null,
+        existing: Boolean(a.existing),
+      }))
+    : [];
+
   await db.execute({
     sql: `update submissions
           set accepted_count = ?, rejected_count = ?, queued_count = ?,
-              errors = ?, notify_email = ?
+              errors = ?, notify_email = ?, accepted = ?, already_listed = ?
           where id = ?`,
     args: [
       row.accepted_count ?? 0,
@@ -4115,10 +4130,15 @@ export async function completeSubmission(db, id, row) {
       row.queued_count ?? 0,
       JSON.stringify(row.errors ?? []),
       row.notify_email ?? null,
+      JSON.stringify(accepted),
+      Math.max(0, Math.floor(Number(row.already_listed ?? 0)) || 0),
       id,
     ],
   });
 }
+
+/** Feeds named in one submission notice; the rest are a count and a link. */
+export const NOTICE_FEEDS = 20;
 
 /**
  * A submission as a log: one line per feed the crawler has settled.
@@ -4171,7 +4191,8 @@ export async function submissionEvents(db, id, opts = {}) {
  */
 export async function submissionsAwaitingNotice(db, limit = 5) {
   const { rows } = await db.execute({
-    sql: `select id, kind, notify_email, accepted_count, queued_count, created_at
+    sql: `select id, kind, notify_email, accepted_count, rejected_count, queued_count,
+                 errors, accepted, already_listed, created_at
           from submissions s
           where s.notify_email is not null
             and s.notified_at is null
@@ -4203,6 +4224,68 @@ export async function markSubmissionNotified(db, id) {
     sql: 'update submissions set notified_at = ? where id = ?',
     args: [nowIso(), id],
   });
+}
+
+/**
+ * Take the right to send one submission's notice, before sending it.
+ *
+ * Claimed rather than marked afterwards: a poller that dies between the send
+ * and the mark would mail the same person again on restart, and two pollers
+ * reading the same due row would both send. Exactly one caller sees `true`.
+ * The cost is the opposite failure, a claimed note that never went out, which
+ * is the one we prefer (see notifyFinishedSubmissions).
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @returns {Promise<boolean>}
+ */
+export async function claimSubmissionNotice(db, id) {
+  const { rows } = await db.execute({
+    sql: 'update submissions set notified_at = ? where id = ? and notified_at is null returning id',
+    args: [nowIso(), id],
+  });
+  return rows.length > 0;
+}
+
+/**
+ * The feeds one submission added, for its notice: settled ones first, then by
+ * title, at most `limit`. A list of five hundred is named by its first twenty
+ * and summed up by `submissionProgress`.
+ *
+ * @param {Client} db
+ * @param {string} id
+ * @param {number} [limit]
+ * @returns {Promise<Array<{ slug: string, title: string|null, status: string, last_error: string|null }>>}
+ */
+export async function submissionNoticeFeeds(db, id, limit = NOTICE_FEEDS) {
+  const { rows } = await db.execute({
+    sql: `select slug, title, status, last_error
+          from feeds
+          where submission_id = ?
+          order by case status when 'active' then 0 when 'pending' then 2 else 1 end,
+                   title asc nulls last, slug asc
+          limit ?`,
+    args: [id, limit],
+  });
+  return /** @type {any} */ (rows);
+}
+
+/**
+ * Feeds by slug, for naming the ones a submission found already listed.
+ *
+ * @param {Client} db
+ * @param {string[]} slugs
+ * @returns {Promise<Array<{ slug: string, title: string|null, status: string, last_error: string|null }>>}
+ */
+export async function feedsBySlugs(db, slugs) {
+  const list = [...new Set(slugs.map(String).filter(Boolean))].slice(0, NOTICE_FEEDS);
+  if (list.length === 0) return [];
+  const { rows } = await db.execute({
+    sql: `select slug, title, status, last_error from feeds
+          where slug in (${list.map(() => '?').join(', ')})`,
+    args: list,
+  });
+  return /** @type {any} */ (rows);
 }
 
 /**

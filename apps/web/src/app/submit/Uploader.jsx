@@ -61,9 +61,12 @@ const MAX_LINES = 40;
  * enhancement is one `onSubmit` handler — a submit that arrives before hydration
  * goes to the server rather than nowhere.
  *
- * @param {{ shared?: string }} props
+ * `signedIn` drops the `required` on the address fields: a signed-in reader is
+ * told at their account address when they leave it empty.
+ *
+ * @param {{ shared?: string, signedIn?: boolean }} props
  */
-export default function Uploader({ shared = '' }) {
+export default function Uploader({ shared = '', signedIn = false }) {
   /**
    * @type {[null | {
    *   phase: 'reading'|'saving'|'done'|'empty'|'error',
@@ -84,6 +87,7 @@ export default function Uploader({ shared = '' }) {
   const pasteRef = useRef(null);
   const fileRef = useRef(null);
   const emailRef = useRef(null);
+  const pasteEmailRef = useRef(null);
 
   const busy = run?.phase === 'reading' || run?.phase === 'saving';
 
@@ -241,7 +245,7 @@ export default function Uploader({ shared = '' }) {
       source: value,
       size: value.length,
       name: 'your list',
-      email: '',
+      email: pasteEmailRef.current?.value ?? '',
     });
   }
 
@@ -291,6 +295,7 @@ export default function Uploader({ shared = '' }) {
           required
           disabled={busy}
         />
+        <EmailField inputRef={pasteEmailRef} signedIn={signedIn} disabled={busy} />
         <div className="submit-actions">
           <button type="submit" disabled={busy}>
             Add to the directory
@@ -322,14 +327,7 @@ export default function Uploader({ shared = '' }) {
           time, so a 100 MB subscription list imports without the upload ever timing out — you will
           see it go, and get a status page to watch the crawl.
         </p>
-        <input
-          ref={emailRef}
-          type="email"
-          name="email"
-          placeholder="you@example.com — optional, we will email you when it finishes"
-          aria-label="Email me when the import finishes"
-          disabled={busy}
-        />
+        <EmailField inputRef={emailRef} signedIn={signedIn} disabled={busy} />
         <div className="submit-actions">
           <button type="submit" disabled={busy}>
             Import subscriptions
@@ -339,6 +337,33 @@ export default function Uploader({ shared = '' }) {
 
       {run?.via === 'file' && <Progress run={run} onReset={() => setRun(null)} />}
     </>
+  );
+}
+
+/**
+ * The contact address every hand submission carries.
+ *
+ * Required for anyone signed out, and the server says so too
+ * (`email-required`), so a browser that skips the attribute still gets asked.
+ *
+ * @param {{ inputRef: import('react').RefObject<HTMLInputElement|null>, signedIn: boolean, disabled: boolean }} props
+ */
+function EmailField({ inputRef, signedIn, disabled }) {
+  return (
+    <input
+      ref={inputRef}
+      type="email"
+      name="email"
+      autoComplete="email"
+      required={!signedIn}
+      placeholder={
+        signedIn
+          ? 'Email for the note when it is listed (default: your account address)'
+          : 'you@example.com (required: we email you once when it is listed)'
+      }
+      aria-label="Your email, for one note when your feeds are listed"
+      disabled={disabled}
+    />
   );
 }
 
@@ -547,6 +572,7 @@ async function* pieces(source) {
  * @returns {string}
  */
 function explain(error) {
+  if (error === 'email-required') return 'Add your email above: we write once when your feeds are listed.';
   if (error === 'rate-limited') return 'That is too many submissions from here in one hour.';
   if (error === 'too-many-feeds') return 'That is more feeds than one import may add.';
   if (error === 'expired') return 'The import took longer than a submission stays open.';

@@ -69,7 +69,7 @@ test('an upload is drained by the import job, which catch-up mode keeps', () => 
 });
 
 test('and the submitter is told by the same job, since draining without telling is stranger still', () => {
-  assert.match(bodyOf('importTick'), /await notifyFinishedSubmissions\(db\)/);
+  assert.match(bodyOf('importTick'), /await notifyFinishedSubmissions\(db\b/);
 });
 
 test('discovery notifications are their own job, which catch-up mode drops', () => {

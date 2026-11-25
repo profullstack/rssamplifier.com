@@ -20,7 +20,7 @@
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const VERSION = '0.6.0';
+export const VERSION = '0.7.0';
 
 const DEFAULT_API = 'https://rssamp.com';
 
@@ -155,9 +155,9 @@ export const COMMANDS = [
     usage: 'submit <url|file.opml> …',
     summary: 'Add blogs to the directory',
     detail:
-      'Give it a site, a feed, several of either, or an OPML file to upload. We find the feed, read it and give the blog a permanent page. No account needed; submissions share the web form’s budget of twenty an hour per address.',
-    options: ['--json'],
-    examples: ['rssamp submit example.com', 'rssamp submit subscriptions.opml'],
+      'Give it a site, a feed, several of either, or an OPML file to upload, plus your email. We find the feed, read it, give the blog a permanent page and write to you once when it is listed (or say why not). No account needed; submissions share the web form’s budget of twenty an hour per address. With an API key (--token or RSSAMPLIFIER_TOKEN) the email is optional.',
+    options: ['--email <address>', '--token <key>', '--json'],
+    examples: ['rssamp submit example.com --email you@example.com', 'rssamp submit subscriptions.opml --email you@example.com'],
   },
   {
     name: 'update',
@@ -811,9 +811,23 @@ export async function run(argv, io = {}) {
           payload = { urls: args };
         }
 
+        // Where to send the one note when the feeds are listed. Required by the
+        // site unless an API key says which account this is.
+        const email = (typeof flags.email === 'string' && flags.email) || process.env['RSSAMP_EMAIL'] || '';
+        const token =
+          (typeof flags.token === 'string' && flags.token) || process.env['RSSAMPLIFIER_TOKEN'] || '';
+        if (email) payload.email = email;
+        if (!email && !token) {
+          err('submit: give --email you@example.com (or set RSSAMP_EMAIL) so we can tell you when it is listed');
+          return 1;
+        }
+
         const body = await request(`${base}/api/submit`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify(payload),
         });
 
